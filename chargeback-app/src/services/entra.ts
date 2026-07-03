@@ -4,12 +4,12 @@ import { env } from "@/lib/env";
  * Microsoft Graph lookup for service-principal display names, used by the
  * unmapped-runners "Map user" dialog to prefill user_name for SPN runners.
  *
- * Auth mirrors the warehouse client (dal/client.ts): the ENTRA_* app
- * credentials when a secret is configured, otherwise the developer's own
- * `az login` identity. The app registration needs the Application.Read.All
- * (or Directory.Read.All) Graph application permission for the secret path;
- * a signed-in user can read service principals with default directory
- * permissions.
+ * Auth mirrors the warehouse client (dal/client.ts) by switching on the
+ * resolved DATABRICKS_AUTH mode: in azure-cli mode the developer's own
+ * `az login` identity calls Graph too (a signed-in user can read service
+ * principals with default directory permissions). Otherwise the ENTRA_* app
+ * credentials are used — that app registration needs the Application.Read.All
+ * (or Directory.Read.All) Graph application permission.
  */
 
 const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
@@ -21,8 +21,14 @@ let getToken: (() => Promise<string>) | null = null;
 async function graphToken(): Promise<string> {
   if (!getToken) {
     const { ClientSecretCredential, AzureCliCredential } = await import("@azure/identity");
+    // ENTRA_* also configures the NextAuth sign-in, so its presence alone
+    // must not flip Graph onto the login app's secret while the developer
+    // authenticates to the warehouse as themselves.
     const credential =
-      env.ENTRA_TENANT_ID && env.ENTRA_CLIENT_ID && env.ENTRA_CLIENT_SECRET
+      env.DATABRICKS_AUTH !== "azure-cli" &&
+      env.ENTRA_TENANT_ID &&
+      env.ENTRA_CLIENT_ID &&
+      env.ENTRA_CLIENT_SECRET
         ? new ClientSecretCredential(
             env.ENTRA_TENANT_ID,
             env.ENTRA_CLIENT_ID,

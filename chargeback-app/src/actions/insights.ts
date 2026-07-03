@@ -46,10 +46,16 @@ export async function lookupSpNameAction(runnerId: string): Promise<SpNameResult
       return { ok: false, message: "A steward role is required for Entra ID lookups." };
     }
     console.error("[entra sp lookup]", e);
+    // "Graph responded <status> for <url>" comes from our own fetch wrapper —
+    // safe to surface, and the status is the difference between a permission
+    // problem (403: the identity lacks Application.Read.All) and anything else.
+    const graphStatus =
+      e instanceof Error && e.message.startsWith("Graph responded")
+        ? ` (${e.message.split(" for ")[0]})`
+        : "";
     return {
       ok: false,
-      message:
-        "Entra ID lookup failed — check the server logs. The app's identity needs the Application.Read.All Graph permission.",
+      message: `Entra ID lookup failed${graphStatus} — check the server logs. A 403 means the identity used for Graph lacks the Application.Read.All permission.`,
     };
   }
 }
