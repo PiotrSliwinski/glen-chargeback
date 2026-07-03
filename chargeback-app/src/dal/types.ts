@@ -14,6 +14,15 @@ export type AttributionMethod =
   | "USER" // ad-hoc spend only — job cost never defaults to the runner
   | "NONE";
 
+/** Azure waterfall (azure_cost_fact) — same idea, Azure nouns. */
+export type AzureAttributionMethod =
+  | "TAG"
+  | "RESOURCE_MAPPING"
+  | "TAG_RULE"
+  | "RESOURCE_GROUP"
+  | "SUBSCRIPTION"
+  | "NONE";
+
 // ---------- reporting ----------
 
 export interface MonthlyChargebackRow {
@@ -215,6 +224,84 @@ export interface WorkspaceMappingRow {
   workspace_name: string;
 }
 
+/**
+ * DBU reservation-plan window: within [valid_from, valid_to] (both inclusive)
+ * Databricks DBU spend is billed at list price × (1 − discount_pct). Applied
+ * at pricing time in query_view / usage_view, DBU-metered rows only — never
+ * Azure cost. Windows must not overlap.
+ */
+export interface DbuDiscountRow {
+  valid_from: string;
+  valid_to: string;
+  /** share of list price waived, 0–1 (0.27 = 27% off) */
+  discount_pct: number;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+// ---------- Azure attribution ----------
+
+/** Resource bridge (Azure rule 2): one ARM resource → product. */
+export interface AzureResourceMappingRow {
+  resource_id: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+/** Azure tag rule (Azure rule 3): any resource tag key=value → product. */
+export interface AzureTagRuleRow {
+  tag_key: string;
+  tag_value: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+/** Resource-group rule (Azure rule 4): whole RG → product. */
+export interface AzureRgRuleRow {
+  subscription_id: string;
+  resource_group: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+/** Subscription rule (Azure rule 5): whole subscription → product. */
+export interface AzureSubscriptionRuleRow {
+  subscription_id: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+/** How one Azure resource's cost attributed over the trailing 30 days — one row per (resource, method, product). */
+export interface AzureResourceAttributionRow {
+  subscription_id: string;
+  resource_group: string;
+  resource_id: string;
+  /** last segment of the ARM ID — display name */
+  resource_name: string | null;
+  meter_category: string | null;
+  attribution_method: AzureAttributionMethod;
+  data_product: string;
+  desk: string;
+  /** resource tags of the slice's most expensive row, key-sorted JSON object (null = untagged) */
+  tags_json: string | null;
+  cost_30d: number;
+}
+
+/** Trailing-30-day Azure cost per desk (UNALLOCATED = not yet claimed). */
+export interface AzureDeskTotalRow {
+  desk: string;
+  cost_30d: number;
+}
+
 // ---------- health ----------
 
 export interface ReconRow {
@@ -233,7 +320,9 @@ export interface IntegrityViolation {
     | "orphan_product"
     | "duplicate_bridge_key"
     | "duplicate_rule_key"
-    | "warehouse_flags";
+    | "warehouse_flags"
+    | "discount_overlap"
+    | "discount_range";
   detail: string;
 }
 

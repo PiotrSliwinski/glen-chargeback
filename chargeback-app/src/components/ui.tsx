@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { AttributionMethod } from "@/dal/types";
+import type { AttributionMethod, AzureAttributionMethod } from "@/dal/types";
 
 /**
  * CSS-only info tooltip (hover / keyboard focus) — server-renderable, no
@@ -124,6 +124,31 @@ export const METHOD_STYLE: Record<AttributionMethod, { color: string; chip: stri
 
 export function MethodBadge({ method }: { method: string }) {
   const style = METHOD_STYLE[method as AttributionMethod] ?? {
+    chip: "bg-muted text-muted-foreground",
+  };
+  return (
+    <Badge variant="secondary" className={style.chip}>
+      {method}
+    </Badge>
+  );
+}
+
+/**
+ * Azure waterfall palette — same semantics, Azure nouns: the bridge analogue
+ * (RESOURCE_MAPPING) shares JOB_MAPPING's amber, the scope rules reuse the
+ * warehouse/runner hues, so cross-screen reading stays consistent.
+ */
+export const AZURE_METHOD_STYLE: Record<AzureAttributionMethod, { color: string; chip: string }> = {
+  TAG: METHOD_STYLE.TAG,
+  RESOURCE_MAPPING: METHOD_STYLE.JOB_MAPPING,
+  TAG_RULE: METHOD_STYLE.TAG_RULE,
+  RESOURCE_GROUP: METHOD_STYLE.WAREHOUSE_MAPPING,
+  SUBSCRIPTION: METHOD_STYLE.RUNNER_RULE,
+  NONE: METHOD_STYLE.NONE,
+};
+
+export function AzureMethodBadge({ method }: { method: string }) {
+  const style = AZURE_METHOD_STYLE[method as AzureAttributionMethod] ?? {
     chip: "bg-muted text-muted-foreground",
   };
   return (

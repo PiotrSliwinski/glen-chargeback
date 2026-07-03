@@ -10,6 +10,13 @@ import {
   listWarehouseMappings,
   listWorkspaces,
 } from "@/dal/mappings";
+import {
+  listAzureResourceMappings,
+  listAzureRgRules,
+  listAzureSubscriptionRules,
+  listAzureTagRules,
+} from "@/dal/azure";
+import { listDbuDiscounts } from "@/dal/discounts";
 import { PAGE_HELP } from "@/lib/kpi-help";
 import { PageTitle } from "@/components/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,19 +34,38 @@ export default function AdminIndexPage() {
 
 async function AdminIndex() {
   await requirePageRole("steward");
-  const [catalogue, jobs, warehouses, users, workspaces, tagRules, runnerRules] =
-    await Promise.all([
-      listCatalogue(),
-      listJobMappings(),
-      listWarehouseMappings(),
-      listUsers(),
-      listWorkspaces(),
-      listTagRules(),
-      listRunnerRules(),
-    ]);
+  const [
+    catalogue,
+    jobs,
+    warehouses,
+    users,
+    workspaces,
+    tagRules,
+    runnerRules,
+    azureResources,
+    azureTagRules,
+    azureRgRules,
+    azureSubRules,
+    dbuDiscounts,
+  ] = await Promise.all([
+    listCatalogue(),
+    listJobMappings(),
+    listWarehouseMappings(),
+    listUsers(),
+    listWorkspaces(),
+    listTagRules(),
+    listRunnerRules(),
+    listAzureResourceMappings(),
+    listAzureTagRules(),
+    listAzureRgRules(),
+    listAzureSubscriptionRules(),
+    listDbuDiscounts(),
+  ]);
   const activeProducts = new Set(
     catalogue.filter((r) => r.valid_to == null).map((r) => r.data_product),
   ).size;
+  const today = new Date().toISOString().slice(0, 10);
+  const activeDiscount = dbuDiscounts.find((d) => d.valid_from <= today && d.valid_to >= today);
 
   const items = [
     {
@@ -53,6 +79,18 @@ async function AdminIndex() {
       title: "Job attribution",
       desc: "Bridge rows, tag rules and runner rules for jobs not tagged at source, plus a 30-day coverage audit of how every job actually attributed. Job spend never defaults to the runner's desk.",
       stat: `${jobs.length} bridge rows · ${tagRules.length} tag rules · ${runnerRules.length} runner rules`,
+    },
+    {
+      href: "/admin/azure",
+      title: "Azure attribution",
+      desc: "Resource bridge, tag rules, resource-group and subscription rules routing Azure spend to the same product catalogue, plus a 30-day coverage audit. Only matched cost reaches a desk.",
+      stat: `${azureResources.length} bridge rows · ${azureTagRules.length} tag rules · ${azureRgRules.length + azureSubRules.length} scope rules`,
+    },
+    {
+      href: "/admin/discounts",
+      title: "DBU discounts",
+      desc: "dbu_discount_plan — reservation-plan windows billing Databricks DBU spend at list price × (1 − discount). Applied at pricing time; never touches Azure cost.",
+      stat: `${dbuDiscounts.length} ${dbuDiscounts.length === 1 ? "window" : "windows"} · ${activeDiscount ? `${Math.round(activeDiscount.discount_pct * 1000) / 10}% active today` : "none active today"}`,
     },
     {
       href: "/admin/warehouses",

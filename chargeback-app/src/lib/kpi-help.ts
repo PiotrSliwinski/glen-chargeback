@@ -8,7 +8,7 @@
 
 export const PAGE_HELP = {
   dashboard:
-    "Landing view of the chargeback system: one month of Databricks spend — live from monthly_chargeback, or the frozen snapshot in Published mode — rolled up by data domain, with a 12-month trend and a breakdown of how cost was attributed. All figures are list-price USD derived from Databricks system billing tables; discounts are not applied.",
+    "Landing view of the chargeback system: one month of Databricks spend — live from monthly_chargeback, or the frozen snapshot in Published mode — rolled up by data domain, with a 12-month trend and a breakdown of how cost was attributed. All figures are USD derived from Databricks system billing tables at list price, less any DBU reservation-plan discount configured under Reference data → DBU discounts.",
   report:
     "The distribution-ready monthly pack: executive summary, month-over-month movement by desk with auto-generated commentary, domain → product → desk breakdown, attribution coverage, and the per-desk tagging scorecard. Same figures as the dashboard for the selected month and mode. Print it, or download the XLSX workbook / CSVs at the bottom.",
   analytics:
@@ -28,24 +28,30 @@ export const PAGE_HELP = {
   health:
     "Pre-publication control room. Reconciliation proves billing truth = cost_fact = report for every month within the configured tolerance; integrity checks catch catalogue overlaps, desk splits that don't sum to 100%, orphan bridge rows, duplicate keys and inconsistent warehouse flags; the diff shows exactly what the snapshot will freeze. Publication unlocks only when everything is green — and the gate re-checks server-side at submit.",
   admin:
-    "The write surface of the chargeback system: the seven mapping tables that steer the attribution waterfall. Everything else in the app is derived, read-only reporting. Edits here change live views immediately and never restate published months.",
+    "The write surface of the chargeback system: the mapping tables that steer the Databricks attribution waterfall, the four Azure rule tables, and the DBU reservation-discount windows that set the effective DBU price. Everything else in the app is derived, read-only reporting. Edits here change live views immediately and never restate published months.",
   products:
     "The hierarchy backbone: data_product_mapping, one row per product per desk per validity window. A product can be split across several desks by % share (shares must sum to 100%) — cost_fact then bills each desk its share of every cost line. Domain and desk always derive from here — never from tags. Desk/domain/split moves atomically close the old window and insert successor rows, so published history never restates; products are retired, never deleted.",
   jobs:
     "The three explicit mechanisms that route job spend to a product: the per-job bridge (rule 2), tag rules matching any custom tag key=value (rule 3), and runner rules assigning everything an identity runs (rule 5). Jobs are created by the data platform but consumed by desks, so job spend NEVER defaults to the runner's home desk — what none of these mechanisms (or a tag at source) catches goes to the work queue. Target state: bridge empty, rules few and deliberate.",
   jobCoverage:
     "Audit of every job that emitted cost in the trailing 30 days: the custom tags it actually carries and the attribution method(s) that carried that cost — tag at source, bridge row, tag rule, runner rule, or nothing. Use it to see which mappings are still doing work, which jobs to chase for tagging, and which tags could power a tag rule.",
+  azure:
+    "The four explicit mechanisms that route Azure spend (azure_cleaned.amortized_costs) to a data product: the per-resource bridge (rule 2), Azure tag rules matching any resource tag key=value (rule 3), resource-group rules (rule 4) and subscription rules (rule 5). A data_product tag on the resource itself (rule 1) always wins. Rules point at the SAME product catalogue as Databricks spend, so domain, desk and multi-desk % splits apply identically. Attribution is an allowlist — only matched cost reaches a desk; the unmatched remainder of the Azure bill stays visible in coverage as UNALLOCATED and never enters the Databricks chargeback report.",
+  azureCoverage:
+    "Audit of every Azure resource that emitted cost in the trailing 30 days: the tags it actually carries and the attribution method(s) that carried that cost — tag at source, bridge row, tag rule, resource-group rule, subscription rule, or nothing. Use it to see which mappings are still doing work, which resources to chase for tagging, and which tags could power a tag rule.",
   warehouses:
     "Waterfall rule 4 configuration: a Shared warehouse spreads its cost across products per query; a Dedicated warehouse charges the whole warehouse — idle time included — to one product. Invalid combinations (dedicated without a product, shared with one) are rejected by the form and re-checked on the server.",
   users:
     "Waterfall rule 6 input: maps a runner identity to a display name and home desk, so AD-HOC spend (queries, notebooks — never jobs) follows the person who ran it. user_id must match executed_by / identity_metadata.run_as byte-for-byte — which is why it is read-only in edit forms and pre-filled from system tables in the work queue.",
   workspaces:
     "Workspace ID → friendly name, used purely for report labels. Renames are cosmetic; removing a mapping never drops spend — a still-billing workspace simply shows as UNMAPPED: <id>.",
+  discounts:
+    "Purchased DBU reservation plans: date windows (both days inclusive) that bill Databricks DBU spend at list price × (1 − discount). The discount is applied at pricing time inside query_view and usage_view — DBU-metered spend only, never Azure cost — so every derived figure (cost_fact, monthly reports, desk invoices, the health reconciliation) uses the discounted rate. Windows must not overlap: the form rejects overlaps and the health page flags any that slip in. Changes re-price live views immediately; published months keep the figures they were published with.",
 } as const;
 
 export const KPI_HELP = {
   totalCost:
-    "SUM(total_cost) over every monthly_chargeback row for the selected month (the published snapshot when in Published mode). Cost = DBUs × list price from Databricks system billing tables, in USD. Includes UNALLOCATED, so this is the whole bill for the month.",
+    "SUM(total_cost) over every monthly_chargeback row for the selected month (the published snapshot when in Published mode). Cost = DBUs × list price from Databricks system billing tables, less any DBU reservation-plan discount effective on the usage date, in USD. Includes UNALLOCATED, so this is the whole bill for the month.",
   momChange:
     "This month's total cost minus the previous month's; the percentage is current ÷ previous − 1. The previous month is always read from live figures — so in Published mode this compares snapshot vs live.",
   tagCoverage:
@@ -54,7 +60,7 @@ export const KPI_HELP = {
     "SUM(total_cost) where data_product = 'UNALLOCATED' — spend no waterfall rule (tag, job bridge, tag rule, warehouse mapping, runner rule, or — for ad-hoc spend only — the runner's home desk) could attribute. Job spend never defaults to the runner, so unmapped jobs land here by design. Reported as a real line item, never hidden. The work queue exists to drive it to zero.",
 
   effectiveRate:
-    "The month's total cost ÷ total DBUs from monthly_chargeback — the blended list-price rate actually paid per DBU. It moves when the workload mix shifts toward pricier SKUs (serverless, model serving, DLT), not when volume grows — so rate up = mix change, cost up with rate flat = volume change.",
+    "The month's total cost ÷ total DBUs from monthly_chargeback — the blended rate actually paid per DBU (list price less any reservation-plan discount). It moves when the workload mix shifts toward pricier SKUs (serverless, model serving, DLT) or when a discount window starts or ends, not when volume grows — so rate up = mix or discount change, cost up with rate flat = volume change.",
   runRate:
     "The selected month's total cost × 12 — what the year costs if every month looked like this one. Most honest on the last closed month; a partial current month understates it.",
   threeMonthGrowth:
@@ -95,6 +101,17 @@ export const KPI_HELP = {
     "Jobs with any cost attributed through the job bridge (rule 2), a tag rule (rule 3) or a runner rule (rule 5). Each is a candidate for tagging at source with data_product, after which the mapping can be pruned — the janitor on the Job mapping page flags when a bridge row is safe to remove.",
   jobsUnmappedCost:
     "Sum of 30-day cost with attribution_method = NONE across all jobs — spend currently landing in UNALLOCATED. Fix it in the work queue: tag the job at source, or bridge it.",
+
+  azureResourcesSeen30d:
+    "Distinct Azure resources with any cost in the trailing 30 days, from live azure_cost_fact.",
+  azureTagged:
+    "Resources whose 30-day cost attributed via TAG only — a data_product tag on the resource itself. This is the goal state for every attributable resource.",
+  azureBridged:
+    "Resources with any cost attributed through the resource bridge (rule 2), an Azure tag rule (rule 3), a resource-group rule (rule 4) or a subscription rule (rule 5). Each is a candidate for a data_product tag at source, after which the mapping can be pruned.",
+  azureUnmatchedCost:
+    "Sum of 30-day Azure cost with attribution_method = NONE. Unlike Databricks spend this is not necessarily a problem: Azure attribution is an allowlist, and shared platform cost is expected to stay unmatched. It never reaches a desk.",
+  azureAttributedCost:
+    "Sum of 30-day Azure cost the waterfall attributed to a product (any method except NONE) — the slice that reaches desks via the shared catalogue's splits.",
 } as const;
 
 export const ANALYTICS_SECTION_HELP = {

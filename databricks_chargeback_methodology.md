@@ -19,6 +19,7 @@
 9. [Refresh & Materialization](#9-refresh--materialization)
 10. [Management Interface Specification](#10-management-interface-specification)
 11. [Rollout Plan & Governance](#11-rollout-plan--governance)
+12. [Azure Cost Attribution (Extension)](#12-azure-cost-attribution-extension)
 
 ---
 
@@ -73,7 +74,7 @@ cost = usage_quantity × price effective at usage_start_time
   Matching on the start time only guarantees every usage row matches exactly one price row, even when a usage slice spans a price change.
 - The join always filters `currency_code = 'USD'`. `list_prices` holds one row per SKU **per currency**; omitting the filter fans out every usage row and multiplies both DBUs and cost. **If the account is billed in another currency, the literal must be changed in `query_view` and `usage_view` together.**
 - `usage_view` prefers `pricing.effective_list.default` (reflects negotiated rates where populated) with fallback to `pricing.default`. `query_view` uses `pricing.default`; align the two if `effective_list` is populated for your account.
-- List prices exclude discounts not reflected in `effective_list`. For classic (non-serverless) compute, the Azure VM / infrastructure cost billed directly by Microsoft is **out of scope** — this system charges back the Databricks (DBU) component only.
+- Purchased DBU reservation plans recorded in `dbu_discount_plan` (§4.9) **are** applied at pricing time: DBU-metered rows in the covered window bill at list price × (1 − discount). Other discounts not reflected in `effective_list` are excluded. For classic (non-serverless) compute, the Azure VM / infrastructure cost billed directly by Microsoft is **out of scope** — this system charges back the Databricks (DBU) component only.
 
 ### 2.2 Two allocation models
 
@@ -266,6 +267,32 @@ Only create if a product genuinely must be split across desks. Start without it 
 -- );
 ```
 
+### 4.9 `dbu_discount_plan` — DBU reservation discounts
+
+Purchased DBU reservation plans: within `[valid_from, valid_to]` (**both days inclusive**)
+Databricks DBU spend is billed at list price × (1 − `discount_pct`). The discount is applied
+**at pricing time** inside `query_view` and `usage_view`, to `usage_unit = 'DBU'` rows only —
+never to Azure cost — so everything derived (`cost_fact`, `monthly_chargeback`, desk invoices)
+inherits the discounted rate, and the §7.1 reconciliation prices billing truth with the same
+rule so the invariant keeps holding.
+
+```sql
+CREATE TABLE main_dev.cost_reporting.dbu_discount_plan (
+  valid_from     DATE   NOT NULL,   -- first day the plan covers (inclusive)
+  valid_to       DATE   NOT NULL,   -- last day the plan covers (inclusive)
+  discount_pct   DOUBLE NOT NULL,   -- share of list price waived: 0.27 = 27% off
+  note           STRING,            -- optional: contract / PO reference
+  mapped_by      STRING,            -- audit: who recorded the plan
+  mapped_at      TIMESTAMP          -- audit: when
+);
+```
+
+Windows must not overlap — one discount per day. The management interface rejects overlapping
+inserts; the views resolve any overlap that slips in deterministically (join + re-aggregate:
+the deepest discount wins, cost never fans out) and the health page flags it
+(`discount_overlap`, `discount_range`). Changes re-price live views immediately; published
+months keep the figures they were published with.
+
 ---
 
 ## 5. Core Allocation Views
@@ -298,7 +325,8 @@ Only create if a product genuinely must be split across desks. Start without it 
 --     statement_id when the text is needed.
 --   * Currency is hardcoded to USD - change if billed in another currency
 --     (must match the literal used in usage_view).
---   * List prices exclude negotiated discounts; classic warehouses also
+--   * Cost = list price less any DBU reservation-plan discount effective on
+--     the usage date (dbu_discount_plan, §4.9); classic warehouses also
 --     exclude the Azure VM/infra cost billed separately by Microsoft.
 -- =====================================================================
 
@@ -1185,9 +1213,57 @@ One-click execution of §7.1 and §7.4 with green/red status per month; publicat
 
 **Known limitations (state them in every report footer):**
 - Databricks DBU cost only; Azure VM/network/storage for classic compute billed separately by Microsoft is out of scope.
-- List-price basis (with `effective_list` where populated); invoice-level discounts not reflected.
+- List-price basis (with `effective_list` where populated), less DBU reservation-plan discounts recorded in `dbu_discount_plan` (§4.9); other invoice-level discounts not reflected.
 - Warehouse queries attributed to their start hour; multi-hour statements not split.
 - Per-query warehouse detail limited by ~90-day `system.query.history` retention until materialization has accumulated history.
+
+---
+
+## 12. Azure Cost Attribution (Extension)
+
+Extends chargeback beyond DBUs: attributes Azure spend from
+`main_dev.azure_cleaned.amortized_costs` (daily amortized cost per resource, `cost_in_usd`) to
+the **same product catalogue** (§4.3). Domain, desk, validity versioning and multi-desk % splits
+always derive from `data_product_mapping` — the Azure layer adds only the *matching* mechanisms,
+because Azure has no jobs, warehouses or runners.
+
+### 12.1 Rule tables (setup.sql §4A — the write surface of the Azure screen)
+
+| Table | Key | Azure waterfall rule |
+|---|---|---|
+| `azure_resource_product_mapping` | `resource_id` (full ARM ID, lowercase) | 2 — resource bridge; tech debt, prune once tagged at source |
+| `azure_tag_product_mapping` | `(tag_key, tag_value)` | 3 — any resource tag `key=value` → product. Separate from §4.5: the Azure and Databricks tag namespaces are unrelated |
+| `azure_rg_product_mapping` | `(subscription_id, resource_group)` | 4 — whole RG → product (RG names unique only per subscription) |
+| `azure_subscription_product_mapping` | `subscription_id` | 5 — whole subscription → product |
+
+All audited with `mapped_by` / `mapped_at`. ARM identifiers are stored lowercase; the views
+lowercase the fact side, so matching is case-insensitive by construction.
+
+### 12.2 Views (setup.sql §6A)
+
+- **`azure_usage_view`** — daily cost per resource + parsed tags. The `tags` string gets outer
+  braces restored when the export omits them, then `from_json` → `tag_data_product` and a
+  key-sorted `tags_json` (same convention as `usage_view`), so tag rules resolve once per
+  distinct tag set.
+- **`azure_cost_fact`** — the waterfall: `TAG` (data_product tag on the resource) →
+  `RESOURCE_MAPPING` → `TAG_RULE` → `RESOURCE_GROUP` → `SUBSCRIPTION` → `NONE`. Rule tables are
+  deduplicated (`MIN`) so duplicates can never fan out cost; conflicting tag rules resolve to the
+  alphabetically first `key=value`. Domain/desk/splits join `data_product_mapping` with the §6.1
+  validity semantics — split products fan out one row per desk, cost scaled by share.
+- **`azure_monthly_chargeback`** — month × domain × product × desk × meter category rollup.
+
+### 12.3 Deliberate differences from the Databricks model
+
+- **Allowlist, not full distribution.** The §2.4 invariant ("every dollar lands exactly once")
+  distributes the *entire* Databricks bill. Azure attribution answers a different question —
+  *which* Azure costs belong to data products — so unmatched cost stays `UNALLOCATED` in
+  `azure_cost_fact`, is reported on the coverage screen, and is **never billed to a desk**.
+- **Not unioned into `cost_fact` / `monthly_chargeback`.** Keeping the Azure fact parallel
+  preserves the §7.1 reconciliation invariant untouched and keeps the shared platform remainder
+  of the Azure bill out of the Databricks UNALLOCATED line. Desk-facing Azure rollups read
+  `azure_monthly_chargeback`.
+- **No publication snapshot yet.** Azure figures are live-only; folding them into desk invoices
+  requires an Azure publish snapshot + reconciliation story first (see app backlog).
 
 ---
 

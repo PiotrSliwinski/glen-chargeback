@@ -75,7 +75,7 @@ export async function GET(request: Request) {
     }
     summary.addRow([]);
     summary.addRow([
-      "Limitations: Databricks DBU cost only (Azure infra out of scope); list-price basis; warehouse queries attributed to start hour; per-query detail limited by ~90-day query history retention.",
+      "Limitations: Databricks DBU cost only (Azure infra out of scope); list-price basis less any configured DBU reservation-plan discount; warehouse queries attributed to start hour; per-query detail limited by ~90-day query history retention.",
     ]);
 
     // ---- Movement ----

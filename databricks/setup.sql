@@ -88,6 +88,72 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.runner_product_mapping (
 )
 COMMENT 'Runner rule: EVERYTHING this identity runs (jobs, DLT, serverless) -> data product. Rule 5 of the attribution waterfall. The explicit opt-in replacement for defaulting job cost to the runner: platform service principals whose output serves one product belong here. One row per user_id - duplicates are flagged on the health page.';
 
+-- §4.9 DBU reservation-plan discounts (pricing reference data, not attribution)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.dbu_discount_plan (
+  valid_from     DATE   NOT NULL,   -- first day the plan covers (inclusive)
+  valid_to       DATE   NOT NULL,   -- last day the plan covers (inclusive)
+  discount_pct   DOUBLE NOT NULL,   -- share of list price waived: 0.27 = 27% off
+  note           STRING,            -- optional: contract / PO reference
+  mapped_by      STRING,            -- audit: who recorded the plan
+  mapped_at      TIMESTAMP          -- audit: when
+)
+COMMENT 'Purchased DBU reservation plans: within [valid_from, valid_to] (both inclusive) Databricks DBU spend is billed at list price x (1 - discount_pct). Applied at pricing time in query_view and usage_view to usage_unit = DBU only - never to Azure cost - so cost_fact, monthly_chargeback and invoices all inherit the discounted rate. Windows must not overlap: the views resolve overlaps deterministically (deepest discount wins, cost never fans out) and the health page flags them.';
+
+-- =====================================================================
+-- §4A Azure attribution rules — the write surface of the Azure screen
+--
+-- Azure spend (main_dev.azure_cleaned.amortized_costs) is attributed to
+-- the SAME product catalogue (§4.3) as Databricks spend — domain, desk
+-- and multi-desk % splits are always derived from data_product_mapping.
+-- Only the matching mechanisms differ: Azure has no jobs, warehouses or
+-- runners, so the rules key on resource, tag, resource group and
+-- subscription instead. Unmatched Azure cost stays UNALLOCATED in
+-- azure_cost_fact and NEVER enters the Databricks chargeback report —
+-- attribution is an explicit allowlist ("only certain Azure costs").
+-- =====================================================================
+
+-- §4A.1 Resource bridge (Azure waterfall rule 2)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.azure_resource_product_mapping (
+  resource_id    STRING NOT NULL,     -- full ARM resource ID, stored lowercase
+  data_product   STRING NOT NULL,
+  note           STRING,              -- optional: why mapped manually
+  mapped_by      STRING,              -- audit: who created the mapping
+  mapped_at      TIMESTAMP            -- audit: when
+)
+COMMENT 'Manual bridge: one Azure resource -> data product, for resources not yet tagged at source. Rule 2 of the Azure attribution waterfall. resource_id is the full ARM ID, lowercase. Target state is to empty this table by tagging resources directly.';
+
+-- §4A.2 Azure tag rules (Azure waterfall rule 3)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.azure_tag_product_mapping (
+  tag_key        STRING NOT NULL,     -- Azure resource tag key, exact case
+  tag_value      STRING NOT NULL,     -- composite key with tag_key
+  data_product   STRING NOT NULL,
+  note           STRING,
+  mapped_by      STRING,
+  mapped_at      TIMESTAMP
+)
+COMMENT 'Azure tag rule: any resource tag key=value -> data product. Rule 3 of the Azure waterfall. Kept separate from tag_product_mapping (Databricks custom tags) — the two tag namespaces are unrelated and a key like team can mean different things in each. Conflicting rules resolve to the alphabetically first key=value.';
+
+-- §4A.3 Resource-group rules (Azure waterfall rule 4)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.azure_rg_product_mapping (
+  subscription_id  STRING NOT NULL,   -- RG names are only unique per subscription
+  resource_group   STRING NOT NULL,   -- stored lowercase
+  data_product     STRING NOT NULL,
+  note             STRING,
+  mapped_by        STRING,
+  mapped_at        TIMESTAMP
+)
+COMMENT 'Resource-group rule: every resource in (subscription, resource group) -> data product. Rule 4 of the Azure waterfall — the analogue of a dedicated warehouse: the whole RG, present and future resources included, belongs to one product.';
+
+-- §4A.4 Subscription rules (Azure waterfall rule 5)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.azure_subscription_product_mapping (
+  subscription_id  STRING NOT NULL,   -- stored lowercase
+  data_product     STRING NOT NULL,
+  note             STRING,
+  mapped_by        STRING,
+  mapped_at        TIMESTAMP
+)
+COMMENT 'Subscription rule: everything in a subscription -> data product. Rule 5 of the Azure waterfall, the coarsest opt-in — for subscriptions dedicated to a single product. One row per subscription_id.';
+
 -- =====================================================================
 -- §5 Core allocation views (layer 1)
 -- =====================================================================
@@ -113,11 +179,12 @@ COMMENT 'Runner rule: EVERYTHING this identity runs (jobs, DLT, serverless) -> d
 --     statement_id when the text is needed.
 --   * Currency is hardcoded to USD - change if billed in another currency
 --     (must match the literal used in usage_view).
---   * List prices exclude negotiated discounts; classic warehouses also
+--   * Cost = list price less any DBU reservation-plan discount effective on
+--     the usage date (dbu_discount_plan, §4.9); classic warehouses also
 --     exclude the Azure VM/infra cost billed separately by Microsoft.
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.query_view
-COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at time-effective USD list price) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing. statement_text excluded for performance - join to system.query.history on statement_id.'
+COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at time-effective USD list price less any reservation-plan discount from dbu_discount_plan) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing. statement_text excluded for performance - join to system.query.history on statement_id.'
 AS
 WITH usage_data AS (
   -- Hourly DBU consumption and cost per warehouse,
@@ -128,7 +195,7 @@ WITH usage_data AS (
     u.workspace_id,
     u.usage_metadata.warehouse_id               AS warehouse_id,
     SUM(u.usage_quantity)                       AS total_dbu_per_hour,
-    SUM(u.usage_quantity * p.pricing.default)   AS cost_per_hour
+    SUM(u.usage_quantity * p.pricing.default)   AS list_cost_per_hour
   FROM system.billing.usage u
   JOIN system.billing.list_prices p
     ON  u.sku_name = p.sku_name
@@ -140,6 +207,27 @@ WITH usage_data AS (
     AND u.usage_unit = 'DBU'
     -- AND u.usage_date >= current_date() - INTERVAL 90 DAYS   -- optional: align with query.history retention
   GROUP BY 1, 2, 3, 4
+),
+
+usage_data_discounted AS (
+  -- DBU reservation-plan discount effective on the usage date (§4.9).
+  -- Warehouse usage is always DBU-metered, so every row is eligible.
+  -- Join + re-aggregate (MAX) instead of a plain join: overlapping discount
+  -- windows can then never fan cost out - the deepest discount wins and the
+  -- health page flags the overlap.
+  SELECT
+    ud.usage_date,
+    ud.usage_hour,
+    ud.workspace_id,
+    ud.warehouse_id,
+    ud.total_dbu_per_hour,
+    ud.list_cost_per_hour * (1 - COALESCE(MAX(d.discount_pct), 0)) AS cost_per_hour
+  FROM usage_data ud
+  LEFT JOIN main_dev.cost_reporting.dbu_discount_plan d
+    ON  ud.usage_date >= d.valid_from
+    AND ud.usage_date <= d.valid_to
+  GROUP BY ud.usage_date, ud.usage_hour, ud.workspace_id, ud.warehouse_id,
+           ud.total_dbu_per_hour, ud.list_cost_per_hour
 ),
 
 query_data AS (
@@ -217,7 +305,7 @@ SELECT
     ELSE q.duration_minutes / NULLIF(q.hour_total_duration, 0)
          * u.cost_per_hour
   END                                           AS cost_allocated
-FROM usage_data u
+FROM usage_data_discounted u
 LEFT JOIN queries_with_weights q
   ON  q.query_hour   = u.usage_hour
   AND q.warehouse_id = u.warehouse_id
@@ -232,7 +320,9 @@ LEFT JOIN main_dev.cost_reporting.user_mapping um
 --   * Attribution uses identity_metadata.run_as - the user or service
 --     principal the workload executed as.
 --   * Cost = usage_quantity x price effective AT THE TIME the usage
---     started; effective_list.default preferred, falls back to default.
+--     started (effective_list.default preferred, falls back to default),
+--     less any DBU reservation-plan discount effective on the usage date
+--     (dbu_discount_plan, §4.9) - DBU-metered rows only.
 --   * Job names from usage_metadata.job_name, else latest name in
 --     system.workflow.jobs (deduplicated per workspace + job).
 --   * tags_json carries ALL custom tags as a key-sorted JSON object -
@@ -245,7 +335,7 @@ LEFT JOIN main_dev.cost_reporting.user_mapping um
 --     keep their raw run_as identity.
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.usage_view
-COMMENT 'Daily chargeback of all non-SQL-warehouse spend (jobs, DLT, serverless, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred). SQL warehouse usage excluded - allocated per-query in query_view. Unmapped workspaces surface as UNMAPPED rows so totals reconcile with billing. Exposes job_id, tag_data_product and tags_json (all custom tags, key-sorted JSON) for the attribution waterfall in cost_fact.'
+COMMENT 'Daily chargeback of all non-SQL-warehouse spend (jobs, DLT, serverless, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred) less any reservation-plan discount from dbu_discount_plan (DBU-metered rows only). SQL warehouse usage excluded - allocated per-query in query_view. Unmapped workspaces surface as UNMAPPED rows so totals reconcile with billing. Exposes job_id, tag_data_product and tags_json (all custom tags, key-sorted JSON) for the attribution waterfall in cost_fact.'
 AS
 WITH latest_jobs AS (
   -- Latest known name per job. job_id is only unique within a
@@ -264,8 +354,9 @@ WITH latest_jobs AS (
     FROM system.workflow.jobs
   )
   WHERE rn = 1
-)
+),
 
+base AS (
 SELECT
   u.usage_date,
   COALESCE(um.user_name, u.identity_metadata.run_as)          AS user_name,
@@ -290,7 +381,7 @@ SELECT
   SUM(u.usage_quantity)                                       AS total_dbus,
   SUM(u.usage_quantity
       * COALESCE(lp.pricing.effective_list.default,
-                 lp.pricing.default))                         AS total_cost
+                 lp.pricing.default))                         AS total_list_cost
 FROM system.billing.usage u
 
 -- Time-effective price: match on the price row valid when usage STARTED.
@@ -338,7 +429,46 @@ GROUP BY
   u.custom_tags.domain,
   u.custom_tags.desk,
   u.custom_tags.Environment,
-  tags_json;
+  tags_json
+)
+
+-- DBU reservation-plan discount effective on the usage date (§4.9), applied
+-- to DBU-metered rows only. Join + re-aggregate (MAX) instead of a plain
+-- join: overlapping discount windows can then never fan cost out - the
+-- deepest discount wins and the health page flags the overlap.
+SELECT
+  b.usage_date,
+  b.user_name,
+  b.desk,
+  b.workspace_name,
+  b.job_runner,
+  b.job_id,
+  b.job_name,
+  b.workspace_id,
+  b.sku_name,
+  b.billing_origin_product,
+  b.is_serverless,
+  b.usage_unit,
+  b.tag_data_product,
+  b.provider,
+  b.domain,
+  b.tag_desk,
+  b.environment,
+  b.tags_json,
+  b.total_dbus,
+  b.total_list_cost
+    * (1 - CASE WHEN b.usage_unit = 'DBU'
+                THEN COALESCE(MAX(d.discount_pct), 0)
+                ELSE 0 END)                                   AS total_cost
+FROM base b
+LEFT JOIN main_dev.cost_reporting.dbu_discount_plan d
+  ON  b.usage_date >= d.valid_from
+  AND b.usage_date <= d.valid_to
+GROUP BY b.usage_date, b.user_name, b.desk, b.workspace_name, b.job_runner,
+         b.job_id, b.job_name, b.workspace_id, b.sku_name,
+         b.billing_origin_product, b.is_serverless, b.usage_unit,
+         b.tag_data_product, b.provider, b.domain, b.tag_desk, b.environment,
+         b.tags_json, b.total_dbus, b.total_list_cost;
 
 -- §5.3 query_view_daily_summary — convenience rollup
 CREATE OR REPLACE VIEW main_dev.cost_reporting.query_view_daily_summary
@@ -584,6 +714,194 @@ SELECT
                                                 AS desk_month_total
 FROM main_dev.cost_reporting.monthly_chargeback
 GROUP BY 1, 2, 3, 4;
+
+-- =====================================================================
+-- §6A Azure semantic layer
+--
+-- Parallel to §5/§6, over main_dev.azure_cleaned.amortized_costs (edit
+-- the source table here if it moves — the setup script only rewrites the
+-- main_dev.cost_reporting schema, source tables are left as written).
+-- Deliberately NOT unioned into cost_fact / monthly_chargeback: the §7.1
+-- reconciliation invariant (billing = cost_fact = report) is a Databricks
+-- statement, and Azure attribution is an allowlist — the unmatched
+-- remainder of the Azure bill must not flood the Databricks UNALLOCATED
+-- line. Desk-facing rollups read azure_monthly_chargeback instead.
+-- =====================================================================
+
+-- §6A.1 azure_usage_view — daily Azure cost per resource + parsed tags
+--
+--   * One row per day / subscription / resource group / resource /
+--     meter category / tag set, cost in USD (cost_in_usd).
+--   * ARM identifiers are lowercased — Azure treats them case-
+--     insensitively but exports mix cases, which would split group keys
+--     and break rule joins.
+--   * tags arrives as a JSON-ish string; Azure cost exports often ship
+--     the pairs WITHOUT the outer braces, so they are re-added before
+--     from_json. tags_json is re-serialized key-sorted, exactly like
+--     usage_view.tags_json, so identical tag sets group together and
+--     tag rules resolve once per DISTINCT set.
+
+CREATE OR REPLACE VIEW main_dev.cost_reporting.azure_usage_view
+COMMENT 'Daily Azure amortized cost per resource from azure_cleaned.amortized_costs, in USD. ARM ids lowercased; resource tags parsed (outer braces restored when the export omits them) and exposed as tag_data_product + key-sorted tags_json — the inputs of the Azure attribution waterfall in azure_cost_fact.'
+AS
+WITH src AS (
+  SELECT
+    `date`                                        AS usage_date,
+    lower(subscription_id)                        AS subscription_id,
+    lower(resource_group)                         AS resource_group,
+    lower(resource_id)                            AS resource_id,
+    meter_category,
+    consumed_service,
+    application_name,
+    environment,
+    cost_in_usd,
+    -- Azure exports often ship 'k': 'v' pairs without the outer braces
+    CASE
+      WHEN tags IS NULL OR trim(tags) = ''  THEN NULL
+      WHEN startswith(trim(tags), '{')      THEN trim(tags)
+      ELSE concat('{', trim(tags), '}')
+    END                                           AS tags_raw
+  FROM main_dev.azure_cleaned.amortized_costs
+),
+parsed AS (
+  SELECT *, from_json(tags_raw, 'map<string,string>') AS tag_map FROM src
+)
+SELECT
+  usage_date,
+  subscription_id,
+  resource_group,
+  resource_id,
+  element_at(split(resource_id, '/'), -1)         AS resource_name,
+  meter_category,
+  consumed_service,
+  application_name,
+  environment,
+  element_at(tag_map, 'data_product')             AS tag_data_product,
+  -- all resource tags, key-sorted so identical tag sets group together
+  to_json(map_from_entries(array_sort(map_entries(tag_map)))) AS tags_json,
+  SUM(cost_in_usd)                                AS total_cost
+FROM parsed
+GROUP BY
+  usage_date, subscription_id, resource_group, resource_id, resource_name,
+  meter_category, consumed_service, application_name, environment,
+  tag_data_product, tags_json;
+
+-- §6A.2 azure_cost_fact — Azure attribution waterfall
+--
+--   * Waterfall (mirrors cost_fact, Azure nouns):
+--       1 TAG               data_product tag on the resource itself
+--       2 RESOURCE_MAPPING  resource_id in azure_resource_product_mapping
+--       3 TAG_RULE          any resource tag matches azure_tag_product_mapping
+--       4 RESOURCE_GROUP    (subscription, resource group) rule
+--       5 SUBSCRIPTION      subscription rule
+--       6 NONE              UNALLOCATED — visible in coverage, never billed
+--   * domain/desk/splits derived from data_product_mapping with the same
+--     validity-period join as cost_fact; multi-desk products fan out one
+--     row per desk with cost scaled by cost_split_pct.
+--   * Rule tables are deduplicated per key (MIN) so duplicate rows can
+--     never fan out cost; the alphabetically-first tag rule wins ties.
+
+CREATE OR REPLACE VIEW main_dev.cost_reporting.azure_cost_fact
+COMMENT 'Azure cost with data_product attribution waterfall (TAG > RESOURCE_MAPPING > TAG_RULE > RESOURCE_GROUP > SUBSCRIPTION > NONE) and domain/desk derived from validity-versioned data_product_mapping — the same catalogue, splits included, as Databricks cost_fact. Unmatched cost stays UNALLOCATED here and never enters the Databricks chargeback report.'
+AS
+WITH tag_rule_matches AS (
+  -- resolve tag rules once per DISTINCT tag set; MIN_BY = deterministic winner
+  SELECT
+    t.tags_json,
+    MIN_BY(r.data_product, CONCAT(r.tag_key, '=', r.tag_value)) AS data_product
+  FROM (SELECT DISTINCT tags_json FROM main_dev.cost_reporting.azure_usage_view
+        WHERE tags_json IS NOT NULL) t
+  JOIN main_dev.cost_reporting.azure_tag_product_mapping r
+    ON element_at(from_json(t.tags_json, 'map<string,string>'), r.tag_key)
+       = r.tag_value
+  GROUP BY t.tags_json
+),
+resource_rules AS (
+  SELECT lower(resource_id) AS resource_id, MIN(data_product) AS data_product
+  FROM main_dev.cost_reporting.azure_resource_product_mapping
+  GROUP BY 1
+),
+rg_rules AS (
+  SELECT lower(subscription_id) AS subscription_id,
+         lower(resource_group)  AS resource_group,
+         MIN(data_product)      AS data_product
+  FROM main_dev.cost_reporting.azure_rg_product_mapping
+  GROUP BY 1, 2
+),
+subscription_rules AS (
+  SELECT lower(subscription_id) AS subscription_id, MIN(data_product) AS data_product
+  FROM main_dev.cost_reporting.azure_subscription_product_mapping
+  GROUP BY 1
+),
+attributed AS (
+  SELECT
+    u.*,
+    COALESCE(
+      u.tag_data_product,                        -- rule 1: TAG
+      rm.data_product,                           -- rule 2: RESOURCE_MAPPING
+      tr.data_product,                           -- rule 3: TAG_RULE
+      rg.data_product,                           -- rule 4: RESOURCE_GROUP
+      sm.data_product,                           -- rule 5: SUBSCRIPTION
+      'UNALLOCATED'                              -- rule 6: NONE
+    )                                            AS data_product,
+    CASE
+      WHEN u.tag_data_product IS NOT NULL THEN 'TAG'
+      WHEN rm.data_product    IS NOT NULL THEN 'RESOURCE_MAPPING'
+      WHEN tr.data_product    IS NOT NULL THEN 'TAG_RULE'
+      WHEN rg.data_product    IS NOT NULL THEN 'RESOURCE_GROUP'
+      WHEN sm.data_product    IS NOT NULL THEN 'SUBSCRIPTION'
+      ELSE 'NONE'
+    END                                          AS attribution_method
+  FROM main_dev.cost_reporting.azure_usage_view u
+  LEFT JOIN resource_rules rm
+    ON u.resource_id = rm.resource_id
+  LEFT JOIN tag_rule_matches tr
+    ON u.tags_json = tr.tags_json
+  LEFT JOIN rg_rules rg
+    ON  u.subscription_id = rg.subscription_id
+    AND u.resource_group  = rg.resource_group
+  LEFT JOIN subscription_rules sm
+    ON u.subscription_id = sm.subscription_id
+)
+SELECT
+  a.usage_date,
+  COALESCE(dp.data_domain, 'UNALLOCATED')        AS data_domain,
+  a.data_product,
+  COALESCE(dp.desk, 'UNALLOCATED')               AS desk,
+  a.attribution_method,
+  COALESCE(dp.cost_split_pct, 1.0)               AS cost_split_pct,
+  a.tag_data_product                             AS raw_tag_data_product,
+  a.tags_json,
+  a.subscription_id,
+  a.resource_group,
+  a.resource_id,
+  a.resource_name,
+  a.meter_category,
+  a.consumed_service,
+  a.application_name,
+  a.environment,
+  -- fan-out for split products is deliberate: one row per paying desk
+  a.total_cost * COALESCE(dp.cost_split_pct, 1.0) AS cost
+FROM attributed a
+LEFT JOIN main_dev.cost_reporting.data_product_mapping dp
+  ON  a.data_product = dp.data_product
+  AND a.usage_date >= dp.valid_from
+  AND a.usage_date <  COALESCE(dp.valid_to, DATE '9999-12-31');
+
+-- §6A.3 azure_monthly_chargeback — desk-facing Azure rollup
+CREATE OR REPLACE VIEW main_dev.cost_reporting.azure_monthly_chargeback
+COMMENT 'Monthly Azure rollup: billing month x domain x product x desk x meter category. UNALLOCATED rows are the not-yet-claimed remainder of the Azure bill — visible here and on the Azure coverage screen, never billed to a desk.'
+AS
+SELECT
+  DATE_TRUNC('month', usage_date)                AS billing_month,
+  data_domain,
+  data_product,
+  desk,
+  meter_category                                 AS usage_category,
+  COUNT(DISTINCT resource_id)                    AS distinct_resources,
+  SUM(cost)                                      AS total_cost
+FROM main_dev.cost_reporting.azure_cost_fact
+GROUP BY 1, 2, 3, 4, 5;
 
 -- =====================================================================
 -- §9 Materialization targets (empty on creation; filled by the daily

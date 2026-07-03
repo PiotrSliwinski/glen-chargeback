@@ -24,10 +24,10 @@ export async function getReconciliation(): Promise<ReconRow[]> {
   if (env.DAL_MOCK) return [...mockStore.recon].sort((a, b) => b.billing_month.localeCompare(a.billing_month));
 
   return query(
-    `WITH billing_truth AS (
-       SELECT DATE_TRUNC('month', u.usage_date) AS billing_month,
+    `WITH billing_daily AS (
+       SELECT u.usage_date, u.usage_unit,
               SUM(u.usage_quantity
-                  * COALESCE(lp.pricing.effective_list.default, lp.pricing.default)) AS billing_cost
+                  * COALESCE(lp.pricing.effective_list.default, lp.pricing.default)) AS list_cost
        FROM system.billing.usage u
        LEFT JOIN system.billing.list_prices lp
          ON  u.sku_name = lp.sku_name
@@ -35,6 +35,23 @@ export async function getReconciliation(): Promise<ReconRow[]> {
          AND lp.currency_code = 'USD'
          AND u.usage_start_time >= lp.price_start_time
          AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
+       GROUP BY 1, 2
+     ),
+     -- DBU reservation discount, same as query_view/usage_view: join +
+     -- re-aggregate so overlapping windows can never fan cost out, DBU rows only
+     billing_truth AS (
+       SELECT DATE_TRUNC('month', b.usage_date) AS billing_month,
+              SUM(b.list_cost
+                  * (1 - CASE WHEN b.usage_unit = 'DBU'
+                              THEN COALESCE(b.discount_pct, 0) ELSE 0 END)) AS billing_cost
+       FROM (
+         SELECT b.usage_date, b.usage_unit, b.list_cost, MAX(d.discount_pct) AS discount_pct
+         FROM billing_daily b
+         LEFT JOIN ${T("dbu_discount_plan")} d
+           ON  b.usage_date >= d.valid_from
+           AND b.usage_date <= d.valid_to
+         GROUP BY b.usage_date, b.usage_unit, b.list_cost
+       ) b
        GROUP BY 1
      ),
      fact_total AS (
@@ -187,6 +204,45 @@ export async function getIntegrityViolations(product?: string): Promise<Integrit
         detail: `warehouse ${f.warehouse_id}: is_shared=${f.is_shared} with data_product=${f.data_product ?? "NULL"}`,
       });
     }
+
+    // DBU reservation windows must not overlap (both ends inclusive) — the
+    // views resolve overlaps deterministically (deepest discount wins), but
+    // the intended rate is ambiguous. Duplicate windows count as overlaps.
+    const discountOverlaps = await query(
+      `SELECT a.valid_from, a.valid_to, b.valid_from AS conflicting_from
+       FROM ${T("dbu_discount_plan")} a
+       JOIN ${T("dbu_discount_plan")} b
+         ON  a.valid_from < b.valid_from
+         AND a.valid_to  >= b.valid_from
+       UNION ALL
+       SELECT valid_from, valid_to, valid_from
+       FROM ${T("dbu_discount_plan")}
+       GROUP BY valid_from, valid_to HAVING COUNT(*) > 1`,
+      {},
+      z.object({ valid_from: zDateOrNull, valid_to: zDateOrNull, conflicting_from: zDateOrNull }),
+    );
+    for (const o of discountOverlaps) {
+      violations.push({
+        check: "discount_overlap",
+        detail:
+          o.valid_from === o.conflicting_from
+            ? `dbu_discount_plan: duplicate windows ${o.valid_from} → ${o.valid_to}`
+            : `dbu_discount_plan: window ${o.valid_from} → ${o.valid_to} overlaps window starting ${o.conflicting_from}`,
+      });
+    }
+
+    const discountRanges = await query(
+      `SELECT valid_from, valid_to, discount_pct FROM ${T("dbu_discount_plan")}
+       WHERE discount_pct <= 0 OR discount_pct > 1 OR valid_to < valid_from`,
+      {},
+      z.object({ valid_from: zDateOrNull, valid_to: zDateOrNull, discount_pct: zNum }),
+    );
+    for (const r of discountRanges) {
+      violations.push({
+        check: "discount_range",
+        detail: `dbu_discount_plan: window ${r.valid_from} → ${r.valid_to} with discount_pct=${r.discount_pct} — must be a 0–1 fraction and valid_to ≥ valid_from`,
+      });
+    }
   }
 
   return violations;
@@ -298,6 +354,27 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
           detail: `job_product_mapping has duplicate rows for (workspace ${j.workspace_id}, job ${j.job_id})`,
         });
       seen.add(key);
+    }
+
+    // DBU reservation windows: no overlaps (both ends inclusive), sane rates
+    const discounts = [...mockStore.dbuDiscounts].sort((a, b) =>
+      a.valid_from.localeCompare(b.valid_from),
+    );
+    for (let i = 0; i < discounts.length - 1; i++) {
+      if (discounts[i].valid_to >= discounts[i + 1].valid_from) {
+        violations.push({
+          check: "discount_overlap",
+          detail: `dbu_discount_plan: window ${discounts[i].valid_from} → ${discounts[i].valid_to} overlaps window starting ${discounts[i + 1].valid_from}`,
+        });
+      }
+    }
+    for (const d of discounts) {
+      if (d.discount_pct <= 0 || d.discount_pct > 1 || d.valid_to < d.valid_from) {
+        violations.push({
+          check: "discount_range",
+          detail: `dbu_discount_plan: window ${d.valid_from} → ${d.valid_to} with discount_pct=${d.discount_pct} — must be a 0–1 fraction and valid_to ≥ valid_from`,
+        });
+      }
     }
   }
   return violations;

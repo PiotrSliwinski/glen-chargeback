@@ -34,7 +34,8 @@ rule, and known gap.
 
 | Area | What you can do |
 |---|---|
-| **Reference data** | Full CRUD (within the methodology's rules) on all seven mapping tables: product catalogue (versioned), job bridge, tag rules, warehouse classification, runner rules, users, workspaces |
+| **Reference data** | Full CRUD (within the methodology's rules) on all seven Databricks mapping tables — product catalogue (versioned), job bridge, tag rules, warehouse classification, runner rules, users, workspaces — plus the four Azure attribution rule tables (resource bridge, Azure tag rules, resource-group rules, subscription rules) and DBU reservation-discount windows (`dbu_discount_plan`) |
+| **Azure attribution** | Route Azure spend (`azure_cleaned.amortized_costs`) to the same product catalogue via an allowlist waterfall (TAG → resource bridge → tag rule → RG rule → subscription rule), with a 30-day coverage audit and per-desk rollup — only matched cost reaches a desk |
 | **Work queue** | Five actionable queues of unattributed/unmapped cost with inline, pre-filled fix forms |
 | **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, printable desk invoices, per-desk self-service pages, tagging scorecard |
 | **Exports** | 12 CSV reports + a 6-sheet XLSX report workbook |
@@ -70,8 +71,8 @@ rule, and known gap.
 | Pages | `app/(app)/*` | Server components; Suspense-wrapped dynamic content |
 | Exports | `app/api/export/*` | CSV and XLSX route handlers |
 
-**Cache tags:** `reports-live`, `reports-published`, `catalogue`, `mappings`, `queue`, `health`.
-Each mutation expires exactly the tags it affects.
+**Cache tags:** `reports-live`, `reports-published`, `catalogue`, `mappings`, `queue`, `health`,
+`azure`. Each mutation expires exactly the tags it affects.
 
 ---
 
@@ -107,7 +108,7 @@ Each mutation expires exactly the tags it affects.
 | `/desks`, `/desks/[desk]` | viewer | Desk self-service views |
 | `/invoices`, `/invoices/[desk]` | viewer | Published desk invoices |
 | `/queue` | steward | Work queue (5 tabs) |
-| `/admin` (+ 5 sub-pages) | steward | Reference-data management |
+| `/admin` (+ 6 sub-pages) | steward | Reference-data management (incl. `/admin/azure`) |
 | `/health` | steward (publish: publisher) | Checks, diff, publication |
 | `/login` | public | Sign-in |
 
@@ -199,6 +200,57 @@ platform team (the `USER` rule applies to ad-hoc spend only).
   still-billing workspace shows as `UNMAPPED: <id>` — spend is never dropped.
 - **Schema note:** the deployed table has `workspace_id BIGINT` (methodology DDL says STRING);
   writes cast explicitly and all ID reads coerce via a shared `zId` parser.
+
+### 5.6 Azure attribution — `/admin/azure` (`azure_resource_product_mapping`, `azure_tag_product_mapping`, `azure_rg_product_mapping`, `azure_subscription_product_mapping`)
+
+Attributes Azure spend from `main_dev.azure_cleaned.amortized_costs` to **the same product
+catalogue** as Databricks spend — domain, desk, validity versioning and multi-desk % splits all
+derive from `data_product_mapping`. Two views, mirroring the jobs screen:
+
+**Mapping rules** — the Azure waterfall (implemented in the `azure_cost_fact` view):
+
+| Rule | Mechanism | Analogue on the jobs screen |
+|---|---|---|
+| 1 `TAG` | `data_product` tag on the resource itself — always wins | tag at source |
+| 2 `RESOURCE_MAPPING` | resource bridge: one ARM resource ID → product (tech debt; janitor panel flags rows whose resource is now tagged at source; bulk re-map / bulk delete) | job bridge |
+| 3 `TAG_RULE` | any Azure resource tag `key=value` → product (separate table from the Databricks tag rules — different tag namespace) | tag rule |
+| 4 `RESOURCE_GROUP` | whole (subscription, resource group) → product | dedicated warehouse |
+| 5 `SUBSCRIPTION` | whole subscription → product | runner rule |
+| 6 `NONE` | stays `UNALLOCATED` — visible in coverage, **never billed to a desk** | work queue |
+
+**Attribution is an allowlist**: only matched cost reaches desks. The unmatched remainder of the
+Azure bill (shared platform infrastructure etc.) is expected and is deliberately **not** merged
+into the Databricks `cost_fact` / `monthly_chargeback`, so the §7.1 reconciliation invariant
+(billing = fact = report) is untouched. Desk-facing Azure rollups read the parallel
+`azure_monthly_chargeback` view.
+
+**Coverage — last 30 days** — audit of every Azure resource with cost: its actual tags (chips,
+`data_product` highlighted, boilerplate collapsed), the attribution method(s) that carried the
+cost, per-desk "Azure cost reaching desks" rollup, method filter buttons, and status chips
+("tag landed — bridge removable", "unmatched — not billed", …).
+
+ARM identifiers (resource IDs, subscription GUIDs, RG names) are **lowercased at the write
+boundary** and in `azure_usage_view`, so rule joins are case-insensitive. The tags column is
+parsed defensively (outer braces restored when the export omits them). Duplicate rule keys are
+rejected by the actions and deduplicated (`MIN`) in the view so they can never fan out cost.
+
+### 5.7 DBU discounts — `/admin/discounts` (`dbu_discount_plan`)
+
+Purchased DBU reservation plans (Methodology §4.9): date windows (**both days inclusive**)
+billing Databricks DBU spend at list price × (1 − discount). Applied at pricing time inside
+`query_view` / `usage_view` — `usage_unit = 'DBU'` rows only, never Azure cost — so
+`cost_fact`, reports, invoices and the health reconciliation all inherit the discounted rate.
+
+- KPI tiles: discount in effect today, window count, next scheduled window; rows carry an
+  active / scheduled / expired status chip.
+- **Add plan** (first day, last day, % off list entered as a percentage, optional contract/PO
+  note). The action rejects reversed dates, percentages outside (0, 100], and any overlap with
+  an existing window — one discount per day.
+- **Remove plan** (to change a plan, remove it and add a corrected one). Changes re-price live
+  views immediately; published months keep the figures they were published with.
+- Windows edited directly in the DB are re-checked on the health page (`discount_overlap`,
+  `discount_range`), and the reconciliation prices billing truth with the same discount so the
+  §7.1 invariant keeps holding.
 
 ---
 
@@ -313,7 +365,8 @@ is published). Currency/percent number formats, bold frozen headers, auto-width 
 - **Integrity checks** (§7.4 a–e): validity overlaps (per product **and desk** — concurrent rows
   for different desks are a split, not an overlap), desk splits whose shares don't sum to 100%,
   orphan bridge/rule products, duplicate bridge keys, duplicate/conflicting tag and runner rules,
-  inconsistent warehouse flags — listed as explicit violations or a green all-clear.
+  inconsistent warehouse flags, and overlapping or out-of-range DBU reservation-discount windows
+  — listed as explicit violations or a green all-clear.
 - **Re-run checks** button (expires the `health` cache tag).
 - **Publication diff**: before publishing, the candidate month's **live desk totals (what the
   snapshot will freeze)** side-by-side with the last published month, with per-desk deltas — the
@@ -357,7 +410,12 @@ Fixture world: 7 months (2026-01…07) with growth trend, 3 domains, 6 catalogue
 with a desk-move history: `pricing-curves`, fx → rates at 2026-05-01), 3 desks, 5 users,
 3 workspaces, populated queues (4 untagged jobs, 3 unknown runners, 1 unknown workspace,
 2 rogue tags, 2 warehouse candidates), reconciliation rows with sub-dollar gaps, 5 published
-months, and one janitor-eligible bridge row.
+months, and one janitor-eligible bridge row. Azure fixtures: 2 subscriptions, 10 resources with
+30-day attributions exercising every waterfall method (incl. one janitor-eligible resource
+bridge and 3 unmatched resources), 2 resource bridges, 1 tag rule, 1 RG rule, 1 subscription
+rule — writes re-attribute the fixture rows so the coverage tab reacts like the real views.
+One DBU reservation-discount window (27%, 2025-12-08 → 2026-06-12) exercises the discounts
+screen; the mock's static monthly figures do **not** re-price when windows change.
 
 ---
 
@@ -401,6 +459,9 @@ Honest statement of what has and hasn't been exercised:
 
 | Item | Notes |
 |---|---|
+| Azure in reports & invoices | `azure_monthly_chargeback` exists and the coverage tab shows per-desk totals, but the dashboard/report pack/desk invoices are Databricks-only. Needs a publish snapshot + recon story for Azure before invoicing from it |
+| Azure work-queue tab | Unmatched Azure resources surface on the coverage tab (`method=NONE` filter); a queue tab with inline fixes would mirror the Databricks flow |
+| Azure health checks | Duplicate/conflicting Azure rules and orphan products are prevented at write time but not yet re-checked on the health page |
 | Budgets & burn rate | Needs a new `desk_budget` reference table + admin screen; then MTD vs budget with month-end projection |
 | Anomaly flags | Daily product cost vs trailing baseline (z-score) on the dashboard |
 | What-if move preview | Show desk-total impact of a catalogue move before the cutover |
