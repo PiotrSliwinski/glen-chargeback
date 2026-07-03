@@ -470,14 +470,21 @@ GROUP BY 1, 2, 3, 4, 5;
 CREATE OR REPLACE VIEW main_dev.cost_reporting.attribution_coverage
 COMMENT 'Monthly share of cost by attribution method. Goal: TAG share rising, JOB_MAPPING and NONE shrinking. Publish alongside the chargeback report to drive tagging adoption.'
 AS
+WITH monthly AS (
+  SELECT
+    DATE_TRUNC('month', usage_date)               AS billing_month,
+    attribution_method,
+    SUM(cost)                                     AS cost
+  FROM main_dev.cost_reporting.cost_fact
+  GROUP BY 1, 2
+)
 SELECT
-  DATE_TRUNC('month', usage_date)               AS billing_month,
+  billing_month,
   attribution_method,
-  SUM(cost)                                     AS cost,
-  SUM(cost) / SUM(SUM(cost)) OVER (PARTITION BY DATE_TRUNC('month', usage_date))
+  cost,
+  cost / SUM(cost) OVER (PARTITION BY billing_month)
                                                 AS pct_of_month
-FROM main_dev.cost_reporting.cost_fact
-GROUP BY 1, 2;
+FROM monthly;
 
 -- §6.4 desk_monthly_invoice — per-desk statement
 CREATE OR REPLACE VIEW main_dev.cost_reporting.desk_monthly_invoice
@@ -514,3 +521,4 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.monthly_chargeback_published
 AS SELECT current_timestamp() AS published_at,
           billing_month AS snapshot_month, *
    FROM main_dev.cost_reporting.monthly_chargeback WHERE 1 = 0;
+ 
