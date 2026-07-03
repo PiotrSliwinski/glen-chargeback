@@ -11,6 +11,8 @@ export const PAGE_HELP = {
     "Landing view of the chargeback system: one month of Databricks spend — live from monthly_chargeback, or the frozen snapshot in Published mode — rolled up by data domain, with a 12-month trend and a breakdown of how cost was attributed. All figures are list-price USD derived from Databricks system billing tables; discounts are not applied.",
   report:
     "The distribution-ready monthly pack: executive summary, month-over-month movement by desk with auto-generated commentary, domain → product → desk breakdown, attribution coverage, and the per-desk tagging scorecard. Same figures as the dashboard for the selected month and mode. Print it, or download the XLSX workbook / CSVs at the bottom.",
+  analytics:
+    "Decision-support layer over the same monthly_chargeback figures: spend trajectory and run rate, unit economics ($/DBU) by usage category, product concentration (Pareto), month-over-month movers, desk share shifts and the 12-month attribution-mix trend — with auto-generated plain-language findings. Trends always read live history; the selected month follows the Live/Published toggle.",
   drill:
     "Transparency drill-down: domain → products in that domain → the actual cost lines behind one product (top 200 slices of live cost_fact). Every line shows the attribution method that routed it here and whether it ran on serverless or classic compute — the answer to “why did this cost land where it did?”.",
   desks:
@@ -51,6 +53,15 @@ export const KPI_HELP = {
   unallocatedCost:
     "SUM(total_cost) where data_product = 'UNALLOCATED' — spend no waterfall rule (tag, job bridge, tag rule, warehouse mapping, runner rule, or — for ad-hoc spend only — the runner's home desk) could attribute. Job spend never defaults to the runner, so unmapped jobs land here by design. Reported as a real line item, never hidden. The work queue exists to drive it to zero.",
 
+  effectiveRate:
+    "The month's total cost ÷ total DBUs from monthly_chargeback — the blended list-price rate actually paid per DBU. It moves when the workload mix shifts toward pricier SKUs (serverless, model serving, DLT), not when volume grows — so rate up = mix change, cost up with rate flat = volume change.",
+  runRate:
+    "The selected month's total cost × 12 — what the year costs if every month looked like this one. Most honest on the last closed month; a partial current month understates it.",
+  threeMonthGrowth:
+    "Total cost this month ÷ total cost three months earlier − 1, on live figures. Smooths single-month noise — the KPI to watch for budget drift.",
+  topConcentration:
+    "Share of the month's total cost carried by the three most expensive products (UNALLOCATED counts as a product, so concentration never hides unattributed spend). High concentration means one migration or optimisation moves the whole bill.",
+
   deskMonthCost:
     "Sum of this desk's rows in live monthly_chargeback for the selected month — the figure that would be frozen into the desk's invoice at publication.",
   deskMomChange:
@@ -80,6 +91,23 @@ export const KPI_HELP = {
     "Jobs with any cost attributed through the job bridge (rule 2), a tag rule (rule 3) or a runner rule (rule 5). Each is a candidate for tagging at source with data_product, after which the mapping can be pruned — the janitor on the Job mapping page flags when a bridge row is safe to remove.",
   jobsUnmappedCost:
     "Sum of 30-day cost with attribution_method = NONE across all jobs — spend currently landing in UNALLOCATED. Fix it in the work queue: tag the job at source, or bridge it.",
+} as const;
+
+export const ANALYTICS_SECTION_HELP = {
+  insights:
+    "Auto-generated from the same figures shown on this page: spend trajectory, largest product moves, rate-vs-volume decomposition, concentration, attribution quality and unallocated direction. Rules, not AI — every bullet is reproducible from monthly_chargeback and attribution_coverage.",
+  movers:
+    "Products ranked by absolute month-over-month cost change. The current month follows the selected mode; the previous month is always live — same convention as the report pack's movement section.",
+  pareto:
+    "Products ranked by cost with cumulative share of the month's total — how few things drive the bill. UNALLOCATED appears as a product like any other, so concentration never hides unattributed spend.",
+  categories:
+    "Unit economics per usage category (JOBS, SQL_WAREHOUSE, DLT, MODEL_SERVING…): cost, DBUs and the blended $/DBU rate with its month-over-month change. Rate moves signal mix shifts (e.g. serverless adoption), not volume.",
+  rateTrend:
+    "Blended $/DBU per month over the trailing 12 months (total cost ÷ total DBUs, live figures). Unlike total cost, this is meaningful even for a partial current month.",
+  coverageTrend:
+    "Attribution mix per month over the trailing 12 months, from the attribution_coverage view. Goal: TAG (green) widening, JOB_MAPPING and NONE shrinking.",
+  deskShares:
+    "Each desk's share of the month's total cost vs its share last month, in percentage points. Share shifts show relative growth even when every desk's absolute spend rises.",
 } as const;
 
 export const REPORT_SECTION_HELP = {

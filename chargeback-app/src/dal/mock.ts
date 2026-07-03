@@ -257,7 +257,9 @@ function createStore(): MockStore {
     // cost_fact exposes: the job's actual custom tags (null = untagged).
     jobAttributions: [
       { workspace_id: "1111111111111111", job_id: "310", job_name: "nightly-var", attribution_method: "JOB_MAPPING", data_product: "var-engine", desk: "risk", tags_json: null, dbus_30d: 33900, cost_30d: 15600 },
-      { workspace_id: "1111111111111111", job_id: "501", job_name: "curves-build-eod", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", tags_json: "{\"Environment\":\"prod\",\"data_product\":\"pricing-curves\",\"team\":\"market-data-eng\"}", dbus_30d: 22100, cost_30d: 9800 },
+      // carries the full boilerplate platform tag set real jobs inherit from
+      // Azure policy — exercises the collapsed "+N more" tag display
+      { workspace_id: "1111111111111111", job_id: "501", job_name: "curves-build-eod", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", tags_json: "{\"AdminSiteCode\":\"GBLDN\",\"AdminSiteName\":\"London\",\"BusinessFunction\":\"IT\",\"BusinessUnit\":\"OilMarketing\",\"BusinessUnitBudgetOwner\":\"warren.blount@example.com\",\"Company\":\"ExampleUK\",\"Environment\":\"prod\",\"ITPortfolio\":\"FOIT\",\"ManagedBy\":\"ARM\",\"RepositoryName\":\"example-azureplatform-foit-config\",\"data_product\":\"pricing-curves\",\"team\":\"market-data-eng\"}", dbus_30d: 22100, cost_30d: 9800 },
       { workspace_id: "2222222222222222", job_id: "845", job_name: "refdata-loader", attribution_method: "JOB_MAPPING", data_product: "ref-data-ingest", desk: "rates", tags_json: "{\"Environment\":\"prod\"}", dbus_30d: 20200, cost_30d: 8900 },
       { workspace_id: "1111111111111111", job_id: "918", job_name: "var-scenario-expansion", attribution_method: "TAG", data_product: "var-engine", desk: "risk", tags_json: "{\"data_product\":\"var-engine\",\"team\":\"risk-eng\"}", dbus_30d: 18400, cost_30d: 8500 },
       { workspace_id: "1111111111111111", job_id: "502", job_name: "curves-intraday-refresh", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", tags_json: "{\"data_product\":\"pricing-curves\"}", dbus_30d: 12800, cost_30d: 6100 },

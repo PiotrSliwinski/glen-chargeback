@@ -139,6 +139,92 @@ export function CoverageBar({ coverage }: { coverage: CoverageRow[] }) {
   );
 }
 
+/** Single-series vertical bar trend, one bar per month (e.g. blended $/DBU). */
+export function BarTrend({
+  points,
+  fmt,
+}: {
+  points: { month: string; value: number }[];
+  fmt: (v: number) => string;
+}) {
+  const max = Math.max(...points.map((p) => p.value), Number.EPSILON);
+  return (
+    <div>
+      <div className="flex h-32 items-end gap-2">
+        {points.map((p) => (
+          <div key={p.month} className="group relative flex-1">
+            <div
+              className="w-full rounded-t bg-indigo-600/80"
+              style={{ height: `${Math.max((p.value / max) * 128, 2)}px` }}
+            />
+            <div className="pointer-events-none absolute -top-6 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-1.5 py-0.5 text-xs text-background group-hover:block">
+              {fmt(p.value)}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex gap-2">
+        {points.map((p) => (
+          <span key={p.month} className="flex-1 text-center text-[10px] text-muted-foreground">
+            {p.month.slice(5)}·{p.month.slice(2, 4)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** One 100%-stacked attribution bar per month — is TAG rising, NONE shrinking? */
+export function CoverageTrend({ rows }: { rows: CoverageRow[] }) {
+  const months = [...new Set(rows.map((r) => r.billing_month))].sort();
+  const order: AttributionMethod[] = [
+    "TAG",
+    "JOB_MAPPING",
+    "TAG_RULE",
+    "WAREHOUSE_MAPPING",
+    "RUNNER_RULE",
+    "USER",
+    "NONE",
+  ];
+  const present = order.filter((m) =>
+    rows.some((r) => r.attribution_method === m && r.pct_of_month > 0),
+  );
+  return (
+    <div>
+      <div className="space-y-1.5">
+        {months.map((m) => (
+          <div key={m} className="grid grid-cols-[3.5rem_1fr] items-center gap-3">
+            <span className="text-[10px] tabular-nums text-muted-foreground">
+              {m.slice(5)}·{m.slice(2, 4)}
+            </span>
+            <div className="flex h-4 w-full overflow-hidden rounded">
+              {present.map((method) => {
+                const c = rows.find(
+                  (r) => r.billing_month === m && r.attribution_method === method,
+                );
+                if (!c || c.pct_of_month <= 0) return null;
+                return (
+                  <div
+                    key={method}
+                    style={{
+                      width: `${c.pct_of_month * 100}%`,
+                      backgroundColor: METHOD_STYLE[method].color,
+                    }}
+                    title={`${method}: ${fmtPct(c.pct_of_month)} (${fmtMoney(c.cost)})`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <Legend
+        items={present.map((m) => ({ label: m, color: METHOD_STYLE[m].color }))}
+      />
+    </div>
+  );
+}
+
 function Legend({ items }: { items: { label: string; color: string }[] }) {
   return (
     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">

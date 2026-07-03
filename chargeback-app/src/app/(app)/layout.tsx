@@ -41,6 +41,7 @@ async function RoleNav() {
   const items: NavItem[] = [
     { href: "/", label: "Dashboard" },
     { href: "/report", label: "Monthly Report" },
+    { href: "/analytics", label: "Analytics" },
     { href: "/drill", label: "Drill-down" },
     { href: "/desks", label: "Desks" },
     { href: "/invoices", label: "Invoices" },
