@@ -1,11 +1,15 @@
+import Link from "next/link";
 import {
   buildInsights,
   categoryEconomics,
-  deskShareShift,
+  countToShare,
+  deskKpis,
+  getCostHistory,
   getCoverageTrend,
   getMonthlyTotals,
-  paretoProducts,
+  productKpis,
 } from "@/dal/analytics";
+import { getDeskScorecard } from "@/dal/desks";
 import { getProductMovement, type ProductMovementRow } from "@/dal/movement";
 import { getMonthlyRows } from "@/dal/reports";
 import { fmtDbu, fmtDelta, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, shiftMonth } from "@/lib/format";
@@ -22,13 +26,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { BarTrend, CoverageTrend } from "@/components/charts";
+import { BarTrend, CoverageTrend, ShareBar, Sparkline } from "@/components/charts";
 import { MonthModePicker } from "@/components/month-picker";
 import { ModeBanner } from "@/components/mode-banner";
 import { ReportFooter } from "@/components/report-footer";
 import { ReportSkeleton } from "@/components/loading-skeletons";
 import { SearchParamsSuspense } from "@/components/keyed-suspense";
-import type { Insight } from "@/dal/analytics";
+import type { DeskKpiRow, Insight, ProductKpiRow } from "@/dal/analytics";
+import type { ReportMode } from "@/dal/types";
 
 export const metadata = { title: "Analytics" };
 
@@ -45,22 +50,30 @@ export default function AnalyticsPage({ searchParams }: { searchParams: SearchPa
 
 const signedPct = (v: number) => `${v >= 0 ? "+" : ""}${fmtPct(v)}`;
 
+/** Slices shown individually in the share bars; the tail is folded into "others". */
+const SHARE_BAR_SLICES = 8;
+const OTHERS_COLOR = "#cbd5e1";
+
 async function Analytics({ searchParams }: { searchParams: SearchParams }) {
   const { month, mode, months, publishedMonths } = await resolveReportParams(searchParams);
   const notPublished = mode === "published" && !publishedMonths.includes(month);
   const prevMonth = shiftMonth(month, -1);
 
-  const [curRows, prevRows, totals, coverageTrend, movers] = await Promise.all([
-    getMonthlyRows(month, mode),
-    getMonthlyRows(prevMonth, "live"),
-    getMonthlyTotals(month),
-    getCoverageTrend(month),
-    getProductMovement(month, mode),
-  ]);
+  const [curRows, prevRows, totals, coverageTrend, movers, productHistory, deskHistory, scorecard] =
+    await Promise.all([
+      getMonthlyRows(month, mode),
+      getMonthlyRows(prevMonth, "live"),
+      getMonthlyTotals(month),
+      getCoverageTrend(month),
+      getProductMovement(month, mode),
+      getCostHistory(month, "data_product"),
+      getCostHistory(month, "desk"),
+      getDeskScorecard(month),
+    ]);
 
-  const products = paretoProducts(curRows);
+  const products = productKpis(curRows, prevRows, productHistory);
+  const desks = deskKpis(curRows, prevRows, deskHistory, scorecard);
   const categories = categoryEconomics(curRows, prevRows);
-  const deskShares = deskShareShift(curRows, prevRows);
   const insights = buildInsights({
     month,
     totals,
@@ -81,6 +94,8 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
     cur && threeAgo && threeAgo.total_cost > 0 ? cur.total_cost / threeAgo.total_cost - 1 : null;
   const top3Share =
     products.length === 0 ? null : products[Math.min(2, products.length - 1)].cum_share;
+  const n80 = countToShare(products, 0.8);
+  const topDesk = desks.find((d) => d.cost > 0) ?? null;
   const ratePoints = totals
     .filter((t) => t.total_dbus > 0)
     .map((t) => ({ month: t.billing_month, value: t.total_cost / t.total_dbus }));
@@ -89,7 +104,7 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
     <div>
       <PageTitle
         title="Advanced analytics"
-        subtitle={`${fmtMonth(month)} — trajectory, unit economics, concentration and movers`}
+        subtitle={`${fmtMonth(month)} — cost drivers by product and desk, unit economics and movers`}
         info={PAGE_HELP.analytics}
       >
         <MonthModePicker
@@ -108,7 +123,7 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
         />
       ) : (
         <>
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <KpiTile
               label="Blended rate"
               value={rate == null ? "—" : `${fmtMoneyExact(rate)}/DBU`}
@@ -128,6 +143,7 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
               hint={growth3 == null ? "no data three months back" : `vs ${fmtMonth(shiftMonth(month, -3))}`}
               tone={growth3 != null && growth3 > 0 ? "warn" : "default"}
               info={KPI_HELP.threeMonthGrowth}
+              infoAlign="end"
             />
             <KpiTile
               label="Top-3 concentration"
@@ -135,6 +151,20 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
               hint={products.length > 0 ? `led by ${products[0].data_product}` : "no cost this month"}
               tone={top3Share != null && top3Share > 0.75 ? "warn" : "default"}
               info={KPI_HELP.topConcentration}
+            />
+            <KpiTile
+              label="Products to 80%"
+              value={n80 == null ? "—" : `${n80} of ${products.length}`}
+              hint="fewest products covering 80% of spend"
+              tone={n80 != null && n80 <= 3 ? "warn" : "default"}
+              info={KPI_HELP.productsTo80}
+            />
+            <KpiTile
+              label="Top desk share"
+              value={topDesk == null ? "—" : fmtPct(topDesk.share)}
+              hint={topDesk == null ? "no cost this month" : `${topDesk.desk} — ${fmtMoney(topDesk.cost)}`}
+              tone={topDesk != null && topDesk.share > 0.5 ? "warn" : "default"}
+              info={KPI_HELP.topDeskShare}
               infoAlign="end"
             />
           </div>
@@ -153,19 +183,49 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
             </Card>
           )}
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-1.5">
-                  Cost concentration (Pareto)
-                  <InfoTip>{ANALYTICS_SECTION_HELP.pareto}</InfoTip>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ParetoTable products={products} />
-              </CardContent>
-            </Card>
+          <Card className="mb-4">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-1.5">
+                Data products — cost drivers
+                <InfoTip>{ANALYTICS_SECTION_HELP.productDrivers}</InfoTip>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {products.length === 0 ? (
+                <EmptyState message="No cost this month." />
+              ) : (
+                <>
+                  <ShareBar items={shareBarItems(products.map((p) => ({ label: p.data_product, value: p.cost })))} />
+                  <div className="mt-4">
+                    <ProductDriversTable products={products} month={month} mode={mode} />
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
+          <Card className="mb-4">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-1.5">
+                Desks — cost drivers
+                <InfoTip>{ANALYTICS_SECTION_HELP.deskDrivers}</InfoTip>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {desks.length === 0 ? (
+                <EmptyState message="No cost this month." />
+              ) : (
+                <>
+                  <ShareBar items={shareBarItems(desks.map((d) => ({ label: d.desk, value: d.cost })))} />
+                  <div className="mt-4">
+                    <DeskDriversTable desks={desks} month={month} mode={mode} />
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-1.5">
@@ -189,24 +249,12 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
                 {ratePoints.length === 0 ? (
                   <EmptyState message="No DBU history to compute rates from." />
                 ) : (
-                  <BarTrend points={ratePoints} fmt={(v) => `${fmtMoneyExact(v)}/DBU`} />
+                  <BarTrend
+                    points={ratePoints}
+                    fmt={(v) => `${fmtMoneyExact(v)}/DBU`}
+                    labelFmt={fmtMoneyExact}
+                  />
                 )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-1.5">
-                  Desk share shift
-                  <InfoTip>{ANALYTICS_SECTION_HELP.deskShares}</InfoTip>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <DeskShareTable
-                  shares={deskShares}
-                  month={month}
-                  prevMonth={prevMonth}
-                />
               </CardContent>
             </Card>
 
@@ -281,51 +329,185 @@ function InsightList({ insights }: { insights: Insight[] }) {
   );
 }
 
-const PARETO_ROWS = 8;
+/** Top slices individually, the tail folded into a single muted "others" slice. */
+function shareBarItems(items: { label: string; value: number }[]) {
+  const shown = items.slice(0, SHARE_BAR_SLICES);
+  const rest = items.slice(SHARE_BAR_SLICES);
+  const restTotal = rest.reduce((s, i) => s + i.value, 0);
+  return restTotal > 0
+    ? [...shown, { label: `${rest.length} others`, value: restTotal, color: OTHERS_COLOR }]
+    : shown;
+}
 
-function ParetoTable({
+/** MoM movement cell: signed dollars plus %, colored by direction. */
+function DeltaCell({ delta_abs, delta_pct }: { delta_abs: number | null; delta_pct: number | null }) {
+  if (delta_abs == null) return <TableCell className="text-right tabular-nums">—</TableCell>;
+  const pct = delta_pct == null ? (delta_abs > 0 ? "new" : null) : signedPct(delta_pct);
+  return (
+    <TableCell
+      className={cn("text-right tabular-nums", {
+        "text-amber-700": delta_abs > 0,
+        "text-emerald-700": delta_abs < 0,
+      })}
+    >
+      {fmtDelta(delta_abs)}
+      {pct != null && <span className="ml-1 text-xs text-muted-foreground">({pct})</span>}
+    </TableCell>
+  );
+}
+
+const DRIVER_ROWS = 10;
+
+function ProductDriversTable({
   products,
+  month,
+  mode,
 }: {
-  products: { data_product: string; data_domain: string; cost: number; share: number; cum_share: number }[];
+  products: ProductKpiRow[];
+  month: string;
+  mode: ReportMode;
 }) {
-  if (products.length === 0) return <EmptyState message="No cost this month." />;
-  const shown = products.slice(0, PARETO_ROWS);
-  const rest = products.slice(PARETO_ROWS);
+  const shown = products.slice(0, DRIVER_ROWS);
+  const rest = products.slice(DRIVER_ROWS);
   return (
     <Table>
       <TableHeader>
         <TableRow>
           <TableHead>Product</TableHead>
           <TableHead>Domain</TableHead>
+          <TableHead className="text-right">Desks</TableHead>
           <TableHead className="text-right">Cost</TableHead>
+          <TableHead className="text-right">MoM Δ</TableHead>
           <TableHead className="text-right">Share</TableHead>
           <TableHead className="text-right">Cumulative</TableHead>
+          <TableHead className="text-right">$/DBU</TableHead>
+          <TableHead className="text-right">12-mo trend</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {shown.map((p) => (
           <TableRow key={p.data_product}>
-            <TableCell className="font-medium">{p.data_product}</TableCell>
+            <TableCell className="font-medium">
+              <Link
+                href={`/drill?month=${month}&mode=${mode}&domain=${encodeURIComponent(p.data_domain)}&product=${encodeURIComponent(p.data_product)}`}
+                className="hover:underline"
+              >
+                {p.data_product}
+              </Link>
+            </TableCell>
             <TableCell className="text-muted-foreground">{p.data_domain}</TableCell>
+            <TableCell className="text-right tabular-nums">{p.desk_count}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtMoney(p.cost)}</TableCell>
+            <DeltaCell delta_abs={p.delta_abs} delta_pct={p.delta_pct} />
             <TableCell className="text-right tabular-nums">{fmtPct(p.share)}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtPct(p.cum_share)}</TableCell>
+            <TableCell className="text-right tabular-nums">
+              {p.rate == null ? "—" : fmtMoneyExact(p.rate)}
+            </TableCell>
+            <TableCell className="text-right">
+              <div className="inline-flex justify-end">
+                <Sparkline points={p.trend} />
+              </div>
+            </TableCell>
           </TableRow>
         ))}
         {rest.length > 0 && (
           <TableRow>
-            <TableCell className="text-muted-foreground" colSpan={2}>
+            <TableCell className="text-muted-foreground" colSpan={3}>
               {rest.length} more product{rest.length === 1 ? "" : "s"}
             </TableCell>
             <TableCell className="text-right tabular-nums text-muted-foreground">
               {fmtMoney(rest.reduce((s, p) => s + p.cost, 0))}
             </TableCell>
+            <TableCell />
             <TableCell className="text-right tabular-nums text-muted-foreground">
               {fmtPct(rest.reduce((s, p) => s + p.share, 0))}
             </TableCell>
             <TableCell className="text-right tabular-nums text-muted-foreground">100.0%</TableCell>
+            <TableCell colSpan={2} />
           </TableRow>
         )}
+      </TableBody>
+    </Table>
+  );
+}
+
+function DeskDriversTable({
+  desks,
+  month,
+  mode,
+}: {
+  desks: DeskKpiRow[];
+  month: string;
+  mode: ReportMode;
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Desk</TableHead>
+          <TableHead className="text-right">Cost</TableHead>
+          <TableHead className="text-right">MoM Δ</TableHead>
+          <TableHead className="text-right">Share</TableHead>
+          <TableHead className="text-right">Δpp</TableHead>
+          <TableHead>Top product</TableHead>
+          <TableHead className="text-right">Products</TableHead>
+          <TableHead className="text-right">TAG %</TableHead>
+          <TableHead className="text-right">12-mo trend</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {desks.map((d) => (
+          <TableRow key={d.desk}>
+            <TableCell className="font-medium">
+              <Link
+                href={`/desks/${encodeURIComponent(d.desk)}?month=${month}&mode=${mode}`}
+                className="hover:underline"
+              >
+                {d.desk}
+              </Link>
+            </TableCell>
+            <TableCell className="text-right tabular-nums">{fmtMoney(d.cost)}</TableCell>
+            <DeltaCell delta_abs={d.delta_abs} delta_pct={d.delta_pct} />
+            <TableCell className="text-right tabular-nums">{fmtPct(d.share)}</TableCell>
+            <TableCell
+              className={cn("text-right tabular-nums", {
+                "text-amber-700": (d.delta_pp ?? 0) > 0.05,
+                "text-emerald-700": (d.delta_pp ?? 0) < -0.05,
+              })}
+            >
+              {d.delta_pp == null ? "—" : `${d.delta_pp >= 0 ? "+" : ""}${d.delta_pp.toFixed(1)}pp`}
+            </TableCell>
+            <TableCell>
+              {d.top_product == null ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                <>
+                  {d.top_product}
+                  {d.top_product_share != null && (
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      ({fmtPct(d.top_product_share)} of desk)
+                    </span>
+                  )}
+                </>
+              )}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">{d.product_count}</TableCell>
+            <TableCell
+              className={cn("text-right tabular-nums", {
+                "text-emerald-700": d.tag_pct != null && d.tag_pct >= 0.7,
+                "text-amber-700": d.tag_pct != null && d.tag_pct < 0.7,
+              })}
+            >
+              {d.tag_pct == null ? "—" : fmtPct(d.tag_pct)}
+            </TableCell>
+            <TableCell className="text-right">
+              <div className="inline-flex justify-end">
+                <Sparkline points={d.trend} />
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
       </TableBody>
     </Table>
   );
@@ -380,51 +562,6 @@ function CategoryTable({
             </TableRow>
           );
         })}
-      </TableBody>
-    </Table>
-  );
-}
-
-function DeskShareTable({
-  shares,
-  month,
-  prevMonth,
-}: {
-  shares: { desk: string; cost: number; share: number; prev_share: number | null; delta_pp: number | null }[];
-  month: string;
-  prevMonth: string;
-}) {
-  if (shares.length === 0) return <EmptyState message="No cost this month." />;
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Desk</TableHead>
-          <TableHead className="text-right">Cost</TableHead>
-          <TableHead className="text-right">{fmtMonth(month)}</TableHead>
-          <TableHead className="text-right">{fmtMonth(prevMonth)}</TableHead>
-          <TableHead className="text-right">Δpp</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {shares.map((s) => (
-          <TableRow key={s.desk}>
-            <TableCell className="font-medium">{s.desk}</TableCell>
-            <TableCell className="text-right tabular-nums">{fmtMoney(s.cost)}</TableCell>
-            <TableCell className="text-right tabular-nums">{fmtPct(s.share)}</TableCell>
-            <TableCell className="text-right tabular-nums">
-              {s.prev_share == null ? "—" : fmtPct(s.prev_share)}
-            </TableCell>
-            <TableCell
-              className={cn("text-right tabular-nums", {
-                "text-amber-700": (s.delta_pp ?? 0) > 0.05,
-                "text-emerald-700": (s.delta_pp ?? 0) < -0.05,
-              })}
-            >
-              {s.delta_pp == null ? "—" : `${s.delta_pp >= 0 ? "+" : ""}${s.delta_pp.toFixed(1)}pp`}
-            </TableCell>
-          </TableRow>
-        ))}
       </TableBody>
     </Table>
   );

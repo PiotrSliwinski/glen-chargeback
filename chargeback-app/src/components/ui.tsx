@@ -32,8 +32,9 @@ export function InfoTip({
       <span
         role="tooltip"
         className={cn(
-          "pointer-events-none invisible absolute top-full z-50 mt-1.5 w-64 rounded-lg border bg-popover p-3 text-left font-sans text-xs font-normal normal-case leading-relaxed tracking-normal text-pretty text-popover-foreground opacity-0 shadow-lg transition-opacity duration-150",
-          "group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100",
+          // `hidden` (not `invisible`) so the off-screen panel never widens the page on mobile.
+          "pointer-events-none hidden absolute top-full z-50 mt-1.5 w-64 animate-in fade-in rounded-lg border bg-popover p-3 text-left font-sans text-xs font-normal normal-case leading-relaxed tracking-normal text-pretty text-popover-foreground shadow-lg duration-150",
+          "group-hover/tip:block group-focus-within/tip:block",
           {
             "left-0": align === "start",
             "left-1/2 -translate-x-1/2": align === "center",

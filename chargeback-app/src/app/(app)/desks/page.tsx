@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { getDesks } from "@/dal/reports";
 import { listUsers } from "@/dal/mappings";
-import { fmtMoney, fmtMonth } from "@/lib/format";
+import { fmtMoney, fmtMonth, momKpi, shiftMonth } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { PAGE_HELP } from "@/lib/kpi-help";
 import { EmptyState, PageTitle } from "@/components/ui";
@@ -24,11 +24,14 @@ export default function DesksPage({ searchParams }: { searchParams: SearchParams
 
 async function Desks({ searchParams }: { searchParams: SearchParams }) {
   const { month, months, publishedMonths } = await resolveReportParams(searchParams);
-  const [desks, users, session] = await Promise.all([
+  const prevMonth = shiftMonth(month, -1);
+  const [desks, prevDesks, users, session] = await Promise.all([
     getDesks(month, "live"),
+    getDesks(prevMonth, "live"),
     listUsers(),
     getSession(),
   ]);
+  const prevByDesk = new Map(prevDesks.map((d) => [d.desk, d.total_cost]));
   const myDesk =
     users.find((u) => u.user_id.toLowerCase() === session?.user.email.toLowerCase())?.desk ?? null;
   const sorted = [...desks].sort(
@@ -55,28 +58,45 @@ async function Desks({ searchParams }: { searchParams: SearchParams }) {
         <EmptyState message="No desk has cost in the selected month." />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {sorted.map((d) => (
-            <Link key={d.desk} href={`/desks/${encodeURIComponent(d.desk)}?month=${month}`}>
-              <Card
-                className={`h-full transition hover:shadow hover:ring-ring/50 ${
-                  d.desk === myDesk ? "ring-ring/40" : ""
-                }`}
+          {sorted.map((d) => {
+            const prev = prevByDesk.get(d.desk);
+            const mom = momKpi(d.total_cost, prev ?? null, fmtMonth(prevMonth));
+            return (
+              <Link
+                key={d.desk}
+                href={`/desks/${encodeURIComponent(d.desk)}?month=${month}`}
+                className="group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
               >
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-sm font-semibold">{d.desk}</h2>
-                    {d.desk === myDesk && (
-                      <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">
-                        your desk
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="mt-2 text-2xl font-semibold">{fmtMoney(d.total_cost)}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{fmtMonth(month)}, live</p>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+                <Card
+                  className={`h-full transition hover:shadow hover:ring-ring/50 ${
+                    d.desk === myDesk ? "ring-ring/40" : ""
+                  }`}
+                >
+                  <CardContent>
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-sm font-semibold">{d.desk}</h2>
+                      {d.desk === myDesk && (
+                        <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">
+                          your desk
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-2 text-2xl font-semibold tabular-nums">
+                      {fmtMoney(d.total_cost)}
+                    </p>
+                    <div className="mt-0.5 flex items-center justify-between gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        {prev == null ? `no ${fmtMonth(prevMonth)} cost to compare` : `${mom.value} vs ${fmtMonth(prevMonth)}`}
+                      </p>
+                      <span className="text-xs font-medium text-indigo-600 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                        View desk →
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { Zap } from "lucide-react";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { env } from "@/lib/env";
@@ -11,18 +12,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="no-print border-b bg-card">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-6">
-            <Link href="/" className="text-sm font-bold tracking-tight">
-              ⚡ Chargeback
-            </Link>
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3">
+          <Link href="/" className="inline-flex items-center gap-1.5 text-sm font-bold tracking-tight">
+            <Zap className="size-4 text-amber-500" fill="currentColor" aria-hidden />
+            Chargeback
+          </Link>
+          <div className="order-3 -mx-4 w-[calc(100%+2rem)] overflow-x-auto px-4 md:order-none md:mx-0 md:w-auto md:flex-1 md:overflow-x-visible">
             <Suspense fallback={null}>
               <RoleNav />
             </Suspense>
           </div>
-          <Suspense fallback={null}>
-            <UserChip />
-          </Suspense>
+          <div className="ml-auto">
+            <Suspense fallback={null}>
+              <UserChip />
+            </Suspense>
+          </div>
         </div>
       </header>
       {env.DAL_MOCK && (

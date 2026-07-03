@@ -143,23 +143,27 @@ export function CoverageBar({ coverage }: { coverage: CoverageRow[] }) {
 export function BarTrend({
   points,
   fmt,
+  labelFmt,
 }: {
   points: { month: string; value: number }[];
   fmt: (v: number) => string;
+  /** Short always-visible per-bar label; values must be readable without hover. */
+  labelFmt?: (v: number) => string;
 }) {
   const max = Math.max(...points.map((p) => p.value), Number.EPSILON);
+  const label = labelFmt ?? fmt;
   return (
     <div>
-      <div className="flex h-32 items-end gap-2">
+      <div className="flex h-36 items-end gap-2">
         {points.map((p) => (
-          <div key={p.month} className="group relative flex-1">
+          <div key={p.month} className="group relative flex-1" title={`${p.month}: ${fmt(p.value)}`}>
+            <div className="mb-0.5 truncate text-center text-[10px] tabular-nums text-muted-foreground">
+              {label(p.value)}
+            </div>
             <div
               className="w-full rounded-t bg-indigo-600/80"
               style={{ height: `${Math.max((p.value / max) * 128, 2)}px` }}
             />
-            <div className="pointer-events-none absolute -top-6 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-1.5 py-0.5 text-xs text-background group-hover:block">
-              {fmt(p.value)}
-            </div>
           </div>
         ))}
       </div>
@@ -170,6 +174,64 @@ export function BarTrend({
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Tiny inline 12-month bar sparkline for table cells. */
+export function Sparkline({
+  points,
+  fmt = fmtMoney,
+}: {
+  points: { month: string; value: number }[];
+  fmt?: (v: number) => string;
+}) {
+  const max = Math.max(...points.map((p) => p.value), Number.EPSILON);
+  return (
+    <div className="flex h-6 w-24 items-end gap-px">
+      {points.map((p) => (
+        <div
+          key={p.month}
+          className={p.value > 0 ? "flex-1 rounded-[1px] bg-indigo-600/70" : "flex-1 rounded-[1px] bg-muted"}
+          style={{ height: p.value > 0 ? `${Math.max((p.value / max) * 100, 8)}%` : "8%" }}
+          title={`${p.month}: ${fmt(p.value)}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Horizontal 100%-stacked share bar — who owns the month's bill at a glance. */
+export function ShareBar({
+  items,
+  specials = DOMAIN_SPECIALS,
+}: {
+  items: { label: string; value: number; color?: string }[];
+  specials?: Record<string, string>;
+}) {
+  const total = items.reduce((s, i) => s + i.value, 0);
+  const shown = items.filter((i) => i.value > 0);
+  if (total <= 0 || shown.length === 0) return null;
+  return (
+    <div>
+      <div className="flex h-5 w-full overflow-hidden rounded">
+        {shown.map((i) => (
+          <div
+            key={i.label}
+            style={{
+              width: `${(i.value / total) * 100}%`,
+              backgroundColor: i.color ?? colorFor(i.label, specials),
+            }}
+            title={`${i.label}: ${fmtPct(i.value / total)} (${fmtMoney(i.value)})`}
+          />
+        ))}
+      </div>
+      <Legend
+        items={shown.map((i) => ({
+          label: `${i.label} ${fmtPct(i.value / total)}`,
+          color: i.color ?? colorFor(i.label, specials),
+        }))}
+      />
     </div>
   );
 }

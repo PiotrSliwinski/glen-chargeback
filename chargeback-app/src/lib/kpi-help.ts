@@ -12,7 +12,7 @@ export const PAGE_HELP = {
   report:
     "The distribution-ready monthly pack: executive summary, month-over-month movement by desk with auto-generated commentary, domain → product → desk breakdown, attribution coverage, and the per-desk tagging scorecard. Same figures as the dashboard for the selected month and mode. Print it, or download the XLSX workbook / CSVs at the bottom.",
   analytics:
-    "Decision-support layer over the same monthly_chargeback figures: spend trajectory and run rate, unit economics ($/DBU) by usage category, product concentration (Pareto), month-over-month movers, desk share shifts and the 12-month attribution-mix trend — with auto-generated plain-language findings. Trends always read live history; the selected month follows the Live/Published toggle.",
+    "Decision-support layer over the same monthly_chargeback figures, centred on who drives the bill: per-product and per-desk cost-driver tables (share, movement, $/DBU, concentration, 12-month sparklines), spend trajectory and run rate, unit economics ($/DBU) by usage category, month-over-month movers and the 12-month attribution-mix trend — with auto-generated plain-language findings. Trends always read live history; the selected month follows the Live/Published toggle.",
   drill:
     "Transparency drill-down: domain → products in that domain → the actual cost lines behind one product (top 200 slices of live cost_fact). Every line shows the attribution method that routed it here and whether it ran on serverless or classic compute — the answer to “why did this cost land where it did?”.",
   desks:
@@ -61,6 +61,10 @@ export const KPI_HELP = {
     "Total cost this month ÷ total cost three months earlier − 1, on live figures. Smooths single-month noise — the KPI to watch for budget drift.",
   topConcentration:
     "Share of the month's total cost carried by the three most expensive products (UNALLOCATED counts as a product, so concentration never hides unattributed spend). High concentration means one migration or optimisation moves the whole bill.",
+  productsTo80:
+    "The smallest number of products whose combined cost reaches 80% of the month's total, counting from the most expensive down (UNALLOCATED counts as a product). A small number means the bill is a short list: optimising or migrating a handful of products moves most of the spend.",
+  topDeskShare:
+    "The most expensive desk's share of the month's total cost. A dominant desk means chargeback exposure is concentrated — that desk's workload decisions effectively set the bill.",
 
   deskMonthCost:
     "Sum of this desk's rows in live monthly_chargeback for the selected month — the figure that would be frozen into the desk's invoice at publication.",
@@ -98,16 +102,16 @@ export const ANALYTICS_SECTION_HELP = {
     "Auto-generated from the same figures shown on this page: spend trajectory, largest product moves, rate-vs-volume decomposition, concentration, attribution quality and unallocated direction. Rules, not AI — every bullet is reproducible from monthly_chargeback and attribution_coverage.",
   movers:
     "Products ranked by absolute month-over-month cost change. The current month follows the selected mode; the previous month is always live — same convention as the report pack's movement section.",
-  pareto:
-    "Products ranked by cost with cumulative share of the month's total — how few things drive the bill. UNALLOCATED appears as a product like any other, so concentration never hides unattributed spend.",
+  productDrivers:
+    "Every data product ranked by cost: share of the month's total with cumulative (Pareto) share, month-over-month change (prior month always live), blended $/DBU, the number of desks billed for it, and a trailing-12-month spend sparkline from live history. UNALLOCATED appears as a product like any other, so concentration never hides unattributed spend.",
   categories:
     "Unit economics per usage category (JOBS, SQL_WAREHOUSE, DLT, MODEL_SERVING…): cost, DBUs and the blended $/DBU rate with its month-over-month change. Rate moves signal mix shifts (e.g. serverless adoption), not volume.",
   rateTrend:
     "Blended $/DBU per month over the trailing 12 months (total cost ÷ total DBUs, live figures). Unlike total cost, this is meaningful even for a partial current month.",
   coverageTrend:
     "Attribution mix per month over the trailing 12 months, from the attribution_coverage view. Goal: TAG (green) widening, JOB_MAPPING and NONE shrinking.",
-  deskShares:
-    "Each desk's share of the month's total cost vs its share last month, in percentage points. Share shifts show relative growth even when every desk's absolute spend rises.",
+  deskDrivers:
+    "Every desk ranked by cost: share of the month's total and its shift vs last month in percentage points (relative growth even when every desk rises), month-over-month change, the desk's most expensive product with its slice of the desk's bill, product count, TAG coverage from live cost_fact (same figure as the report scorecard), and a trailing-12-month spend sparkline. Desk names link to the desk's self-service page.",
 } as const;
 
 export const REPORT_SECTION_HELP = {

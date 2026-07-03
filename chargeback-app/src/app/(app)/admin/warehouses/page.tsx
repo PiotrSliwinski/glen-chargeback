@@ -75,7 +75,7 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
         info={PAGE_HELP.warehouses}
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <KpiTile label="Classified" value={String(rows.length)} />
         <KpiTile label="Shared" value={String(sharedCount)} hint="allocated per query" />
         <KpiTile

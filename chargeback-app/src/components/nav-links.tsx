@@ -30,7 +30,7 @@ function PendingIndicator() {
 export function NavLinks({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
   return (
-    <nav className="flex flex-wrap items-center gap-1">
+    <nav className="flex w-max items-center gap-1 md:w-auto md:flex-wrap">
       {items.map((item) => {
         const active =
           item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -40,7 +40,7 @@ export function NavLinks({ items }: { items: NavItem[] }) {
             asChild
             size="sm"
             variant={active ? "secondary" : "ghost"}
-            className={cn("relative", active ? undefined : "text-muted-foreground")}
+            className={cn("relative px-2.5", active ? undefined : "text-muted-foreground")}
           >
             <Link href={item.href} aria-current={active ? "page" : undefined}>
               {item.label}
