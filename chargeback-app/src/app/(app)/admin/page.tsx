@@ -8,13 +8,16 @@ import {
   listWarehouseMappings,
   listWorkspaces,
 } from "@/dal/mappings";
-import { Card, PageTitle } from "@/components/ui";
+import { PAGE_HELP } from "@/lib/kpi-help";
+import { PageTitle } from "@/components/ui";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { TablePageSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Reference data" };
 
 export default function AdminIndexPage() {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
+    <Suspense fallback={<TablePageSkeleton label="Loading reference data from Databricks…" withPicker={false} />}>
       <AdminIndex />
     </Suspense>
   );
@@ -64,6 +67,12 @@ async function AdminIndex() {
       desc: "workspace_mapping — workspace ID → friendly name.",
       stat: `${workspaces.length} workspaces`,
     },
+    {
+      href: "/admin/jobs/coverage",
+      title: "Job attribution coverage",
+      desc: "Read-only: how every job with recent cost was mapped — tag at source, bridge row, or nothing.",
+      stat: "trailing 30 days, per-method breakdown",
+    },
   ];
 
   return (
@@ -71,14 +80,19 @@ async function AdminIndex() {
       <PageTitle
         title="Reference data"
         subtitle="The write surface of the chargeback system — everything else is derived, read-only logic"
+        info={PAGE_HELP.admin}
       />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((i) => (
           <Link key={i.href} href={i.href} className="block">
-            <Card className="h-full transition hover:border-indigo-300 hover:shadow">
-              <h2 className="text-sm font-semibold text-slate-900">{i.title}</h2>
-              <p className="mt-1 text-xs text-slate-500">{i.desc}</p>
-              <p className="mt-3 text-xs font-medium text-indigo-600">{i.stat}</p>
+            <Card className="h-full transition hover:ring-ring/40 hover:shadow">
+              <CardHeader>
+                <CardTitle>{i.title}</CardTitle>
+                <CardDescription className="text-xs">{i.desc}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs font-medium text-indigo-600">{i.stat}</p>
+              </CardContent>
             </Card>
           </Link>
         ))}

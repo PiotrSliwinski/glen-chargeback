@@ -255,6 +255,21 @@ export async function insertJobMapping(
     mockStore.queueUntaggedJobs = mockStore.queueUntaggedJobs.filter(
       (q) => !(q.workspace_id === row.workspace_id && q.job_id === row.job_id),
     );
+    // cost_fact is a view — the job's NONE rows re-attribute via the new bridge row
+    const desk = mockStore.catalogue.find(
+      (c) => c.data_product === row.data_product && c.valid_to == null,
+    )?.desk;
+    for (const a of mockStore.jobAttributions) {
+      if (
+        a.workspace_id === row.workspace_id &&
+        a.job_id === row.job_id &&
+        a.attribution_method === "NONE"
+      ) {
+        a.attribution_method = "JOB_MAPPING";
+        a.data_product = row.data_product;
+        a.desk = desk ?? "UNALLOCATED";
+      }
+    }
     return;
   }
   await exec(
@@ -270,6 +285,18 @@ export async function deleteJobMapping(workspace_id: string, job_id: string): Pr
     mockStore.jobMappings = mockStore.jobMappings.filter(
       (j) => !(j.workspace_id === workspace_id && j.job_id === job_id),
     );
+    // without the bridge row, the job's JOB_MAPPING attribution recomputes to NONE
+    for (const a of mockStore.jobAttributions) {
+      if (
+        a.workspace_id === workspace_id &&
+        a.job_id === job_id &&
+        a.attribution_method === "JOB_MAPPING"
+      ) {
+        a.attribution_method = "NONE";
+        a.data_product = "UNALLOCATED";
+        a.desk = "UNALLOCATED";
+      }
+    }
     return;
   }
   await exec(
@@ -319,6 +346,7 @@ export async function upsertUser(row: UserMappingRow): Promise<void> {
     mockStore.queueUnknownRunners = mockStore.queueUnknownRunners.filter(
       (q) => q.runner !== row.user_id,
     );
+    mockStore.serverlessGap = mockStore.serverlessGap.filter((g) => g.runner !== row.user_id);
     return;
   }
   await exec(

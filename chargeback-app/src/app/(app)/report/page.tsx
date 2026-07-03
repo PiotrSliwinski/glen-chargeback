@@ -1,24 +1,36 @@
-import { Suspense } from "react";
 import Link from "next/link";
 import { getDashboard, getMonthlyRows } from "@/dal/reports";
 import { buildCommentary, getDeskMovement, getProductMovement } from "@/dal/movement";
 import { getDeskScorecard } from "@/dal/desks";
 import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
-import { Card, EmptyState, KpiTile, PageTitle } from "@/components/ui";
+import { KPI_HELP, PAGE_HELP, REPORT_SECTION_HELP } from "@/lib/kpi-help";
+import { EmptyState, InfoTip, KpiTile, PageTitle } from "@/components/ui";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { CoverageBar } from "@/components/charts";
 import { MonthModePicker } from "@/components/month-picker";
 import { ModeBanner } from "@/components/mode-banner";
 import { ReportFooter } from "@/components/report-footer";
 import { PrintButton } from "@/components/print-button";
+import { ReportSkeleton } from "@/components/loading-skeletons";
+import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export const metadata = { title: "Monthly report" };
 
 export default function ReportPage({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Assembling report…</p>}>
+    <SearchParamsSuspense searchParams={searchParams} fallback={<ReportSkeleton />}>
       <Report searchParams={searchParams} />
-    </Suspense>
+    </SearchParamsSuspense>
   );
 }
 
@@ -70,6 +82,7 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
       <PageTitle
         title="Monthly chargeback report"
         subtitle={`${fmtMonth(month)} — full pack: summary, movement, breakdown, coverage`}
+        info={PAGE_HELP.report}
       >
         <div className="no-print flex flex-wrap items-center gap-2">
           <MonthModePicker
@@ -92,11 +105,15 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
         <>
           {/* ---- 1. Executive summary ---- */}
           <section className="mb-6">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               1 · Executive summary
             </h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <KpiTile label="Total cost" value={fmtMoney(dashboard.totalCost)} />
+              <KpiTile
+                label="Total cost"
+                value={fmtMoney(dashboard.totalCost)}
+                info={KPI_HELP.totalCost}
+              />
               <KpiTile
                 label="MoM change"
                 value={
@@ -109,207 +126,225 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
                     ? `${(((dashboard.totalCost - dashboard.prevMonthCost) / dashboard.prevMonthCost) * 100).toFixed(1)}% vs ${fmtMonth(monthBefore(month))}`
                     : undefined
                 }
+                info={KPI_HELP.momChange}
               />
               <KpiTile
                 label="TAG coverage"
                 value={fmtPct(dashboard.tagCoveragePct)}
                 tone={dashboard.tagCoveragePct >= 0.7 ? "good" : "warn"}
+                info={KPI_HELP.tagCoverage}
               />
               <KpiTile
                 label="Unallocated cost"
                 value={fmtMoney(dashboard.unallocatedCost)}
                 tone={dashboard.unallocatedCost > 0 ? "bad" : "good"}
                 hint="unclaimed spend — a real line item"
+                info={KPI_HELP.unallocatedCost}
+                infoAlign="end"
               />
             </div>
           </section>
 
           {/* ---- 2. Month-over-month movement ---- */}
           <section className="mb-6">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               2 · Month-over-month movement by desk
+              <InfoTip>{REPORT_SECTION_HELP.movement}</InfoTip>
             </h2>
             <Card>
-              <table className="w-full">
-                <thead>
-                  <tr>
-                    <th className="th">Desk</th>
-                    <th className="th text-right">{fmtMonth(monthBefore(month))}</th>
-                    <th className="th text-right">{fmtMonth(month)}</th>
-                    <th className="th text-right">Δ</th>
-                    <th className="th text-right">Δ%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deskMovement.map((d) => (
-                    <tr key={d.desk}>
-                      <td className="td font-medium">{d.desk}</td>
-                      <td className="td text-right tabular-nums">
-                        {d.prev_cost == null ? "—" : fmtMoney(d.prev_cost)}
-                      </td>
-                      <td className="td text-right tabular-nums">{fmtMoney(d.cost)}</td>
-                      <td
-                        className={`td text-right tabular-nums ${
-                          (d.delta_abs ?? 0) > 0 ? "text-amber-700" : "text-emerald-700"
-                        }`}
-                      >
-                        {d.delta_abs == null
-                          ? "—"
-                          : `${d.delta_abs >= 0 ? "+" : ""}${fmtMoney(d.delta_abs)}`}
-                      </td>
-                      <td className="td text-right tabular-nums">
-                        {d.delta_pct == null ? "—" : `${(d.delta_pct * 100).toFixed(1)}%`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {commentary.length > 0 && (
-                <div className="mt-4 rounded-md bg-slate-50 p-3">
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Commentary
-                  </p>
-                  <ul className="space-y-0.5 text-sm text-slate-700">
-                    {commentary.map((c) => (
-                      <li key={c.desk}>
-                        <span className="font-medium">{c.desk}</span>: {c.text}
-                      </li>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Desk</TableHead>
+                      <TableHead className="text-right">{fmtMonth(monthBefore(month))}</TableHead>
+                      <TableHead className="text-right">{fmtMonth(month)}</TableHead>
+                      <TableHead className="text-right">Δ</TableHead>
+                      <TableHead className="text-right">Δ%</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deskMovement.map((d) => (
+                      <TableRow key={d.desk}>
+                        <TableCell className="font-medium">{d.desk}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {d.prev_cost == null ? "—" : fmtMoney(d.prev_cost)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtMoney(d.cost)}</TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums ${
+                            (d.delta_abs ?? 0) > 0 ? "text-amber-700" : "text-emerald-700"
+                          }`}
+                        >
+                          {d.delta_abs == null
+                            ? "—"
+                            : `${d.delta_abs >= 0 ? "+" : ""}${fmtMoney(d.delta_abs)}`}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {d.delta_pct == null ? "—" : `${(d.delta_pct * 100).toFixed(1)}%`}
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </ul>
-                </div>
-              )}
+                  </TableBody>
+                </Table>
+                {commentary.length > 0 && (
+                  <div className="mt-4 rounded-lg bg-muted/50 p-3">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Commentary
+                    </p>
+                    <ul className="space-y-0.5 text-sm text-foreground/80">
+                      {commentary.map((c) => (
+                        <li key={c.desk}>
+                          <span className="font-medium">{c.desk}</span>: {c.text}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </CardContent>
             </Card>
           </section>
 
           {/* ---- 3. Breakdown ---- */}
           <section className="mb-6">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               3 · Cost breakdown — domain → product → desk
+              <InfoTip>{REPORT_SECTION_HELP.breakdown}</InfoTip>
             </h2>
             <Card>
-              <table className="w-full">
-                <thead>
-                  <tr>
-                    <th className="th">Domain / product</th>
-                    <th className="th">Desk</th>
-                    <th className="th text-right">DBUs</th>
-                    <th className="th text-right">Cost</th>
-                    <th className="th text-right">Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {domains.map((g) => (
-                    <DomainGroup
-                      key={g.domain}
-                      group={g}
-                      grandTotal={dashboard.totalCost}
-                      month={month}
-                      mode={mode}
-                    />
-                  ))}
-                </tbody>
-              </table>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Domain / product</TableHead>
+                      <TableHead>Desk</TableHead>
+                      <TableHead className="text-right">DBUs</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead className="text-right">Share</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {domains.map((g) => (
+                      <DomainGroup
+                        key={g.domain}
+                        group={g}
+                        grandTotal={dashboard.totalCost}
+                        month={month}
+                        mode={mode}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
             </Card>
           </section>
 
           {/* ---- 4. Attribution coverage ---- */}
           <section className="mb-6">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               4 · Attribution coverage
+              <InfoTip>{REPORT_SECTION_HELP.coverage}</InfoTip>
             </h2>
             <Card>
-              <CoverageBar coverage={dashboard.coverage} />
-              <table className="mt-4 w-full max-w-lg">
-                <thead>
-                  <tr>
-                    <th className="th">Method</th>
-                    <th className="th text-right">Cost</th>
-                    <th className="th text-right">Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.coverage
-                    .slice()
-                    .sort((a, b) => b.cost - a.cost)
-                    .map((c) => (
-                      <tr key={c.attribution_method}>
-                        <td className="td">{c.attribution_method}</td>
-                        <td className="td text-right tabular-nums">{fmtMoneyExact(c.cost)}</td>
-                        <td className="td text-right tabular-nums">{fmtPct(c.pct_of_month)}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-              <p className="mt-2 text-xs text-slate-500">
-                Target: TAG rising, JOB_MAPPING and NONE shrinking (Methodology §6.3).
-              </p>
+              <CardContent>
+                <CoverageBar coverage={dashboard.coverage} />
+                <Table className="mt-4 max-w-lg">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Method</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead className="text-right">Share</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dashboard.coverage
+                      .slice()
+                      .sort((a, b) => b.cost - a.cost)
+                      .map((c) => (
+                        <TableRow key={c.attribution_method}>
+                          <TableCell>{c.attribution_method}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtMoneyExact(c.cost)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtPct(c.pct_of_month)}</TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Target: TAG rising, JOB_MAPPING and NONE shrinking (Methodology §6.3).
+                </p>
+              </CardContent>
             </Card>
           </section>
 
           {/* ---- 5. Tagging scorecard ---- */}
           <section className="mb-6">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               5 · Tagging scorecard by desk
+              <InfoTip>{REPORT_SECTION_HELP.scorecard}</InfoTip>
             </h2>
             <Card>
-              <table className="w-full max-w-2xl">
-                <thead>
-                  <tr>
-                    <th className="th">#</th>
-                    <th className="th">Desk</th>
-                    <th className="th text-right">Total cost</th>
-                    <th className="th text-right">TAG %</th>
-                    <th className="th text-right">Unattributed (NONE)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scorecard.map((s, i) => (
-                    <tr key={s.desk}>
-                      <td className="td text-slate-400">{i + 1}</td>
-                      <td className="td font-medium">{s.desk}</td>
-                      <td className="td text-right tabular-nums">{fmtMoney(s.total_cost)}</td>
-                      <td
-                        className={`td text-right tabular-nums ${
-                          s.tag_pct >= 0.7 ? "text-emerald-700" : "text-amber-700"
-                        }`}
-                      >
-                        {fmtPct(s.tag_pct)}
-                      </td>
-                      <td className="td text-right tabular-nums">{fmtMoney(s.none_cost)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="mt-2 text-xs text-slate-500">
-                Live cost_fact figures. Tags at source are the destination (Methodology §8) — this
-                leaderboard is the adoption lever.
-              </p>
+              <CardContent>
+                <Table className="max-w-2xl">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>#</TableHead>
+                      <TableHead>Desk</TableHead>
+                      <TableHead className="text-right">Total cost</TableHead>
+                      <TableHead className="text-right">TAG %</TableHead>
+                      <TableHead className="text-right">Unattributed (NONE)</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {scorecard.map((s, i) => (
+                      <TableRow key={s.desk}>
+                        <TableCell className="text-muted-foreground/70">{i + 1}</TableCell>
+                        <TableCell className="font-medium">{s.desk}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtMoney(s.total_cost)}</TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums ${
+                            s.tag_pct >= 0.7 ? "text-emerald-700" : "text-amber-700"
+                          }`}
+                        >
+                          {fmtPct(s.tag_pct)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtMoney(s.none_cost)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Live cost_fact figures. Tags at source are the destination (Methodology §8) — this
+                  leaderboard is the adoption lever.
+                </p>
+              </CardContent>
             </Card>
           </section>
 
           {/* ---- Downloads ---- */}
           <section className="no-print mb-6">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               Downloads (CSV)
             </h2>
-            <Card className="flex flex-wrap gap-3">
-              <a href={`/api/export/xlsx${csvBase}`} className="btn">
-                ⬇ Full report (XLSX workbook)
-              </a>
-              {[
-                ["monthly-chargeback", "Full chargeback"],
-                ["movement", "Desk movement"],
-                ["movement-products", "Product movement"],
-                ["coverage", "Coverage"],
-                ["scorecard", "Scorecard"],
-              ].map(([report, label]) => (
-                <a key={report} href={`/api/export/${report}${csvBase}`} className="btn-secondary">
-                  ⬇ {label}
-                </a>
-              ))}
-              <Link href={`/invoices?month=${month}`} className="btn-secondary">
-                Desk invoices →
-              </Link>
+            <Card>
+              <CardContent className="flex flex-wrap gap-3">
+                <Button asChild>
+                  <a href={`/api/export/xlsx${csvBase}`}>⬇ Full report (XLSX workbook)</a>
+                </Button>
+                {[
+                  ["monthly-chargeback", "Full chargeback"],
+                  ["movement", "Desk movement"],
+                  ["movement-products", "Product movement"],
+                  ["coverage", "Coverage"],
+                  ["scorecard", "Scorecard"],
+                ].map(([report, label]) => (
+                  <Button key={report} asChild variant="outline">
+                    <a href={`/api/export/${report}${csvBase}`}>⬇ {label}</a>
+                  </Button>
+                ))}
+                <Button asChild variant="outline">
+                  <Link href={`/invoices?month=${month}`}>Desk invoices →</Link>
+                </Button>
+              </CardContent>
             </Card>
           </section>
 
@@ -337,30 +372,30 @@ function DomainGroup({
 }) {
   return (
     <>
-      <tr className="bg-slate-50">
-        <td className="td font-semibold" colSpan={3}>
+      <TableRow className="bg-muted/50">
+        <TableCell className="font-semibold" colSpan={3}>
           <Link
             className="hover:underline"
             href={`/drill?month=${month}&mode=${mode}&domain=${encodeURIComponent(group.domain)}`}
           >
             {group.domain}
           </Link>
-        </td>
-        <td className="td text-right font-semibold tabular-nums">{fmtMoney(group.total)}</td>
-        <td className="td text-right font-semibold tabular-nums">
+        </TableCell>
+        <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(group.total)}</TableCell>
+        <TableCell className="text-right font-semibold tabular-nums">
           {grandTotal > 0 ? fmtPct(group.total / grandTotal) : "—"}
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
       {group.items.map((e) => (
-        <tr key={`${e.data_product}|${e.desk}`}>
-          <td className="td pl-8">{e.data_product}</td>
-          <td className="td">{e.desk}</td>
-          <td className="td text-right tabular-nums">{fmtDbu(e.dbus)}</td>
-          <td className="td text-right tabular-nums">{fmtMoney(e.cost)}</td>
-          <td className="td text-right tabular-nums">
+        <TableRow key={`${e.data_product}|${e.desk}`}>
+          <TableCell className="pl-8">{e.data_product}</TableCell>
+          <TableCell>{e.desk}</TableCell>
+          <TableCell className="text-right tabular-nums">{fmtDbu(e.dbus)}</TableCell>
+          <TableCell className="text-right tabular-nums">{fmtMoney(e.cost)}</TableCell>
+          <TableCell className="text-right tabular-nums">
             {grandTotal > 0 ? fmtPct(e.cost / grandTotal) : "—"}
-          </td>
-        </tr>
+          </TableCell>
+        </TableRow>
       ))}
     </>
   );

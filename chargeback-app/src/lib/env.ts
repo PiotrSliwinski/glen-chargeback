@@ -20,6 +20,13 @@ const EnvSchema = z.object({
   // --- Databricks
   DATABRICKS_HOST: z.string().optional(),
   DATABRICKS_HTTP_PATH: z.string().optional(),
+  // How the app authenticates to the SQL warehouse:
+  //  - service-principal: OAuth M2M with DATABRICKS_CLIENT_ID/SECRET (production)
+  //  - azure-cli: the developer's own Entra ID identity from `az login`
+  //    (development/testing — no secrets needed)
+  // Defaults to service-principal when a client secret is configured,
+  // otherwise azure-cli.
+  DATABRICKS_AUTH: z.enum(["service-principal", "azure-cli"]).optional(),
   DATABRICKS_CLIENT_ID: z.string().optional(),
   DATABRICKS_CLIENT_SECRET: z.string().optional(),
   // catalog.schema — validated so it can be safely interpolated into SQL
@@ -49,6 +56,10 @@ export const env = {
   ...parsed,
   /** Mock mode is on explicitly or whenever Databricks is not configured. */
   DAL_MOCK: parsed.DAL_MOCK || !parsed.DATABRICKS_HOST,
+  /** Resolved warehouse auth mode (see DATABRICKS_AUTH above). */
+  DATABRICKS_AUTH:
+    parsed.DATABRICKS_AUTH ??
+    (parsed.DATABRICKS_CLIENT_SECRET ? "service-principal" : "azure-cli"),
   /** Fully-qualified schema prefix for every table/view reference. */
   SCHEMA: parsed.DBX_SCHEMA,
 };

@@ -116,6 +116,11 @@ so every view is linkable. Default month is the last closed month. A colored **m
 live vs published unmistakable; a **mock-mode banner** shows when fixtures are serving the data.
 Every reporting page renders the Methodology §11 **limitations footer**.
 
+**Info tooltips**: every page title and KPI tile carries an ⓘ tooltip (hover or keyboard focus)
+explaining what the page does and exactly how the figure is calculated — source table, formula,
+and mode behavior. Copy is centralised in `src/lib/kpi-help.ts`; the CSS-only `<InfoTip>`
+component (`src/components/ui.tsx`) is server-rendered and hidden in print.
+
 ---
 
 ## 5. Reference Data Management
@@ -219,9 +224,11 @@ Plus a downloads strip (XLSX workbook + 5 CSVs) and the limitations footer.
 ### 7.3 Drill-down — `/drill`
 
 Three linked, URL-driven panels: domains → products in domain (with desk links) → product detail
-(top 200 `cost_fact` lines: category, job/warehouse, runner, cost). Every detail line shows its
-**attribution-method badge** (TAG green / JOB_MAPPING amber / WAREHOUSE_MAPPING blue / USER
-indigo / NONE red) — the "why did this land here" transparency.
+(top 200 `cost_fact` lines: category, job/warehouse, runner, DBUs, cost). Every detail line shows
+its **attribution-method badge** (TAG green / JOB_MAPPING amber / WAREHOUSE_MAPPING blue / USER
+indigo / NONE red) — the "why did this land here" transparency — plus a **compute chip**
+(SERVERLESS violet / CLASSIC slate, from `cost_fact.is_serverless`; per-query warehouse rows
+show "—").
 
 ### 7.4 Desk self-service — `/desks`, `/desks/[desk]`
 
@@ -230,6 +237,11 @@ indigo / NONE red) — the "why did this land here" transparency.
 - Per-desk detail: KPI strip (month cost, MoM, the desk's own TAG coverage and NONE cost),
   12-month cost trend, published-invoice history with statement links, product breakdown with
   share-of-desk and drill links.
+- **"How this number was built"**: usage category × compute rollup (bar list + table) with the
+  desk's serverless / classic / per-query-warehouse split, sourced from live `cost_fact`.
+- **Line-item construction**: every `cost_fact` slice that landed on the desk (top 500), grouped
+  by usage category with subtotals — product (drill link), job or warehouse, runner, compute
+  chip, attribution badge, DBUs, cost, share of desk.
 
 ### 7.5 Desk invoices — `/invoices`, `/invoices/[desk]`
 

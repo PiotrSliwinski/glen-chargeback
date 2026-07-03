@@ -1,11 +1,15 @@
-import { Suspense } from "react";
 import Link from "next/link";
 import { getDeskInvoice, getPublishedMonths } from "@/dal/reports";
 import { fmtDbu, fmtMoneyExact, fmtMonth } from "@/lib/format";
 import { param, type SearchParams } from "@/lib/report-params";
-import { Card, EmptyState, PageTitle } from "@/components/ui";
+import { EmptyState, PageTitle } from "@/components/ui";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ReportFooter } from "@/components/report-footer";
 import { PrintButton } from "@/components/print-button";
+import { TablePageSkeleton } from "@/components/loading-skeletons";
+import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export const metadata = { title: "Desk statement" };
 
@@ -17,9 +21,12 @@ export default function DeskInvoicePage({
   searchParams: SearchParams;
 }) {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading statement…</p>}>
+    <SearchParamsSuspense
+      searchParams={searchParams}
+      fallback={<TablePageSkeleton label="Loading statement from Databricks…" rows={8} />}
+    >
       <DeskInvoice params={params} searchParams={searchParams} />
-    </Suspense>
+    </SearchParamsSuspense>
   );
 }
 
@@ -64,62 +71,69 @@ async function DeskInvoice({
           ← All invoices
         </Link>
         <div className="flex gap-2">
-          <a
-            href={`/api/export/desk-invoice?month=${month}&mode=published&desk=${encodeURIComponent(desk)}`}
-            className="btn-secondary"
-          >
-            ⬇ CSV
-          </a>
+          <Button asChild variant="outline">
+            <a
+              href={`/api/export/desk-invoice?month=${month}&mode=published&desk=${encodeURIComponent(desk)}`}
+            >
+              ⬇ CSV
+            </a>
+          </Button>
           <PrintButton />
         </div>
       </div>
 
-      <Card className="p-8">
-        <div className="mb-6 flex items-start justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-slate-900">Internal chargeback statement</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Desk <strong className="text-slate-800">{desk}</strong> — {fmtMonth(month)}
-            </p>
+      <Card className="[--card-spacing:--spacing(8)]">
+        <CardContent>
+          <div className="mb-6 flex items-start justify-between">
+            <div>
+              <h1 className="text-xl font-semibold">Internal chargeback statement</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Desk <strong className="text-foreground">{desk}</strong> — {fmtMonth(month)}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Total due</p>
+              <p className="text-2xl font-semibold">{fmtMoneyExact(total)}</p>
+            </div>
           </div>
-          <div className="text-right">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total due</p>
-            <p className="text-2xl font-semibold text-slate-900">{fmtMoneyExact(total)}</p>
-          </div>
-        </div>
 
-        <table className="w-full">
-          <thead>
-            <tr>
-              <th className="th">Data domain</th>
-              <th className="th">Data product</th>
-              <th className="th text-right">DBUs</th>
-              <th className="th text-right">Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={`${r.data_domain}|${r.data_product}`}>
-                <td className="td">{r.data_domain}</td>
-                <td className="td">{r.data_product}</td>
-                <td className="td text-right tabular-nums">{fmtDbu(r.total_dbus)}</td>
-                <td className="td text-right tabular-nums">{fmtMoneyExact(r.total_cost)}</td>
-              </tr>
-            ))}
-            <tr>
-              <td className="td font-semibold" colSpan={3}>
-                Total
-              </td>
-              <td className="td text-right font-semibold tabular-nums">{fmtMoneyExact(total)}</td>
-            </tr>
-          </tbody>
-        </table>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Data domain</TableHead>
+                <TableHead>Data product</TableHead>
+                <TableHead className="text-right">DBUs</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={`${r.data_domain}|${r.data_product}`}>
+                  <TableCell>{r.data_domain}</TableCell>
+                  <TableCell>{r.data_product}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtDbu(r.total_dbus)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {fmtMoneyExact(r.total_cost)}
+                  </TableCell>
+                </TableRow>
+              ))}
+              <TableRow>
+                <TableCell className="font-semibold" colSpan={3}>
+                  Total
+                </TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">
+                  {fmtMoneyExact(total)}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
 
-        <p className="mt-4 text-xs text-slate-400">
-          Issued from the published snapshot of {fmtMonth(month)}. Figures are immutable; questions
-          go to the cost reporting owner.
-        </p>
-        <ReportFooter />
+          <p className="mt-4 text-xs text-muted-foreground/70">
+            Issued from the published snapshot of {fmtMonth(month)}. Figures are immutable; questions
+            go to the cost reporting owner.
+          </p>
+          <ReportFooter />
+        </CardContent>
       </Card>
     </div>
   );

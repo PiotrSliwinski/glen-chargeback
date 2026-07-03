@@ -47,11 +47,19 @@ export interface ProductRollup {
 
 export interface DetailRow {
   usage_category: string;
+  /** true = serverless compute, false = classic; null when the source can't tell (per-query warehouse rows) */
+  is_serverless: boolean | null;
   job_name: string | null;
   warehouse_id: string | null;
   runner_name: string | null;
   attribution_method: AttributionMethod;
+  dbus: number;
   cost: number;
+}
+
+/** Desk drill-down line: DetailRow plus the product the line was attributed to. */
+export interface DeskDetailRow extends DetailRow {
+  data_product: string;
 }
 
 export interface InvoiceRow {
@@ -110,6 +118,30 @@ export interface UnassignedWarehouseRow {
   workspace_id: string;
   cost_30d: number;
   idle_share: number;
+}
+
+/** Runner with serverless spend in the trailing 30 days who is absent from user_mapping. */
+export interface ServerlessGapRow {
+  runner: string;
+  serverless_cost_30d: number;
+  serverless_dbus_30d: number;
+  rows_30d: number;
+  workspace_count: number;
+  /** usage_category of the runner's single most expensive serverless row */
+  top_category: string;
+  last_seen: string;
+}
+
+/** How one job's cost attributed over the trailing 30 days — one row per (job, method, product). */
+export interface JobAttributionRow {
+  workspace_id: string;
+  job_id: string;
+  job_name: string | null;
+  attribution_method: AttributionMethod;
+  data_product: string;
+  desk: string;
+  dbus_30d: number;
+  cost_30d: number;
 }
 
 // ---------- mapping tables ----------

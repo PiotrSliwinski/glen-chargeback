@@ -1,17 +1,25 @@
-import { Suspense } from "react";
 import Link from "next/link";
 import { getDesks, getPublishedMonths } from "@/dal/reports";
 import { fmtMoney, fmtMonth } from "@/lib/format";
 import { param, type SearchParams } from "@/lib/report-params";
-import { Card, EmptyState, PageTitle } from "@/components/ui";
+import { PAGE_HELP } from "@/lib/kpi-help";
+import { EmptyState, PageTitle } from "@/components/ui";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TablePageSkeleton } from "@/components/loading-skeletons";
+import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export const metadata = { title: "Desk invoices" };
 
 export default function InvoicesPage({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading invoices…</p>}>
+    <SearchParamsSuspense
+      searchParams={searchParams}
+      fallback={<TablePageSkeleton label="Loading invoices from Databricks…" />}
+    >
       <Invoices searchParams={searchParams} />
-    </Suspense>
+    </SearchParamsSuspense>
   );
 }
 
@@ -25,7 +33,11 @@ async function Invoices({ searchParams }: { searchParams: SearchParams }) {
   if (!month) {
     return (
       <div>
-        <PageTitle title="Desk invoices" subtitle="Issued from published snapshots only" />
+        <PageTitle
+          title="Desk invoices"
+          subtitle="Issued from published snapshots only"
+          info={PAGE_HELP.invoices}
+        />
         <EmptyState message="No month has been published yet. Publish one from the Health page." />
       </div>
     );
@@ -38,46 +50,51 @@ async function Invoices({ searchParams }: { searchParams: SearchParams }) {
       <PageTitle
         title="Desk invoices"
         subtitle="Issued from the published snapshot — mapping edits never change these figures"
+        info={PAGE_HELP.invoices}
       >
         <div className="flex gap-1.5">
           {publishedMonths.map((m) => (
-            <Link
+            <Button
               key={m}
-              href={`/invoices?month=${m}`}
-              className={`tab ${m === month ? "tab-active" : ""}`}
+              asChild
+              size="sm"
+              variant={m === month ? "secondary" : "ghost"}
+              className={m === month ? undefined : "text-muted-foreground"}
             >
-              {fmtMonth(m)}
-            </Link>
+              <Link href={`/invoices?month=${m}`}>{fmtMonth(m)}</Link>
+            </Button>
           ))}
         </div>
       </PageTitle>
 
       <Card>
-        <table className="w-full">
-          <thead>
-            <tr>
-              <th className="th">Desk</th>
-              <th className="th text-right">Total for {fmtMonth(month)}</th>
-              <th className="th" />
-            </tr>
-          </thead>
-          <tbody>
-            {desks.map((d) => (
-              <tr key={d.desk}>
-                <td className="td font-medium">{d.desk}</td>
-                <td className="td text-right tabular-nums">{fmtMoney(d.total_cost)}</td>
-                <td className="td text-right">
-                  <Link
-                    href={`/invoices/${encodeURIComponent(d.desk)}?month=${month}`}
-                    className="text-indigo-600 hover:underline"
-                  >
-                    View statement →
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Desk</TableHead>
+                <TableHead className="text-right">Total for {fmtMonth(month)}</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {desks.map((d) => (
+                <TableRow key={d.desk}>
+                  <TableCell className="font-medium">{d.desk}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtMoney(d.total_cost)}</TableCell>
+                  <TableCell className="text-right">
+                    <Link
+                      href={`/invoices/${encodeURIComponent(d.desk)}?month=${month}`}
+                      className="text-indigo-600 hover:underline"
+                    >
+                      View statement →
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
     </div>
   );

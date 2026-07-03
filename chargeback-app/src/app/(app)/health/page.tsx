@@ -8,13 +8,25 @@ import { getDesks, getPublishedMonths } from "@/dal/reports";
 import { publishMonthAction, refreshHealthAction } from "@/actions/publish";
 import { ActionForm, Field } from "@/components/action-form";
 import { fmtMoneyExact, fmtMonth } from "@/lib/format";
-import { Card, EmptyState, PageTitle, StatusChip } from "@/components/ui";
+import { PAGE_HELP } from "@/lib/kpi-help";
+import { EmptyState, PageTitle, StatusChip } from "@/components/ui";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TablePageSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Health & publication" };
 
 export default function HealthPage() {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Running health checks…</p>}>
+    <Suspense
+      fallback={
+        <TablePageSkeleton
+          label="Running health checks against Databricks…"
+          tables={2}
+          withPicker={false}
+        />
+      }
+    >
       <Health />
     </Suspense>
   );
@@ -44,121 +56,137 @@ async function Health() {
       <PageTitle
         title="Health & reconciliation"
         subtitle="§7.1 invariant + §7.4 integrity checks — all green before every publication"
+        info={PAGE_HELP.health}
       >
         <ActionForm action={refreshHealthAction} submitLabel="Re-run checks" className="no-print" />
       </PageTitle>
 
       <Card className="mb-4">
-        <h2 className="mb-1 text-sm font-semibold text-slate-700">
-          Reconciliation — billing truth vs cost_fact vs report
-        </h2>
-        <p className="mb-3 text-xs text-slate-500">
-          The three totals must match per month (tolerance ${tolerance}). A gap means spend is
-          being dropped or double-counted somewhere — do not publish until resolved.
-        </p>
-        <table className="w-full">
-          <thead>
-            <tr>
-              <th className="th">Month</th>
-              <th className="th text-right">Billing truth</th>
-              <th className="th text-right">cost_fact</th>
-              <th className="th text-right">Report</th>
-              <th className="th text-right">Gap</th>
-              <th className="th">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {report.recon.map((r) => {
-              const pass =
-                Math.abs(r.fact_gap) < tolerance && Math.abs(r.report_gap) < tolerance;
-              return (
-                <tr key={r.billing_month}>
-                  <td className="td">
-                    {fmtMonth(r.billing_month)}
-                    {publishedMonths.includes(r.billing_month) && (
-                      <span className="ml-1.5 text-xs text-indigo-600">published</span>
-                    )}
-                  </td>
-                  <td className="td text-right tabular-nums">{fmtMoneyExact(r.billing_cost)}</td>
-                  <td className="td text-right tabular-nums">{fmtMoneyExact(r.fact_cost)}</td>
-                  <td className="td text-right tabular-nums">{fmtMoneyExact(r.report_cost)}</td>
-                  <td className="td text-right tabular-nums">
-                    {r.report_gap === 0 ? "0.00" : r.report_gap.toFixed(2)}
-                  </td>
-                  <td className="td">
-                    <StatusChip ok={pass} label={pass ? "reconciled" : "GAP"} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <CardHeader>
+          <CardTitle>Reconciliation — billing truth vs cost_fact vs report</CardTitle>
+          <CardDescription>
+            The three totals must match per month (tolerance ${tolerance}). A gap means spend is
+            being dropped or double-counted somewhere — do not publish until resolved.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Month</TableHead>
+                <TableHead className="text-right">Billing truth</TableHead>
+                <TableHead className="text-right">cost_fact</TableHead>
+                <TableHead className="text-right">Report</TableHead>
+                <TableHead className="text-right">Gap</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {report.recon.map((r) => {
+                const pass =
+                  Math.abs(r.fact_gap) < tolerance && Math.abs(r.report_gap) < tolerance;
+                return (
+                  <TableRow key={r.billing_month}>
+                    <TableCell>
+                      {fmtMonth(r.billing_month)}
+                      {publishedMonths.includes(r.billing_month) && (
+                        <span className="ml-1.5 text-xs text-indigo-600">published</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.billing_cost)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.fact_cost)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.report_cost)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {r.report_gap === 0 ? "0.00" : r.report_gap.toFixed(2)}
+                    </TableCell>
+                    <TableCell>
+                      <StatusChip ok={pass} label={pass ? "reconciled" : "GAP"} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
       </Card>
 
       <Card className="mb-4">
-        <h2 className="mb-1 text-sm font-semibold text-slate-700">
-          Mapping-table integrity (§7.4)
-        </h2>
-        {report.violations.length === 0 ? (
-          <p className="mt-2 text-sm text-emerald-700">
-            ✓ No overlapping validity windows, orphan bridge products, duplicate bridge keys, or
-            inconsistent warehouse flags.
-          </p>
-        ) : (
-          <ul className="mt-2 space-y-1">
-            {report.violations.map((v, i) => (
-              <li key={i} className="rounded bg-red-50 px-3 py-2 text-sm text-red-800">
-                <span className="font-mono text-xs uppercase">{v.check}</span> — {v.detail}
-              </li>
-            ))}
-          </ul>
-        )}
+        <CardHeader>
+          <CardTitle>Mapping-table integrity (§7.4)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {report.violations.length === 0 ? (
+            <p className="text-sm text-emerald-700">
+              ✓ No overlapping validity windows, orphan bridge products, duplicate bridge keys, or
+              inconsistent warehouse flags.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {report.violations.map((v, i) => (
+                <li key={i} className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  <span className="font-mono text-xs uppercase">{v.check}</span> — {v.detail}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
       </Card>
 
       <Card>
-        <h2 className="mb-1 text-sm font-semibold text-slate-700">Monthly publication</h2>
-        <p className="mb-3 text-xs text-slate-500">
-          Publishing snapshots the month into monthly_chargeback_published. Desks are invoiced from
-          the snapshot only — mapping edits after publication cannot change an issued invoice. This
-          is the one hard-to-reverse action in the system.
-        </p>
-        {candidate && (
-          <Suspense fallback={<p className="text-sm text-slate-500">Computing diff…</p>}>
-            <PublicationDiff candidate={candidate} publishedMonths={publishedMonths} />
-          </Suspense>
-        )}
-        {!candidate ? (
-          <EmptyState message="Nothing to publish — every closed month with data is already published." />
-        ) : !isPublisher ? (
-          <p className="text-sm text-slate-500">
-            Next up: <strong>{fmtMonth(candidate)}</strong>. Publication requires the{" "}
-            <span className="font-mono text-xs">publisher</span> role.
-          </p>
-        ) : gate && !gate.publishable ? (
-          <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <p className="font-medium">{fmtMonth(candidate)} is not publishable yet:</p>
-            <ul className="mt-1 list-inside list-disc">
-              {gate.reasons.map((r) => (
-                <li key={r}>{r}</li>
-              ))}
-            </ul>
-          </div>
-        ) : (
-          <div className="max-w-md">
-            <ActionForm
-              action={publishMonthAction}
-              submitLabel={`Publish ${fmtMonth(candidate)}`}
-              note="The gate re-runs server-side on submit — a stale green button cannot publish a broken month."
+        <CardHeader>
+          <CardTitle>Monthly publication</CardTitle>
+          <CardDescription>
+            Publishing snapshots the month into monthly_chargeback_published. Desks are invoiced from
+            the snapshot only — mapping edits after publication cannot change an issued invoice. This
+            is the one hard-to-reverse action in the system.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {candidate && (
+            <Suspense
+              fallback={
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Computing diff against the previous publication…
+                </div>
+              }
             >
-              <input type="hidden" name="month" value={candidate} />
-              <Field
-                label={`Type ${candidate} to confirm`}
-                name="confirm"
-                placeholder={candidate}
-              />
-            </ActionForm>
-          </div>
-        )}
+              <PublicationDiff candidate={candidate} publishedMonths={publishedMonths} />
+            </Suspense>
+          )}
+          {!candidate ? (
+            <EmptyState message="Nothing to publish — every closed month with data is already published." />
+          ) : !isPublisher ? (
+            <p className="text-sm text-muted-foreground">
+              Next up: <strong>{fmtMonth(candidate)}</strong>. Publication requires the{" "}
+              <span className="font-mono text-xs">publisher</span> role.
+            </p>
+          ) : gate && !gate.publishable ? (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <p className="font-medium">{fmtMonth(candidate)} is not publishable yet:</p>
+              <ul className="mt-1 list-inside list-disc">
+                {gate.reasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="max-w-md">
+              <ActionForm
+                action={publishMonthAction}
+                submitLabel={`Publish ${fmtMonth(candidate)}`}
+                note="The gate re-runs server-side on submit — a stale green button cannot publish a broken month."
+              >
+                <input type="hidden" name="month" value={candidate} />
+                <Field
+                  label={`Type ${candidate} to confirm`}
+                  name="confirm"
+                  placeholder={candidate}
+                />
+              </ActionForm>
+            </div>
+          )}
+        </CardContent>
       </Card>
     </div>
   );
@@ -191,43 +219,43 @@ async function PublicationDiff({
     .sort((a, b) => b.cur - a.cur);
 
   return (
-    <div className="mb-4 rounded-md border border-slate-200 p-3">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <div className="mb-4 rounded-lg border p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         What would be published — {fmtMonth(candidate)} (live, to be frozen)
         {prevPublished && <> vs {fmtMonth(prevPublished)} (published)</>}
       </p>
-      <table className="w-full max-w-xl">
-        <thead>
-          <tr>
-            <th className="th">Desk</th>
-            {prevPublished && <th className="th text-right">{fmtMonth(prevPublished)}</th>}
-            <th className="th text-right">{fmtMonth(candidate)}</th>
-            {prevPublished && <th className="th text-right">Δ</th>}
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="max-w-xl">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Desk</TableHead>
+            {prevPublished && <TableHead className="text-right">{fmtMonth(prevPublished)}</TableHead>}
+            <TableHead className="text-right">{fmtMonth(candidate)}</TableHead>
+            {prevPublished && <TableHead className="text-right">Δ</TableHead>}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((r) => (
-            <tr key={r.desk}>
-              <td className="td">{r.desk}</td>
+            <TableRow key={r.desk}>
+              <TableCell>{r.desk}</TableCell>
               {prevPublished && (
-                <td className="td text-right tabular-nums">
+                <TableCell className="text-right tabular-nums">
                   {r.prev == null ? "—" : fmtMoneyExact(r.prev)}
-                </td>
+                </TableCell>
               )}
-              <td className="td text-right tabular-nums">{fmtMoneyExact(r.cur)}</td>
+              <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.cur)}</TableCell>
               {prevPublished && (
-                <td
-                  className={`td text-right tabular-nums ${
+                <TableCell
+                  className={`text-right tabular-nums ${
                     (r.delta ?? 0) > 0 ? "text-amber-700" : "text-emerald-700"
                   }`}
                 >
                   {r.delta == null ? "—" : `${r.delta >= 0 ? "+" : ""}${fmtMoneyExact(r.delta)}`}
-                </td>
+                </TableCell>
               )}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }

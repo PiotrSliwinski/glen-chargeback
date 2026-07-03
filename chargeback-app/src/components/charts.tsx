@@ -20,8 +20,8 @@ export function BarList({
       {items.map((i) => {
         const row = (
           <div className="grid grid-cols-[10rem_1fr_6rem] items-center gap-3">
-            <span className="truncate text-sm text-slate-700">{i.label}</span>
-            <div className="h-5 rounded bg-slate-100">
+            <span className="truncate text-sm text-foreground">{i.label}</span>
+            <div className="h-5 rounded bg-muted">
               <div
                 className="h-5 rounded"
                 style={{
@@ -30,13 +30,13 @@ export function BarList({
                 }}
               />
             </div>
-            <span className="text-right text-sm font-medium tabular-nums text-slate-900">
+            <span className="text-right text-sm font-medium tabular-nums text-foreground">
               {fmtMoney(i.value)}
             </span>
           </div>
         );
         return hrefFor ? (
-          <a key={i.label} href={hrefFor(i.label)} className="block rounded hover:bg-slate-50">
+          <a key={i.label} href={hrefFor(i.label)} className="block rounded hover:bg-muted/50">
             {row}
           </a>
         ) : (
@@ -84,7 +84,7 @@ export function StackedTrend({
                 );
               })}
             </div>
-            <div className="pointer-events-none absolute -top-6 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-slate-800 px-1.5 py-0.5 text-xs text-white group-hover:block">
+            <div className="pointer-events-none absolute -top-6 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-1.5 py-0.5 text-xs text-background group-hover:block">
               {fmtMoney(totals[mi])}
             </div>
           </div>
@@ -92,7 +92,7 @@ export function StackedTrend({
       </div>
       <div className="mt-1 flex gap-2">
         {months.map((m) => (
-          <span key={m} className="flex-1 text-center text-[10px] text-slate-500">
+          <span key={m} className="flex-1 text-center text-[10px] text-muted-foreground">
             {m.slice(5)}·{m.slice(2, 4)}
           </span>
         ))}
@@ -135,7 +135,7 @@ function Legend({ items }: { items: { label: string; color: string }[] }) {
   return (
     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
       {items.map((i) => (
-        <span key={i.label} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+        <span key={i.label} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: i.color }} />
           {i.label}
         </span>
@@ -146,6 +146,6 @@ function Legend({ items }: { items: { label: string; color: string }[] }) {
 
 export function TrendHint({ month }: { month: string }) {
   return (
-    <p className="mt-2 text-xs text-slate-500">12-month trend up to {fmtMonth(month)}.</p>
+    <p className="mt-2 text-xs text-muted-foreground">12-month trend up to {fmtMonth(month)}.</p>
   );
 }

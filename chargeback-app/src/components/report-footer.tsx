@@ -4,8 +4,8 @@
  */
 export function ReportFooter() {
   return (
-    <footer className="mt-8 rounded-md border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
-      <p className="mb-1 font-semibold text-slate-600">Known limitations</p>
+    <footer className="mt-8 rounded-lg border bg-muted/50 p-4 text-xs text-muted-foreground">
+      <p className="mb-1 font-semibold text-foreground/80">Known limitations</p>
       <ul className="list-inside list-disc space-y-0.5">
         <li>
           Databricks DBU cost only; Azure VM/network/storage for classic compute billed separately

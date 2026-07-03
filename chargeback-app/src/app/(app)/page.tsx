@@ -1,21 +1,24 @@
-import { Suspense } from "react";
 import Link from "next/link";
 import { getDashboard } from "@/dal/reports";
 import { fmtMoney, fmtMonth, fmtPct } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
+import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { getSession } from "@/lib/auth";
 import { atLeast } from "@/lib/rbac";
-import { Card, EmptyState, KpiTile, PageTitle } from "@/components/ui";
+import { EmptyState, KpiTile, PageTitle } from "@/components/ui";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarList, CoverageBar, StackedTrend, TrendHint } from "@/components/charts";
 import { MonthModePicker } from "@/components/month-picker";
 import { ReportFooter } from "@/components/report-footer";
 import { ModeBanner } from "@/components/mode-banner";
+import { DashboardSkeleton } from "@/components/loading-skeletons";
+import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export default function DashboardPage({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <Suspense fallback={<p className="text-sm text-slate-500">Loading dashboard…</p>}>
+    <SearchParamsSuspense searchParams={searchParams} fallback={<DashboardSkeleton />}>
       <Dashboard searchParams={searchParams} />
-    </Suspense>
+    </SearchParamsSuspense>
   );
 }
 
@@ -36,6 +39,7 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
       <PageTitle
         title="Chargeback Dashboard"
         subtitle={`${fmtMonth(month)} — cost by domain, product and desk`}
+        info={PAGE_HELP.dashboard}
       >
         <MonthModePicker
           months={months}
@@ -54,18 +58,20 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
       ) : (
         <>
           <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <KpiTile label="Total cost" value={fmtMoney(data.totalCost)} />
+            <KpiTile label="Total cost" value={fmtMoney(data.totalCost)} info={KPI_HELP.totalCost} />
             <KpiTile
               label="MoM change"
               value={delta == null ? "—" : `${delta >= 0 ? "+" : ""}${fmtMoney(delta)}`}
               hint={deltaPct == null ? undefined : `${(deltaPct * 100).toFixed(1)}% vs prior month (live)`}
               tone={delta != null && delta > 0 ? "warn" : "default"}
+              info={KPI_HELP.momChange}
             />
             <KpiTile
               label="TAG coverage"
               value={fmtPct(data.tagCoveragePct)}
               hint="share of cost attributed by tags at source"
               tone={data.tagCoveragePct >= 0.7 ? "good" : "warn"}
+              info={KPI_HELP.tagCoverage}
             />
             {isSteward ? (
               <Link href="/queue" className="block">
@@ -74,6 +80,8 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
                   value={fmtMoney(data.unallocatedCost)}
                   hint="unclaimed spend — click to open the work queue"
                   tone={data.unallocatedCost > 0 ? "bad" : "good"}
+                  info={KPI_HELP.unallocatedCost}
+                  infoAlign="end"
                 />
               </Link>
             ) : (
@@ -82,39 +90,49 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
                 value={fmtMoney(data.unallocatedCost)}
                 hint="spend nobody has claimed yet"
                 tone={data.unallocatedCost > 0 ? "bad" : "good"}
+                info={KPI_HELP.unallocatedCost}
+                infoAlign="end"
               />
             )}
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <h2 className="mb-3 text-sm font-semibold text-slate-700">
-                Cost by data domain (level 1)
-              </h2>
-              <BarList
-                items={data.byDomain.map((d) => ({
-                  label: d.data_domain,
-                  value: d.total_cost,
-                }))}
-                hrefFor={(domain) =>
-                  `/drill?month=${month}&mode=${mode}&domain=${encodeURIComponent(domain)}`
-                }
-              />
+              <CardHeader>
+                <CardTitle>Cost by data domain (level 1)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <BarList
+                  items={data.byDomain.map((d) => ({
+                    label: d.data_domain,
+                    value: d.total_cost,
+                  }))}
+                  hrefFor={(domain) =>
+                    `/drill?month=${month}&mode=${mode}&domain=${encodeURIComponent(domain)}`
+                  }
+                />
+              </CardContent>
             </Card>
             <Card>
-              <h2 className="mb-3 text-sm font-semibold text-slate-700">Monthly trend by domain</h2>
-              <StackedTrend points={data.trend} />
-              <TrendHint month={month} />
+              <CardHeader>
+                <CardTitle>Monthly trend by domain</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <StackedTrend points={data.trend} />
+                <TrendHint month={month} />
+              </CardContent>
             </Card>
             <Card className="lg:col-span-2">
-              <h2 className="mb-3 text-sm font-semibold text-slate-700">
-                Attribution coverage — how cost got attributed this month
-              </h2>
-              <CoverageBar coverage={data.coverage} />
-              <p className="mt-2 text-xs text-slate-500">
-                Goal state: TAG rising; JOB_MAPPING and NONE shrinking. Mappings are a bridge — tags
-                at source are the destination.
-              </p>
+              <CardHeader>
+                <CardTitle>Attribution coverage — how cost got attributed this month</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CoverageBar coverage={data.coverage} />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Goal state: TAG rising; JOB_MAPPING and NONE shrinking. Mappings are a bridge — tags
+                  at source are the destination.
+                </p>
+              </CardContent>
             </Card>
           </div>
         </>

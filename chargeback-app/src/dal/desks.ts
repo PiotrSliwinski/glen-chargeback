@@ -4,8 +4,8 @@ import { env } from "@/lib/env";
 import { monthStart } from "@/lib/format";
 import { query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
-import { zMonth, zNum, zStr } from "@/dal/parse";
-import type { AttributionMethod } from "@/dal/types";
+import { zBoolOrNull, zMonth, zNum, zStr, zStrOrNull } from "@/dal/parse";
+import type { AttributionMethod, DeskDetailRow } from "@/dal/types";
 
 /**
  * Desk-level analytics: self-service views for desk heads and the per-desk
@@ -40,6 +40,55 @@ export async function getDeskTrend(desk: string): Promise<DeskTrendPoint[]> {
      GROUP BY 1 ORDER BY 1`,
     { desk },
     z.object({ billing_month: zMonth, total_cost: zNum }) as z.ZodType<DeskTrendPoint>,
+  );
+}
+
+/**
+ * Line-item drill-down for one desk's month: every (category × serverless ×
+ * product × job/warehouse × runner × method) slice of cost_fact that landed on
+ * the desk — the full construction of the desk's invoice number.
+ */
+export async function getDeskDetail(month: string, desk: string): Promise<DeskDetailRow[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("reports-live");
+
+  if (env.DAL_MOCK) {
+    const products = new Set(
+      mockStore.monthly
+        .filter((r) => r.billing_month === month && r.desk === desk)
+        .map((r) => r.data_product),
+    );
+    const deskOf = new Map(mockStore.users.map((u) => [u.user_name, u.desk]));
+    return [...products]
+      .flatMap((p) =>
+        (mockStore.detail[p] ?? [])
+          // AD_HOC fixtures are shared across desks; keep only this desk's runners
+          .filter((d) => p !== "AD_HOC" || deskOf.get(d.runner_name ?? "") === desk)
+          .map((d) => ({ ...d, data_product: p })),
+      )
+      .sort((a, b) => b.cost - a.cost);
+  }
+
+  return query(
+    `SELECT usage_category, is_serverless, data_product, job_name, warehouse_id,
+            runner_name, attribution_method, SUM(dbus) AS dbus, SUM(cost) AS cost
+     FROM ${T("cost_fact")}
+     WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
+       AND desk = :desk
+     GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY cost DESC LIMIT 500`,
+    { month: monthStart(month), desk },
+    z.object({
+      usage_category: zStr,
+      is_serverless: zBoolOrNull,
+      data_product: zStr,
+      job_name: zStrOrNull,
+      warehouse_id: zStrOrNull,
+      runner_name: zStrOrNull,
+      attribution_method: zStr,
+      dbus: zNum,
+      cost: zNum,
+    }) as z.ZodType<DeskDetailRow>,
   );
 }
 

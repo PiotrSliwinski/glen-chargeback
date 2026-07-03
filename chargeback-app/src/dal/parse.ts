@@ -29,6 +29,11 @@ export const zNum = z
 export const zStr = z.string();
 export const zStrOrNull = z.string().nullable();
 
+/** boolean | 'true'/'false' string | null → boolean | null */
+export const zBoolOrNull = z
+  .union([z.boolean(), z.string(), z.null()])
+  .transform((v) => (v == null ? null : typeof v === "string" ? v === "true" : v));
+
 /**
  * IDs (workspace_id, job_id) are strings in the app but may be BIGINT in the
  * deployed tables (e.g. workspace_mapping.workspace_id) — coerce to string.

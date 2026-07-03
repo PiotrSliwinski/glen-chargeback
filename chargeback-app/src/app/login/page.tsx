@@ -1,4 +1,12 @@
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { env } from "@/lib/env";
 import { signIn } from "@/lib/auth";
 
@@ -6,18 +14,18 @@ export const metadata = { title: "Sign in" };
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
-      <div className="card w-full max-w-sm text-center">
-        <h1 className="text-lg font-semibold text-slate-900">Databricks Chargeback</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Reference data &amp; monthly chargeback reporting
-        </p>
-        <div className="mt-6">
+    <div className="flex min-h-screen items-center justify-center bg-muted p-4">
+      <Card className="w-full max-w-sm text-center">
+        <CardHeader>
+          <CardTitle>Databricks Chargeback</CardTitle>
+          <CardDescription>Reference data &amp; monthly chargeback reporting</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-2">
           {env.AUTH_DEV_BYPASS ? (
             <>
-              <Link href="/" className="btn w-full justify-center">
-                Continue as Dev User ({env.AUTH_DEV_ROLE})
-              </Link>
+              <Button asChild className="w-full">
+                <Link href="/">Continue as Dev User ({env.AUTH_DEV_ROLE})</Link>
+              </Button>
               <p className="mt-3 text-xs text-amber-600">
                 AUTH_DEV_BYPASS is on — local development only.
               </p>
@@ -29,18 +37,18 @@ export default function LoginPage() {
                 await signIn("microsoft-entra-id", { redirectTo: "/" });
               }}
             >
-              <button type="submit" className="btn w-full justify-center">
+              <Button type="submit" className="w-full">
                 Sign in with Microsoft Entra ID
-              </button>
+              </Button>
             </form>
           ) : (
-            <p className="text-sm text-red-600">
+            <p className="text-sm text-destructive">
               No identity provider configured. Set the ENTRA_* variables, or
               AUTH_DEV_BYPASS=true for local development.
             </p>
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

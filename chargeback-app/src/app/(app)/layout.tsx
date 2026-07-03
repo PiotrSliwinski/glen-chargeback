@@ -5,14 +5,15 @@ import { getSession } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { atLeast } from "@/lib/rbac";
 import { NavLinks, type NavItem } from "@/components/nav-links";
+import { Badge } from "@/components/ui/badge";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="no-print border-b border-slate-200 bg-white">
+      <header className="no-print border-b bg-card">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-6">
-            <Link href="/" className="text-sm font-bold tracking-tight text-slate-900">
+            <Link href="/" className="text-sm font-bold tracking-tight">
               ⚡ Chargeback
             </Link>
             <Suspense fallback={null}>
@@ -58,13 +59,11 @@ async function UserChip() {
   const session = await getSession();
   if (!session) return null;
   return (
-    <div className="flex items-center gap-2 text-xs text-slate-500">
-      <span>
-        {session.user.name}
-        <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 font-medium uppercase tracking-wide">
-          {session.user.role ?? "no role"}
-        </span>
-      </span>
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>{session.user.name}</span>
+      <Badge variant="secondary" className="uppercase tracking-wide">
+        {session.user.role ?? "no role"}
+      </Badge>
     </div>
   );
 }

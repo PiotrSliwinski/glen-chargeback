@@ -1,7 +1,10 @@
 "use client";
 
 import { useActionState } from "react";
-import clsx from "clsx";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import type { ActionResult } from "@/lib/action-result";
 
 type FormAction = (prev: ActionResult | null, formData: FormData) => Promise<ActionResult>;
@@ -27,18 +30,18 @@ export function ActionForm({
 }) {
   const [state, formAction, pending] = useActionState(action, null);
   return (
-    <form action={formAction} className={clsx("space-y-3", className)}>
+    <form action={formAction} className={cn("space-y-3", className)}>
       {children}
-      {note && <p className="text-xs text-slate-500">{note}</p>}
-      <button type="submit" disabled={pending} className={danger ? "btn-danger" : "btn"}>
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
+      <Button type="submit" disabled={pending} variant={danger ? "destructive" : "default"}>
         {pending ? "Saving…" : submitLabel}
-      </button>
+      </Button>
       {state && (
         <p
           role="status"
-          className={clsx(
-            "rounded-md px-3 py-2 text-sm",
-            state.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800",
+          className={cn(
+            "rounded-lg px-3 py-2 text-sm",
+            state.ok ? "bg-emerald-50 text-emerald-800" : "bg-destructive/10 text-destructive",
           )}
         >
           {state.ok ? (state.message ?? "Done.") : state.message}
@@ -66,11 +69,11 @@ export function Field({
   placeholder?: string;
 }) {
   return (
-    <div>
-      <label className="label" htmlFor={name}>
+    <div className="space-y-1.5">
+      <Label htmlFor={name} className="text-xs text-muted-foreground">
         {label}
-      </label>
-      <input
+      </Label>
+      <Input
         id={name}
         name={name}
         type={type}
@@ -78,12 +81,17 @@ export function Field({
         required={required}
         readOnly={readOnly}
         placeholder={placeholder}
-        className={clsx("input", readOnly && "bg-slate-100 text-slate-500")}
+        className={cn(readOnly && "bg-muted text-muted-foreground")}
       />
     </div>
   );
 }
 
+/**
+ * Native select styled to match the shadcn Input. Kept native (rather than
+ * the Radix Select) because these forms rely on plain FormData semantics,
+ * including empty-string option values, which Radix Select does not allow.
+ */
 export function SelectField({
   label,
   name,
@@ -98,11 +106,18 @@ export function SelectField({
   required?: boolean;
 }) {
   return (
-    <div>
-      <label className="label" htmlFor={name}>
+    <div className="space-y-1.5">
+      <Label htmlFor={name} className="text-xs text-muted-foreground">
         {label}
-      </label>
-      <select id={name} name={name} defaultValue={defaultValue} required={required} className="input">
+      </Label>
+      <select
+        id={name}
+        name={name}
+        aria-label={label}
+        defaultValue={defaultValue}
+        required={required}
+        className="h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
+      >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}

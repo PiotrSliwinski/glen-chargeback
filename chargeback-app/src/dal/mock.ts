@@ -2,9 +2,11 @@ import type {
   CoverageRow,
   DataProductRow,
   DetailRow,
+  JobAttributionRow,
   JobMappingRow,
   MonthlyChargebackRow,
   ReconRow,
+  ServerlessGapRow,
   RogueTagRow,
   UnassignedWarehouseRow,
   UnknownRunnerRow,
@@ -37,6 +39,8 @@ export interface MockStore {
   queueUnknownWorkspaces: UnknownWorkspaceRow[];
   queueRogueTags: RogueTagRow[];
   queueUnassignedWarehouses: UnassignedWarehouseRow[];
+  serverlessGap: ServerlessGapRow[];
+  jobAttributions: JobAttributionRow[];
   recon: ReconRow[];
 }
 
@@ -142,39 +146,39 @@ function createStore(): MockStore {
 
   const detail: Record<string, DetailRow[]> = {
     "pricing-curves": [
-      { usage_category: "JOBS", job_name: "curves-build-eod", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", cost: 9800 },
-      { usage_category: "JOBS", job_name: "curves-intraday-refresh", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", cost: 6100 },
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-shared-main", runner_name: "Anna Kowalska", attribution_method: "TAG", cost: 3200 },
-      { usage_category: "JOBS", job_name: "curves-backfill", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", cost: 2300 },
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-shared-main", runner_name: "Jan Nowak", attribution_method: "TAG", cost: 2100 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "curves-build-eod", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 22100, cost: 9800 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "curves-intraday-refresh", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 12800, cost: 6100 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Anna Kowalska", attribution_method: "TAG", dbus: 7500, cost: 3200 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "curves-backfill", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 5200, cost: 2300 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 4900, cost: 2100 },
     ],
     "ref-data-ingest": [
-      { usage_category: "JOBS", job_name: "refdata-loader (job 845)", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "JOB_MAPPING", cost: 8900 },
-      { usage_category: "DLT", job_name: "refdata-dlt-pipeline", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", cost: 4600 },
-      { usage_category: "JOBS", job_name: "refdata-validation", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", cost: 3800 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "refdata-loader (job 845)", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "JOB_MAPPING", dbus: 20200, cost: 8900 },
+      { usage_category: "DLT", is_serverless: true, job_name: "refdata-dlt-pipeline", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 9800, cost: 4600 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "refdata-validation", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 8600, cost: 3800 },
     ],
     "var-engine": [
-      { usage_category: "JOBS", job_name: "nightly-var (job 310)", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "JOB_MAPPING", cost: 15600 },
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-risk-dedicated", runner_name: "Maria Wiśniewska", attribution_method: "WAREHOUSE_MAPPING", cost: 5400 },
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-risk-dedicated", runner_name: "UNALLOCATED_IDLE", attribution_method: "WAREHOUSE_MAPPING", cost: 1700 },
-      { usage_category: "JOBS", job_name: "var-scenario-expansion", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", cost: 8500 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "nightly-var (job 310)", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "JOB_MAPPING", dbus: 33900, cost: 15600 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", runner_name: "Maria Wiśniewska", attribution_method: "WAREHOUSE_MAPPING", dbus: 11900, cost: 5400 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", runner_name: "UNALLOCATED_IDLE", attribution_method: "WAREHOUSE_MAPPING", dbus: 3700, cost: 1700 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "var-scenario-expansion", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 18400, cost: 8500 },
     ],
     "stress-testing": [
-      { usage_category: "JOBS", job_name: "stress-quarterly", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", cost: 5400 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "stress-quarterly", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 11900, cost: 5400 },
     ],
     "trade-pnl": [
-      { usage_category: "JOBS", job_name: "pnl-explain (job 1022)", warehouse_id: null, runner_name: "Piotr Zieliński", attribution_method: "JOB_MAPPING", cost: 9200 },
-      { usage_category: "JOBS", job_name: "pnl-eod-close", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", cost: 6000 },
-      { usage_category: "MODEL_SERVING", job_name: "pnl-anomaly-endpoint", warehouse_id: null, runner_name: "Piotr Zieliński", attribution_method: "TAG", cost: 2300 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "pnl-explain (job 1022)", warehouse_id: null, runner_name: "Piotr Zieliński", attribution_method: "JOB_MAPPING", dbus: 20300, cost: 9200 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "pnl-eod-close", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 13100, cost: 6000 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: "pnl-anomaly-endpoint", warehouse_id: null, runner_name: "Piotr Zieliński", attribution_method: "TAG", dbus: 4100, cost: 2300 },
     ],
     AD_HOC: [
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-shared-adhoc", runner_name: "Anna Kowalska", attribution_method: "USER", cost: 2600 },
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-shared-main", runner_name: "Maria Wiśniewska", attribution_method: "USER", cost: 2400 },
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-shared-adhoc", runner_name: "Piotr Zieliński", attribution_method: "USER", cost: 1700 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", runner_name: "Anna Kowalska", attribution_method: "USER", dbus: 5900, cost: 2600 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Maria Wiśniewska", attribution_method: "USER", dbus: 5200, cost: 2400 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", runner_name: "Piotr Zieliński", attribution_method: "USER", dbus: 3800, cost: 1700 },
     ],
     UNALLOCATED: [
-      { usage_category: "JOBS", job_name: "unknown-batch-77", warehouse_id: null, runner_name: null, attribution_method: "NONE", cost: 3300 },
-      { usage_category: "SQL_WAREHOUSE", job_name: null, warehouse_id: "wh-shared-main", runner_name: "UNALLOCATED_IDLE", attribution_method: "NONE", cost: 2200 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "unknown-batch-77", warehouse_id: null, runner_name: null, attribution_method: "NONE", dbus: 7400, cost: 3300 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "UNALLOCATED_IDLE", attribution_method: "NONE", dbus: 4900, cost: 2200 },
     ],
   };
 
@@ -210,6 +214,34 @@ function createStore(): MockStore {
     queueUnassignedWarehouses: [
       { warehouse_id: "wh-quant-research", workspace_id: "1111111111111111", cost_30d: 6800, idle_share: 0.41 },
       { warehouse_id: "wh-reporting-bi", workspace_id: "1111111111111111", cost_30d: 3900, idle_share: 0.22 },
+    ],
+    // Runners with serverless spend (30d) absent from user_mapping — the
+    // serverless attribution gap. Overlaps with queueUnknownRunners where the
+    // runner's spend is serverless; karol has serverless-only spend below the
+    // unknown-runners queue radar.
+    serverlessGap: [
+      { runner: "tomasz.lis@example.com", serverless_cost_30d: 1890, serverless_dbus_30d: 4130, rows_30d: 41, workspace_count: 2, top_category: "JOBS", last_seen: "2026-07-02" },
+      { runner: "ewa.mazur@example.com", serverless_cost_30d: 940, serverless_dbus_30d: 2050, rows_30d: 18, workspace_count: 1, top_category: "DLT", last_seen: "2026-07-01" },
+      { runner: "9a1b2c3d-svc-legacy", serverless_cost_30d: 610, serverless_dbus_30d: 1380, rows_30d: 9, workspace_count: 1, top_category: "JOBS", last_seen: "2026-06-27" },
+      { runner: "karol.adamski@example.com", serverless_cost_30d: 240, serverless_dbus_30d: 460, rows_30d: 6, workspace_count: 1, top_category: "MODEL_SERVING", last_seen: "2026-06-30" },
+    ],
+    // How every job with 30d cost attributed. pnl-explain (1022) shows two
+    // rows on purpose: bridge-mapped early in the window, tagged at source
+    // since — the same story the janitor panel tells.
+    jobAttributions: [
+      { workspace_id: "1111111111111111", job_id: "310", job_name: "nightly-var", attribution_method: "JOB_MAPPING", data_product: "var-engine", desk: "risk", dbus_30d: 33900, cost_30d: 15600 },
+      { workspace_id: "1111111111111111", job_id: "501", job_name: "curves-build-eod", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", dbus_30d: 22100, cost_30d: 9800 },
+      { workspace_id: "2222222222222222", job_id: "845", job_name: "refdata-loader", attribution_method: "JOB_MAPPING", data_product: "ref-data-ingest", desk: "rates", dbus_30d: 20200, cost_30d: 8900 },
+      { workspace_id: "1111111111111111", job_id: "918", job_name: "var-scenario-expansion", attribution_method: "TAG", data_product: "var-engine", desk: "risk", dbus_30d: 18400, cost_30d: 8500 },
+      { workspace_id: "1111111111111111", job_id: "502", job_name: "curves-intraday-refresh", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", dbus_30d: 12800, cost_30d: 6100 },
+      { workspace_id: "2222222222222222", job_id: "640", job_name: "pnl-eod-close", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", dbus_30d: 13100, cost_30d: 6000 },
+      { workspace_id: "1111111111111111", job_id: "733", job_name: "stress-quarterly", attribution_method: "TAG", data_product: "stress-testing", desk: "risk", dbus_30d: 11900, cost_30d: 5400 },
+      { workspace_id: "2222222222222222", job_id: "1022", job_name: "pnl-explain", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", dbus_30d: 10700, cost_30d: 4870 },
+      { workspace_id: "2222222222222222", job_id: "1022", job_name: "pnl-explain", attribution_method: "JOB_MAPPING", data_product: "trade-pnl", desk: "credit", dbus_30d: 9600, cost_30d: 4330 },
+      { workspace_id: "2222222222222222", job_id: "77", job_name: "unknown-batch-77", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 7400, cost_30d: 3300 },
+      { workspace_id: "1111111111111111", job_id: "1544", job_name: "ml-feature-refresh", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 4700, cost_30d: 2100 },
+      { workspace_id: "3333333333333333", job_id: "88", job_name: "sandbox-cdc-pipeline", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 2100, cost_30d: 940 },
+      { workspace_id: "1111111111111111", job_id: "2199", job_name: "adhoc-export-2199", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 920, cost_30d: 410 },
     ],
     recon: [
       { billing_month: "2026-01", billing_cost: 79512.4, fact_cost: 79512.4, report_cost: 79512.4, fact_gap: 0, report_gap: 0 },

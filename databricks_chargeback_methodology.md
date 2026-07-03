@@ -129,7 +129,7 @@ This holds because: `query_view` LEFT-joins queries onto usage (idle hours prese
 
 | Table | Used for | Key columns used | Retention |
 |---|---|---|---|
-| `system.billing.usage` | All DBU consumption | `usage_date`, `usage_start_time`, `usage_end_time`, `usage_quantity`, `usage_unit`, `sku_name`, `cloud`, `workspace_id`, `billing_origin_product`, `usage_metadata.warehouse_id`, `usage_metadata.job_id`, `usage_metadata.job_name`, `identity_metadata.run_as`, `custom_tags.*` | ~1 year |
+| `system.billing.usage` | All DBU consumption | `usage_date`, `usage_start_time`, `usage_end_time`, `usage_quantity`, `usage_unit`, `sku_name`, `cloud`, `workspace_id`, `billing_origin_product`, `usage_metadata.warehouse_id`, `usage_metadata.job_id`, `usage_metadata.job_name`, `identity_metadata.run_as`, `product_features.is_serverless`, `custom_tags.*` | ~1 year |
 | `system.billing.list_prices` | Pricing | `sku_name`, `cloud`, `currency_code`, `price_start_time`, `price_end_time`, `pricing.default`, `pricing.effective_list.default` | full history |
 | `system.query.history` | Per-statement warehouse allocation | `statement_id`, `start_time`, `end_time`, `compute.warehouse_id`, `executed_by`, `statement_type`, `execution_status`, `total_task_duration_ms`, `total_duration_ms`, `read_bytes`, `produced_rows`, `workspace_id` | ~90 days |
 | `system.workflow.jobs` | Job names (SCD-style change log) | `workspace_id`, `job_id`, `name`, `change_time` | full history |
@@ -448,6 +448,7 @@ SELECT
   u.workspace_id,
   u.sku_name,
   u.billing_origin_product,
+  u.product_features.is_serverless                            AS is_serverless,
   u.usage_unit,
   u.custom_tags.data_product                                  AS tag_data_product,
   u.custom_tags.provider                                      AS provider,
@@ -498,6 +499,7 @@ GROUP BY
   u.workspace_id,
   u.sku_name,
   u.billing_origin_product,
+  u.product_features.is_serverless,
   u.usage_unit,
   u.custom_tags.data_product,
   u.custom_tags.provider,
@@ -571,6 +573,7 @@ WITH unified AS (
     CAST(NULL AS STRING)               AS job_id,
     CAST(NULL AS STRING)               AS job_name,
     user_id                            AS runner,
+    CAST(NULL AS BOOLEAN)              AS is_serverless,  -- not tracked per-query
     CAST(NULL AS STRING)               AS tag_data_product,
     statement_id,
     dbu_allocated                      AS dbus,
@@ -588,6 +591,7 @@ WITH unified AS (
     CAST(job_id AS STRING)             AS job_id,
     job_name,
     job_runner                         AS runner,
+    is_serverless,
     tag_data_product,
     CAST(NULL AS STRING)               AS statement_id,
     total_dbus                         AS dbus,
@@ -638,6 +642,7 @@ SELECT
   a.tag_data_product                            AS raw_tag_data_product,
   -- ---- detail dimensions
   a.usage_category,
+  a.is_serverless,                              -- serverless vs classic compute (NULL for per-query warehouse rows)
   a.workspace_id,
   a.compute_key                                 AS warehouse_id,
   a.job_id,
@@ -985,12 +990,21 @@ WHERE billing_month = :month AND data_domain = :domain
 GROUP BY 1, 2 ORDER BY cost DESC;
 
 -- Level 2 -> detail: what makes up a product's cost
-SELECT usage_category, job_name, warehouse_id, runner_name,
-       attribution_method, SUM(cost) cost
+SELECT usage_category, is_serverless, job_name, warehouse_id, runner_name,
+       attribution_method, SUM(dbus) dbus, SUM(cost) cost
 FROM main_dev.cost_reporting.cost_fact
 WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
   AND data_product = :product
-GROUP BY 1, 2, 3, 4, 5 ORDER BY cost DESC LIMIT 200;
+GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY cost DESC LIMIT 200;
+
+-- Desk drill-down: how a desk's monthly number was constructed
+-- (usage category x serverless/classic x job/warehouse x runner x method)
+SELECT usage_category, is_serverless, data_product, job_name, warehouse_id,
+       runner_name, attribution_method, SUM(dbus) dbus, SUM(cost) cost
+FROM main_dev.cost_reporting.cost_fact
+WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
+  AND desk = :desk
+GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY cost DESC LIMIT 500;
 
 -- Desk view (level 3): the invoice shape
 SELECT * FROM main_dev.cost_reporting.desk_monthly_invoice
