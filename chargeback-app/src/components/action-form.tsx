@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useId } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,7 +30,10 @@ export function ActionForm({
 }) {
   const [state, formAction, pending] = useActionState(action, null);
   return (
-    <form action={formAction} className={cn("space-y-3", className)}>
+    // whitespace-normal: these forms often render inside table cells, which
+    // set whitespace-nowrap — without the reset, notes and status messages
+    // refuse to wrap and blow out the table width.
+    <form action={formAction} className={cn("space-y-3 whitespace-normal", className)}>
       {children}
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
       <Button type="submit" disabled={pending} variant={danger ? "destructive" : "default"}>
@@ -68,13 +71,17 @@ export function Field({
   readOnly?: boolean;
   placeholder?: string;
 }) {
+  // useId, not `name`: the same form repeats once per table row, so a
+  // name-derived id would be duplicated across the page and label clicks
+  // (and screen readers) would target the first matching row's input.
+  const id = useId();
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={name} className="text-xs text-muted-foreground">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
         {label}
       </Label>
       <Input
-        id={name}
+        id={id}
         name={name}
         type={type}
         defaultValue={defaultValue}
@@ -105,13 +112,14 @@ export function SelectField({
   defaultValue?: string;
   required?: boolean;
 }) {
+  const id = useId();
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={name} className="text-xs text-muted-foreground">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
         {label}
       </Label>
       <select
-        id={name}
+        id={id}
         name={name}
         aria-label={label}
         defaultValue={defaultValue}
@@ -124,6 +132,41 @@ export function SelectField({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+/**
+ * Free-text input with datalist suggestions (e.g. desk names: existing values
+ * are suggested but new ones are allowed). Ids come from useId so the field
+ * can repeat once per table row without colliding.
+ */
+export function DatalistField({
+  label,
+  name,
+  options,
+  defaultValue,
+  required = true,
+}: {
+  label: string;
+  name: string;
+  options: string[];
+  defaultValue?: string;
+  required?: boolean;
+}) {
+  const id = useId();
+  const listId = `${id}-list`;
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {label}
+      </Label>
+      <Input id={id} name={name} defaultValue={defaultValue} required={required} list={listId} />
+      <datalist id={listId}>
+        {options.map((o) => (
+          <option key={o} value={o} />
+        ))}
+      </datalist>
     </div>
   );
 }

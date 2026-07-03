@@ -28,8 +28,24 @@ const METHOD_FILTERS: { key: string; label: string }[] = [
   { key: "all", label: "All jobs" },
   { key: "TAG", label: "Tagged at source" },
   { key: "JOB_MAPPING", label: "Via bridge" },
+  { key: "TAG_RULE", label: "Via tag rule" },
+  { key: "RUNNER_RULE", label: "Via runner rule" },
   { key: "NONE", label: "Unmapped" },
 ];
+
+/** Union of a job group's tags across its attribution slices. */
+function jobTags(rows: JobAttributionRow[]): Record<string, string> {
+  const tags: Record<string, string> = {};
+  for (const r of rows) {
+    if (!r.tags_json) continue;
+    try {
+      Object.assign(tags, JSON.parse(r.tags_json));
+    } catch {
+      // malformed tags_json — skip the slice, never break the page
+    }
+  }
+  return tags;
+}
 
 export default function JobCoveragePage({ searchParams }: { searchParams: SearchParams }) {
   return (
@@ -87,7 +103,10 @@ async function JobCoverage({ searchParams }: { searchParams: SearchParams }) {
   const kpis = {
     jobs: all.length,
     tagged: all.filter((g) => g.methods.has("TAG") && !g.methods.has("NONE")).length,
-    bridged: all.filter((g) => g.methods.has("JOB_MAPPING")).length,
+    bridged: all.filter(
+      (g) =>
+        g.methods.has("JOB_MAPPING") || g.methods.has("TAG_RULE") || g.methods.has("RUNNER_RULE"),
+    ).length,
     unmappedCost: all
       .filter((g) => g.methods.has("NONE"))
       .reduce((s, g) => s + g.rows.filter((r) => r.attribution_method === "NONE").reduce((c, r) => c + r.cost_30d, 0), 0),
@@ -101,6 +120,7 @@ async function JobCoverage({ searchParams }: { searchParams: SearchParams }) {
       g.workspace_id,
       wsName.get(g.workspace_id) ?? "",
       ...g.rows.flatMap((r) => [r.data_product, r.desk]),
+      ...Object.entries(jobTags(g.rows)).map(([k, v]) => `${k}=${v}`),
     ]
       .join(" ")
       .toLowerCase()
@@ -113,11 +133,11 @@ async function JobCoverage({ searchParams }: { searchParams: SearchParams }) {
     <div>
       <PageTitle
         title="Job attribution coverage"
-        subtitle="Every job that emitted cost in the trailing 30 days and how it was mapped — tag, bridge row, or nothing. The transparency behind the waterfall."
+        subtitle="Every job that emitted cost in the trailing 30 days, the tags it actually carries, and how it was mapped — tag, bridge row, tag rule, runner rule, or nothing. Jobs never default to the runner's desk."
         info={PAGE_HELP.jobCoverage}
       >
         <Button asChild variant="outline">
-          <Link href="/admin/jobs">← Job bridge</Link>
+          <Link href="/admin/jobs">← Job mapping</Link>
         </Button>
       </PageTitle>
 
@@ -131,7 +151,7 @@ async function JobCoverage({ searchParams }: { searchParams: SearchParams }) {
           info={KPI_HELP.jobsTagged}
         />
         <KpiTile
-          label="Via job bridge"
+          label="Via bridge / rule"
           value={String(kpis.bridged)}
           hint="candidates for tagging at source"
           tone={kpis.bridged > 0 ? "warn" : "good"}
@@ -187,6 +207,7 @@ async function JobCoverage({ searchParams }: { searchParams: SearchParams }) {
                   <TableRow>
                     <TableHead>Job</TableHead>
                     <TableHead>Workspace</TableHead>
+                    <TableHead>Tags on the job</TableHead>
                     <TableHead>Attributed as</TableHead>
                     <TableHead className="text-right">Cost 30d</TableHead>
                     <TableHead>Bridge row</TableHead>
@@ -204,6 +225,9 @@ async function JobCoverage({ searchParams }: { searchParams: SearchParams }) {
                         {wsName.get(g.workspace_id) ?? (
                           <span className="font-mono">UNMAPPED: {g.workspace_id}</span>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        <JobTagChips tags={jobTags(g.rows)} />
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1.5">
@@ -256,8 +280,35 @@ async function JobCoverage({ searchParams }: { searchParams: SearchParams }) {
       <p className="mt-4 text-xs text-muted-foreground">
         A job with several “attributed as” lines changed how it attributes within the window —
         e.g. bridge-mapped early, tagged at source since. TAG always wins from the moment the tag
-        lands; the bridge row then only matters for rows from before that.
+        lands; bridge rows, tag rules and runner rules only matter for spend nothing earlier in
+        the waterfall caught. Job spend never defaults to the runner&apos;s home desk — an
+        unmapped job goes to the work queue instead.
       </p>
+    </div>
+  );
+}
+
+/** The job's custom tags, data_product highlighted — the input tag rules match on. */
+function JobTagChips({ tags }: { tags: Record<string, string> }) {
+  const entries = Object.entries(tags).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) {
+    return <span className="text-xs text-muted-foreground">no tags</span>;
+  }
+  return (
+    <div className="flex max-w-64 flex-wrap gap-1">
+      {entries.map(([k, v]) => (
+        <Badge
+          key={k}
+          variant="secondary"
+          className={
+            k === "data_product"
+              ? "bg-emerald-100 font-mono text-[11px] text-emerald-800"
+              : "bg-muted font-mono text-[11px] text-muted-foreground"
+          }
+        >
+          {k}={v}
+        </Badge>
+      ))}
     </div>
   );
 }
@@ -283,6 +334,20 @@ function JobStatus({ group }: { group: JobGroup }) {
     return (
       <Badge variant="secondary" className="bg-amber-100 text-amber-800">
         via bridge — tag at source
+      </Badge>
+    );
+  }
+  if (group.methods.has("TAG_RULE")) {
+    return (
+      <Badge variant="secondary" className="bg-teal-100 text-teal-800">
+        via tag rule
+      </Badge>
+    );
+  }
+  if (group.methods.has("RUNNER_RULE")) {
+    return (
+      <Badge variant="secondary" className="bg-purple-100 text-purple-800">
+        via runner rule
       </Badge>
     );
   }

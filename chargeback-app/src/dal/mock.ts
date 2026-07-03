@@ -6,8 +6,10 @@ import type {
   JobMappingRow,
   MonthlyChargebackRow,
   ReconRow,
+  RunnerRuleRow,
   ServerlessGapRow,
   RogueTagRow,
+  TagRuleRow,
   UnassignedWarehouseRow,
   UnknownRunnerRow,
   UnknownWorkspaceRow,
@@ -30,6 +32,8 @@ export interface MockStore {
   users: UserMappingRow[];
   workspaces: WorkspaceMappingRow[];
   jobMappings: JobMappingRow[];
+  tagRules: TagRuleRow[];
+  runnerRules: RunnerRuleRow[];
   warehouseMappings: WarehouseMappingRow[];
   monthly: MonthlyChargebackRow[];
   coverage: CoverageRow[];
@@ -77,6 +81,18 @@ function createStore(): MockStore {
     { workspace_id: "1111111111111111", job_id: "310", data_product: "var-engine", note: "nightly VaR batch", mapped_by: "steward@example.com", mapped_at: "2026-02-25T08:45:00Z" },
   ];
 
+  // Tag rules (waterfall rule 3): platform-created jobs carry team/project
+  // tags long before anyone adds a data_product tag — the rule routes them.
+  const tagRules: TagRuleRow[] = [
+    { tag_key: "team", tag_value: "market-data-eng", data_product: "ref-data-ingest", note: "platform ETL jobs tag team, not data_product", mapped_by: "steward@example.com", mapped_at: "2026-05-14T11:20:00Z" },
+  ];
+
+  // Runner rules (waterfall rule 5): the explicit opt-in replacement for
+  // defaulting job cost to the runner's home desk.
+  const runnerRules: RunnerRuleRow[] = [
+    { user_id: "9a1b2c3d-svc-etl", data_product: "pricing-curves", note: "SP exists only to run curve pipelines", mapped_by: "steward@example.com", mapped_at: "2026-06-03T09:05:00Z" },
+  ];
+
   const warehouseMappings: WarehouseMappingRow[] = [
     { warehouse_id: "wh-risk-dedicated", data_product: "var-engine", is_shared: false },
     { warehouse_id: "wh-shared-main", data_product: null, is_shared: true },
@@ -119,10 +135,6 @@ function createStore(): MockStore {
   );
 
   // ---- attribution coverage: shares improving slightly over time ----
-  const shares: [string, number][] = [
-    ["TAG", 0.62], ["JOB_MAPPING", 0.14], ["WAREHOUSE_MAPPING", 0.08],
-    ["USER", 0.09], ["NONE", 0.07],
-  ];
   const coverage: CoverageRow[] = months.flatMap((m, i) => {
     const monthTotal = monthly
       .filter((r) => r.billing_month === m)
@@ -130,11 +142,13 @@ function createStore(): MockStore {
     // TAG grows ~1.5pp/month at NONE+JOB_MAPPING's expense
     const drift = i * 0.015;
     const adj: Record<string, number> = {
-      TAG: shares[0][1] + drift,
-      JOB_MAPPING: shares[1][1] - drift / 2,
-      WAREHOUSE_MAPPING: shares[2][1],
-      USER: shares[3][1],
-      NONE: shares[4][1] - drift / 2,
+      TAG: 0.6 + drift,
+      JOB_MAPPING: 0.12 - drift / 2,
+      TAG_RULE: 0.04,
+      WAREHOUSE_MAPPING: 0.08,
+      RUNNER_RULE: 0.03,
+      USER: 0.06, // ad-hoc only — job spend never lands here
+      NONE: 0.07 - drift / 2,
     };
     return (Object.keys(adj) as (keyof typeof adj)[]).map((method) => ({
       billing_month: m,
@@ -150,12 +164,14 @@ function createStore(): MockStore {
       { usage_category: "JOBS", is_serverless: true, job_name: "curves-intraday-refresh", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 12800, cost: 6100 },
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Anna Kowalska", attribution_method: "TAG", dbus: 7500, cost: 3200 },
       { usage_category: "JOBS", is_serverless: false, job_name: "curves-backfill", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 5200, cost: 2300 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "curves-cache-warm", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "RUNNER_RULE", dbus: 3400, cost: 1500 },
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 4900, cost: 2100 },
     ],
     "ref-data-ingest": [
       { usage_category: "JOBS", is_serverless: false, job_name: "refdata-loader (job 845)", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "JOB_MAPPING", dbus: 20200, cost: 8900 },
       { usage_category: "DLT", is_serverless: true, job_name: "refdata-dlt-pipeline", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 9800, cost: 4600 },
       { usage_category: "JOBS", is_serverless: true, job_name: "refdata-validation", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 8600, cost: 3800 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "refdata-quality-scan", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG_RULE", dbus: 4300, cost: 1900 },
     ],
     "var-engine": [
       { usage_category: "JOBS", is_serverless: false, job_name: "nightly-var (job 310)", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "JOB_MAPPING", dbus: 33900, cost: 15600 },
@@ -189,6 +205,8 @@ function createStore(): MockStore {
     users,
     workspaces,
     jobMappings,
+    tagRules,
+    runnerRules,
     warehouseMappings,
     monthly,
     coverage,
@@ -227,21 +245,26 @@ function createStore(): MockStore {
     ],
     // How every job with 30d cost attributed. pnl-explain (1022) shows two
     // rows on purpose: bridge-mapped early in the window, tagged at source
-    // since — the same story the janitor panel tells.
+    // since — the same story the janitor panel tells. tags_json mirrors what
+    // cost_fact exposes: the job's actual custom tags (null = untagged).
     jobAttributions: [
-      { workspace_id: "1111111111111111", job_id: "310", job_name: "nightly-var", attribution_method: "JOB_MAPPING", data_product: "var-engine", desk: "risk", dbus_30d: 33900, cost_30d: 15600 },
-      { workspace_id: "1111111111111111", job_id: "501", job_name: "curves-build-eod", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", dbus_30d: 22100, cost_30d: 9800 },
-      { workspace_id: "2222222222222222", job_id: "845", job_name: "refdata-loader", attribution_method: "JOB_MAPPING", data_product: "ref-data-ingest", desk: "rates", dbus_30d: 20200, cost_30d: 8900 },
-      { workspace_id: "1111111111111111", job_id: "918", job_name: "var-scenario-expansion", attribution_method: "TAG", data_product: "var-engine", desk: "risk", dbus_30d: 18400, cost_30d: 8500 },
-      { workspace_id: "1111111111111111", job_id: "502", job_name: "curves-intraday-refresh", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", dbus_30d: 12800, cost_30d: 6100 },
-      { workspace_id: "2222222222222222", job_id: "640", job_name: "pnl-eod-close", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", dbus_30d: 13100, cost_30d: 6000 },
-      { workspace_id: "1111111111111111", job_id: "733", job_name: "stress-quarterly", attribution_method: "TAG", data_product: "stress-testing", desk: "risk", dbus_30d: 11900, cost_30d: 5400 },
-      { workspace_id: "2222222222222222", job_id: "1022", job_name: "pnl-explain", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", dbus_30d: 10700, cost_30d: 4870 },
-      { workspace_id: "2222222222222222", job_id: "1022", job_name: "pnl-explain", attribution_method: "JOB_MAPPING", data_product: "trade-pnl", desk: "credit", dbus_30d: 9600, cost_30d: 4330 },
-      { workspace_id: "2222222222222222", job_id: "77", job_name: "unknown-batch-77", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 7400, cost_30d: 3300 },
-      { workspace_id: "1111111111111111", job_id: "1544", job_name: "ml-feature-refresh", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 4700, cost_30d: 2100 },
-      { workspace_id: "3333333333333333", job_id: "88", job_name: "sandbox-cdc-pipeline", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 2100, cost_30d: 940 },
-      { workspace_id: "1111111111111111", job_id: "2199", job_name: "adhoc-export-2199", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", dbus_30d: 920, cost_30d: 410 },
+      { workspace_id: "1111111111111111", job_id: "310", job_name: "nightly-var", attribution_method: "JOB_MAPPING", data_product: "var-engine", desk: "risk", tags_json: null, dbus_30d: 33900, cost_30d: 15600 },
+      { workspace_id: "1111111111111111", job_id: "501", job_name: "curves-build-eod", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", tags_json: "{\"Environment\":\"prod\",\"data_product\":\"pricing-curves\",\"team\":\"market-data-eng\"}", dbus_30d: 22100, cost_30d: 9800 },
+      { workspace_id: "2222222222222222", job_id: "845", job_name: "refdata-loader", attribution_method: "JOB_MAPPING", data_product: "ref-data-ingest", desk: "rates", tags_json: "{\"Environment\":\"prod\"}", dbus_30d: 20200, cost_30d: 8900 },
+      { workspace_id: "1111111111111111", job_id: "918", job_name: "var-scenario-expansion", attribution_method: "TAG", data_product: "var-engine", desk: "risk", tags_json: "{\"data_product\":\"var-engine\",\"team\":\"risk-eng\"}", dbus_30d: 18400, cost_30d: 8500 },
+      { workspace_id: "1111111111111111", job_id: "502", job_name: "curves-intraday-refresh", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", tags_json: "{\"data_product\":\"pricing-curves\"}", dbus_30d: 12800, cost_30d: 6100 },
+      { workspace_id: "2222222222222222", job_id: "640", job_name: "pnl-eod-close", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", tags_json: "{\"Environment\":\"prod\",\"data_product\":\"trade-pnl\"}", dbus_30d: 13100, cost_30d: 6000 },
+      { workspace_id: "1111111111111111", job_id: "733", job_name: "stress-quarterly", attribution_method: "TAG", data_product: "stress-testing", desk: "risk", tags_json: "{\"data_product\":\"stress-testing\"}", dbus_30d: 11900, cost_30d: 5400 },
+      { workspace_id: "2222222222222222", job_id: "1022", job_name: "pnl-explain", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", tags_json: "{\"data_product\":\"trade-pnl\"}", dbus_30d: 10700, cost_30d: 4870 },
+      { workspace_id: "2222222222222222", job_id: "1022", job_name: "pnl-explain", attribution_method: "JOB_MAPPING", data_product: "trade-pnl", desk: "credit", tags_json: null, dbus_30d: 9600, cost_30d: 4330 },
+      // attributed by the team=market-data-eng tag rule — tagged, just not with data_product
+      { workspace_id: "2222222222222222", job_id: "930", job_name: "refdata-quality-scan", attribution_method: "TAG_RULE", data_product: "ref-data-ingest", desk: "rates", tags_json: "{\"Environment\":\"prod\",\"team\":\"market-data-eng\"}", dbus_30d: 4300, cost_30d: 1900 },
+      // attributed by the runner rule on the etl-runner service principal
+      { workspace_id: "1111111111111111", job_id: "512", job_name: "curves-cache-warm", attribution_method: "RUNNER_RULE", data_product: "pricing-curves", desk: "rates", tags_json: null, dbus_30d: 3400, cost_30d: 1500 },
+      { workspace_id: "2222222222222222", job_id: "77", job_name: "unknown-batch-77", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: null, dbus_30d: 7400, cost_30d: 3300 },
+      { workspace_id: "1111111111111111", job_id: "1544", job_name: "ml-feature-refresh", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: "{\"Environment\":\"dev\",\"team\":\"ml-platform\"}", dbus_30d: 4700, cost_30d: 2100 },
+      { workspace_id: "3333333333333333", job_id: "88", job_name: "sandbox-cdc-pipeline", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: null, dbus_30d: 2100, cost_30d: 940 },
+      { workspace_id: "1111111111111111", job_id: "2199", job_name: "adhoc-export-2199", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: "{\"Environment\":\"dev\"}", dbus_30d: 920, cost_30d: 410 },
     ],
     recon: [
       { billing_month: "2026-01", billing_cost: 79512.4, fact_cost: 79512.4, report_cost: 79512.4, fact_gap: 0, report_gap: 0 },

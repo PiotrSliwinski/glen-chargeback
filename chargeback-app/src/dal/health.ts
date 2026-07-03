@@ -101,7 +101,13 @@ export async function getIntegrityViolations(product?: string): Promise<Integrit
        UNION ALL
        SELECT 'warehouse_product_mapping', data_product FROM ${T("warehouse_product_mapping")}
        WHERE data_product IS NOT NULL
-         AND data_product NOT IN (SELECT data_product FROM ${T("data_product_mapping")})`,
+         AND data_product NOT IN (SELECT data_product FROM ${T("data_product_mapping")})
+       UNION ALL
+       SELECT 'tag_product_mapping', data_product FROM ${T("tag_product_mapping")}
+       WHERE data_product NOT IN (SELECT data_product FROM ${T("data_product_mapping")})
+       UNION ALL
+       SELECT 'runner_product_mapping', data_product FROM ${T("runner_product_mapping")}
+       WHERE data_product NOT IN (SELECT data_product FROM ${T("data_product_mapping")})`,
       {},
       z.object({ src: zStr, data_product: zStrOrNull }),
     );
@@ -122,6 +128,27 @@ export async function getIntegrityViolations(product?: string): Promise<Integrit
       violations.push({
         check: "duplicate_bridge_key",
         detail: `job_product_mapping has ${d.c} rows for (workspace ${d.workspace_id}, job ${d.job_id})`,
+      });
+    }
+
+    // conflicting rules: same tag key=value (or runner) pointing at several
+    // products — cost_fact resolves them deterministically, but the intent
+    // is ambiguous and must be fixed before publication
+    const ruleDupes = await query(
+      `SELECT CONCAT('tag ', tag_key, '=', tag_value) AS rule_key, COUNT(*) AS c
+       FROM ${T("tag_product_mapping")}
+       GROUP BY tag_key, tag_value HAVING COUNT(*) > 1
+       UNION ALL
+       SELECT CONCAT('runner ', user_id), COUNT(*)
+       FROM ${T("runner_product_mapping")}
+       GROUP BY user_id HAVING COUNT(*) > 1`,
+      {},
+      z.object({ rule_key: zStr, c: zNum }),
+    );
+    for (const d of ruleDupes) {
+      violations.push({
+        check: "duplicate_rule_key",
+        detail: `${d.c} rules for ${d.rule_key} — ambiguous, deterministic tie-break applies until fixed`,
       });
     }
 
@@ -174,6 +201,39 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
           check: "orphan_product",
           detail: `job_product_mapping references unknown product '${j.data_product}'`,
         });
+    }
+    for (const r of mockStore.tagRules) {
+      if (!known.has(r.data_product))
+        violations.push({
+          check: "orphan_product",
+          detail: `tag_product_mapping references unknown product '${r.data_product}'`,
+        });
+    }
+    for (const r of mockStore.runnerRules) {
+      if (!known.has(r.data_product))
+        violations.push({
+          check: "orphan_product",
+          detail: `runner_product_mapping references unknown product '${r.data_product}'`,
+        });
+    }
+    const seenTagRules = new Set<string>();
+    for (const r of mockStore.tagRules) {
+      const key = `${r.tag_key}=${r.tag_value}`;
+      if (seenTagRules.has(key))
+        violations.push({
+          check: "duplicate_rule_key",
+          detail: `several rules for tag ${key} — ambiguous, deterministic tie-break applies until fixed`,
+        });
+      seenTagRules.add(key);
+    }
+    const seenRunnerRules = new Set<string>();
+    for (const r of mockStore.runnerRules) {
+      if (seenRunnerRules.has(r.user_id))
+        violations.push({
+          check: "duplicate_rule_key",
+          detail: `several rules for runner ${r.user_id} — ambiguous, deterministic tie-break applies until fixed`,
+        });
+      seenRunnerRules.add(r.user_id);
     }
     for (const w of mockStore.warehouseMappings) {
       if (w.data_product && !known.has(w.data_product))

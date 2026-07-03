@@ -6,14 +6,13 @@ import { getUnknownRunners } from "@/dal/workQueue";
 import { deleteUserAction, upsertUserAction } from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
-import { ActionForm, Field } from "@/components/action-form";
+import { Plus } from "lucide-react";
+import { ActionForm, DatalistField, Field } from "@/components/action-form";
 import { EmptyState, KpiTile, PageTitle } from "@/components/ui";
 import { ServerlessGapPanel } from "@/components/serverless-gap-panel";
 import { TableFilter } from "@/components/table-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -106,7 +105,9 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
       <div className="no-print mb-6 flex flex-wrap items-start gap-3">
         <details>
           <Button asChild>
-            <summary className="cursor-pointer">＋ Add user</summary>
+            <summary className="cursor-pointer">
+              <Plus aria-hidden /> Add user
+            </summary>
           </Button>
           <Card className="mt-3 max-w-md">
             <CardContent>
@@ -117,7 +118,7 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
               >
                 <Field label="User ID (email or SP application id)" name="user_id" />
                 <Field label="Display name" name="user_name" />
-                <DeskField deskOptions={deskOptions} />
+                <DatalistField label="Home desk" name="desk" options={deskOptions} />
               </ActionForm>
             </CardContent>
           </Card>
@@ -173,7 +174,7 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
                               >
                                 <Field label="User ID" name="user_id" defaultValue={r.user_id} readOnly />
                                 <Field label="Display name" name="user_name" defaultValue={r.user_name} />
-                                <DeskField deskOptions={deskOptions} defaultValue={r.desk} id={`desk-${r.user_id}`} />
+                                <DatalistField label="Home desk" name="desk" options={deskOptions} defaultValue={r.desk} />
                               </ActionForm>
                             </div>
                           </details>
@@ -206,32 +207,3 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
   );
 }
 
-function DeskField({
-  deskOptions,
-  defaultValue,
-  id = "desk",
-}: {
-  deskOptions: string[];
-  defaultValue?: string;
-  id?: string;
-}) {
-  return (
-    <div>
-      <Label className="text-xs text-muted-foreground" htmlFor={id}>
-        Home desk
-      </Label>
-      <Input
-        id={id}
-        name="desk"
-        required
-        defaultValue={defaultValue}
-        list="desk-options-list"
-      />
-      <datalist id="desk-options-list">
-        {deskOptions.map((d) => (
-          <option key={d} value={d} />
-        ))}
-      </datalist>
-    </div>
-  );
-}

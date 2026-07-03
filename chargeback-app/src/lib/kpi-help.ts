@@ -26,17 +26,17 @@ export const PAGE_HELP = {
   health:
     "Pre-publication control room. Reconciliation proves billing truth = cost_fact = report for every month within the configured tolerance; integrity checks catch catalogue overlaps, orphan bridge rows, duplicate keys and inconsistent warehouse flags; the diff shows exactly what the snapshot will freeze. Publication unlocks only when everything is green — and the gate re-checks server-side at submit.",
   admin:
-    "The write surface of the chargeback system: the five mapping tables that steer the attribution waterfall. Everything else in the app is derived, read-only reporting. Edits here change live views immediately and never restate published months.",
+    "The write surface of the chargeback system: the seven mapping tables that steer the attribution waterfall. Everything else in the app is derived, read-only reporting. Edits here change live views immediately and never restate published months.",
   products:
     "The hierarchy backbone: data_product_mapping, one row per product per validity window. Domain and desk always derive from here — never from tags. Desk/domain moves atomically close the old window and insert a successor row, so published history never restates; products are retired, never deleted.",
   jobs:
-    "Waterfall rule 2: manual bridge from (workspace, job) → product for jobs not yet tagged at source. Every bridge row is technical debt — the janitor flags rows whose jobs now emit tagged cost, safe to prune. Target state: this table is empty.",
+    "The three explicit mechanisms that route job spend to a product: the per-job bridge (rule 2), tag rules matching any custom tag key=value (rule 3), and runner rules assigning everything an identity runs (rule 5). Jobs are created by the data platform but consumed by desks, so job spend NEVER defaults to the runner's home desk — what none of these mechanisms (or a tag at source) catches goes to the work queue. Target state: bridge empty, rules few and deliberate.",
   jobCoverage:
-    "Audit of every job that emitted cost in the trailing 30 days and the attribution method(s) that carried that cost — tag at source, bridge row, or nothing. Use it to see which bridge rows are still doing work and which jobs to chase for tagging.",
+    "Audit of every job that emitted cost in the trailing 30 days: the custom tags it actually carries and the attribution method(s) that carried that cost — tag at source, bridge row, tag rule, runner rule, or nothing. Use it to see which mappings are still doing work, which jobs to chase for tagging, and which tags could power a tag rule.",
   warehouses:
-    "Waterfall rule 3 configuration: a Shared warehouse spreads its cost across products per query; a Dedicated warehouse charges the whole warehouse — idle time included — to one product. Invalid combinations (dedicated without a product, shared with one) are rejected by the form and re-checked on the server.",
+    "Waterfall rule 4 configuration: a Shared warehouse spreads its cost across products per query; a Dedicated warehouse charges the whole warehouse — idle time included — to one product. Invalid combinations (dedicated without a product, shared with one) are rejected by the form and re-checked on the server.",
   users:
-    "Waterfall rule 4 input: maps a runner identity to a display name and home desk, so ad-hoc spend follows the person who ran it. user_id must match executed_by / identity_metadata.run_as byte-for-byte — which is why it is read-only in edit forms and pre-filled from system tables in the work queue.",
+    "Waterfall rule 6 input: maps a runner identity to a display name and home desk, so AD-HOC spend (queries, notebooks — never jobs) follows the person who ran it. user_id must match executed_by / identity_metadata.run_as byte-for-byte — which is why it is read-only in edit forms and pre-filled from system tables in the work queue.",
   workspaces:
     "Workspace ID → friendly name, used purely for report labels. Renames are cosmetic; removing a mapping never drops spend — a still-billing workspace simply shows as UNMAPPED: <id>.",
 } as const;
@@ -49,7 +49,7 @@ export const KPI_HELP = {
   tagCoverage:
     "Share of the month's cost attributed by waterfall rule 1: cost with attribution_method = TAG ÷ total cost, from the attribution_coverage view. Green at ≥ 70%. Tags at source are the destination — this should rise while JOB_MAPPING and NONE shrink.",
   unallocatedCost:
-    "SUM(total_cost) where data_product = 'UNALLOCATED' — spend no waterfall rule (tag, job bridge, warehouse mapping, runner's home desk) could attribute. Reported as a real line item, never hidden. The work queue exists to drive it to zero.",
+    "SUM(total_cost) where data_product = 'UNALLOCATED' — spend no waterfall rule (tag, job bridge, tag rule, warehouse mapping, runner rule, or — for ad-hoc spend only — the runner's home desk) could attribute. Job spend never defaults to the runner, so unmapped jobs land here by design. Reported as a real line item, never hidden. The work queue exists to drive it to zero.",
 
   deskMonthCost:
     "Sum of this desk's rows in live monthly_chargeback for the selected month — the figure that would be frozen into the desk's invoice at publication.",
@@ -77,7 +77,7 @@ export const KPI_HELP = {
   jobsTagged:
     "Jobs whose 30-day cost attributed via TAG and never fell to NONE — fully covered by tags at source. This is the goal state for every job.",
   jobsBridged:
-    "Jobs with any cost attributed through job_product_mapping (waterfall rule 2). Each is a candidate for tagging at source, after which the bridge row can be pruned — the janitor on the Job bridge page flags when that is safe.",
+    "Jobs with any cost attributed through the job bridge (rule 2), a tag rule (rule 3) or a runner rule (rule 5). Each is a candidate for tagging at source with data_product, after which the mapping can be pruned — the janitor on the Job mapping page flags when a bridge row is safe to remove.",
   jobsUnmappedCost:
     "Sum of 30-day cost with attribution_method = NONE across all jobs — spend currently landing in UNALLOCATED. Fix it in the work queue: tag the job at source, or bridge it.",
 } as const;
@@ -88,7 +88,7 @@ export const REPORT_SECTION_HELP = {
   breakdown:
     "Domain subtotals with product × desk rows beneath. Share = cost ÷ the month's grand total. Domains link into the drill-down.",
   coverage:
-    "Cost per attribution method for the month, exact dollars and share of total. TAG = tagged at source · JOB_MAPPING = manual job bridge · WAREHOUSE_MAPPING = dedicated warehouse · USER = runner's home desk (ad-hoc) · NONE = unattributed, lands in UNALLOCATED.",
+    "Cost per attribution method for the month, exact dollars and share of total. TAG = tagged at source · JOB_MAPPING = manual job bridge · TAG_RULE = matched a tag rule (any custom tag → product) · WAREHOUSE_MAPPING = dedicated warehouse · RUNNER_RULE = runner's workload assigned to a product · USER = runner's home desk (ad-hoc only — job spend never defaults to the runner) · NONE = unattributed, lands in UNALLOCATED.",
   scorecard:
     "Per desk, always from live cost_fact regardless of mode: TAG % = TAG-attributed cost ÷ desk total; the last column is the desk's unattributed (NONE) cost. Ranked by TAG % — the tagging-adoption leaderboard.",
 } as const;

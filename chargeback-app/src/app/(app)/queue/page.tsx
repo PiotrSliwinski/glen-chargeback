@@ -19,12 +19,11 @@ import {
   upsertWorkspaceAction,
 } from "@/actions/mappings";
 import { createProductAction } from "@/actions/products";
-import { ActionForm, Field, SelectField } from "@/components/action-form";
+import { Download } from "lucide-react";
+import { ActionForm, DatalistField, Field, SelectField } from "@/components/action-form";
 import { EmptyState, KpiTile, PageTitle } from "@/components/ui";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -130,9 +129,10 @@ async function Queue({ searchParams }: { searchParams: SearchParams }) {
         ))}
         <a
           href={`/api/export/queue-${tab}`}
-          className="ml-auto text-xs font-medium text-primary hover:underline"
+          className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
         >
-          ⬇ CSV — {TABS.find((t) => t.key === tab)?.label}
+          <Download className="size-3.5" aria-hidden />
+          CSV — {TABS.find((t) => t.key === tab)?.label}
         </a>
       </div>
 
@@ -243,7 +243,7 @@ async function UnknownRunnersTab({ deskOptions }: { deskOptions: string[] }) {
                           tables exactly, so stewards never type it */}
                       <Field label="User ID" name="user_id" defaultValue={r.runner} readOnly />
                       <Field label="Display name" name="user_name" />
-                      <DeskField deskOptions={deskOptions} />
+                      <DatalistField label="Desk" name="desk" options={deskOptions} />
                     </ActionForm>
                   </RowActions>
                 </TableCell>
@@ -337,7 +337,7 @@ async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
                         readOnly
                       />
                       <Field label="Data domain" name="data_domain" placeholder="e.g. market-data" />
-                      <DeskField deskOptions={deskOptions} />
+                      <DatalistField label="Desk" name="desk" options={deskOptions} />
                       <Field label="Product owner" name="product_owner" required={false} />
                       <Field
                         label="Valid from"
@@ -421,22 +421,6 @@ async function UnassignedWarehousesTab({
         </Table>
       </CardContent>
     </Card>
-  );
-}
-
-function DeskField({ deskOptions }: { deskOptions: string[] }) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-xs text-muted-foreground" htmlFor="desk">
-        Desk
-      </Label>
-      <Input id="desk" name="desk" required list="desk-options" />
-      <datalist id="desk-options">
-        {deskOptions.map((d) => (
-          <option key={d} value={d} />
-        ))}
-      </datalist>
-    </div>
   );
 }
 

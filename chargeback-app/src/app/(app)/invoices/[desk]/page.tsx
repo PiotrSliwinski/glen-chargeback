@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { getDeskInvoice, getPublishedMonths } from "@/dal/reports";
 import { fmtDbu, fmtMoneyExact, fmtMonth } from "@/lib/format";
 import { param, type SearchParams } from "@/lib/report-params";
@@ -75,7 +76,7 @@ async function DeskInvoice({
             <a
               href={`/api/export/desk-invoice?month=${month}&mode=published&desk=${encodeURIComponent(desk)}`}
             >
-              ⬇ CSV
+              <Download aria-hidden /> CSV
             </a>
           </Button>
           <PrintButton />

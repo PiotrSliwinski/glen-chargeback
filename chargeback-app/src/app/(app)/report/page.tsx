@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { getDashboard, getMonthlyRows } from "@/dal/reports";
 import { buildCommentary, getDeskMovement, getProductMovement } from "@/dal/movement";
 import { getDeskScorecard } from "@/dal/desks";
@@ -328,7 +329,9 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
             <Card>
               <CardContent className="flex flex-wrap gap-3">
                 <Button asChild>
-                  <a href={`/api/export/xlsx${csvBase}`}>⬇ Full report (XLSX workbook)</a>
+                  <a href={`/api/export/xlsx${csvBase}`}>
+                    <Download aria-hidden /> Full report (XLSX workbook)
+                  </a>
                 </Button>
                 {[
                   ["monthly-chargeback", "Full chargeback"],
@@ -338,7 +341,9 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
                   ["scorecard", "Scorecard"],
                 ].map(([report, label]) => (
                   <Button key={report} asChild variant="outline">
-                    <a href={`/api/export/${report}${csvBase}`}>⬇ {label}</a>
+                    <a href={`/api/export/${report}${csvBase}`}>
+                      <Download aria-hidden /> {label}
+                    </a>
                   </Button>
                 ))}
                 <Button asChild variant="outline">

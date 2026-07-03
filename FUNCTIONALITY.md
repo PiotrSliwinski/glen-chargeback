@@ -34,7 +34,7 @@ rule, and known gap.
 
 | Area | What you can do |
 |---|---|
-| **Reference data** | Full CRUD (within the methodology's rules) on all five mapping tables: product catalogue (versioned), job bridge, warehouse classification, users, workspaces |
+| **Reference data** | Full CRUD (within the methodology's rules) on all seven mapping tables: product catalogue (versioned), job bridge, tag rules, warehouse classification, runner rules, users, workspaces |
 | **Work queue** | Five actionable queues of unattributed/unmapped cost with inline, pre-filled fix forms |
 | **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, printable desk invoices, per-desk self-service pages, tagging scorecard |
 | **Exports** | 12 CSV reports + a 6-sheet XLSX report workbook |
@@ -85,7 +85,7 @@ Each mutation expires exactly the tags it affects.
 |---|---|---|---|
 | Dashboard, report pack, drill-down, desks, invoices, CSV/XLSX report exports | ✅ | ✅ | ✅ |
 | Work queue + all inline fixes | — | ✅ | ✅ |
-| Reference-data admin (all five tables) | — | ✅ | ✅ |
+| Reference-data admin (all seven tables) | — | ✅ | ✅ |
 | Health page, re-run checks, queue/catalogue exports | — | ✅ | ✅ |
 | Publish a month | — | — | ✅ |
 
@@ -137,13 +137,20 @@ The hierarchy backbone: domain and desk always derive from here, never from tags
 | **Register product** | Key format enforced (`^[a-z0-9]+([_-][a-z0-9]+)*$` — the tag vocabulary); duplicate-active and historical-overlap checks; `valid_from` defaults to first of next month |
 | **Move to another desk/domain** | **One atomic `MERGE`** closes the active validity window at the cutover and inserts the successor row — never an in-place UPDATE, so published history never restates. UI states explicitly that history before the cutover keeps the old desk |
 | **Edit owner** | In-place update (owner is metadata, not hierarchy) |
-| **Retire** | Sets `valid_to`; **blocked** while job/warehouse bridge rows still reference the product; later usage falls to the work queue |
+| **Retire** | Sets `valid_to`; **blocked** while job/warehouse bridge rows or tag/runner rules still reference the product; later usage falls to the work queue |
 | **Delete** | Not offered, ever (Methodology §10.7.3) |
 
 Each product renders as a card: active version, full **validity history timeline**, bridge-reference
 badges, and the three operation forms. Every write runs the scoped §7.4 checks as a post-condition.
 
-### 5.2 Job bridge — `/admin/jobs` (`job_product_mapping`)
+### 5.2 Job mapping — `/admin/jobs` (`job_product_mapping`, `tag_product_mapping`, `runner_product_mapping`)
+
+One page for the three explicit mechanisms that route job spend to a product. **Job spend never
+defaults to the runner's home desk** — jobs are created by the data platform but their output is
+consumed by desks, so an unresolved job goes to the work queue instead of silently billing the
+platform team (the `USER` rule applies to ad-hoc spend only).
+
+**Job bridge (rule 2):**
 
 - Add mapping (workspace + job id composite key; duplicate-key rejected; product must exist in
   the catalogue — §7.4(b) checked before commit).
@@ -151,7 +158,20 @@ badges, and the three operation forms. Every write runs the scoped §7.4 checks 
 - **Janitor panel**: bridge rows whose jobs emitted TAG-attributed cost in the last 30 days are
   flagged "safe to remove — now tagged at source" with one-click removal (Methodology §8.3 /
   Phase 4 pruning made continuous).
-- Every add form reminds stewards the durable fix is tagging at source.
+
+**Tag rules (rule 3):**
+
+- Any custom tag `key=value` → product; catches jobs tagged with team/project tags but no
+  `data_product` tag. One rule covers every current and future job carrying the tag.
+- Duplicate `(key, value)` rejected; conflicting rules resolve deterministically in `cost_fact`
+  (alphabetically first `key=value`) and are flagged on the health page.
+
+**Runner rules (rule 5):**
+
+- Everything an identity (typically a platform service principal) runs → product. The explicit
+  opt-in replacement for the removed implicit runner default. One rule per `user_id`.
+
+- Every add form reminds stewards the durable fix is tagging at source with `data_product`.
 
 ### 5.3 Warehouses — `/admin/warehouses` (`warehouse_product_mapping`)
 
@@ -165,8 +185,9 @@ badges, and the three operation forms. Every write runs the scoped §7.4 checks 
 - `user_id` is **read-only in edit forms** — it must match `executed_by` /
   `identity_metadata.run_as` byte-for-byte; wrong identity = remove + re-add from the work queue
   where the value is pre-filled from system tables.
-- Remove warns in waterfall terms: the runner's AD_HOC spend loses its desk (rule 4 stops
-  matching) and the runner resurfaces in the queue if they keep spending.
+- Remove warns in waterfall terms: the runner's AD_HOC spend loses its desk (rule 6 stops
+  matching) and the runner resurfaces in the queue if they keep spending. The rule only ever
+  applies to ad-hoc (non-job) spend.
 
 ### 5.5 Workspaces — `/admin/workspaces` (`workspace_mapping`)
 
@@ -225,8 +246,9 @@ Plus a downloads strip (XLSX workbook + 5 CSVs) and the limitations footer.
 
 Three linked, URL-driven panels: domains → products in domain (with desk links) → product detail
 (top 200 `cost_fact` lines: category, job/warehouse, runner, DBUs, cost). Every detail line shows
-its **attribution-method badge** (TAG green / JOB_MAPPING amber / WAREHOUSE_MAPPING blue / USER
-indigo / NONE red) — the "why did this land here" transparency — plus a **compute chip**
+its **attribution-method badge** (TAG green / JOB_MAPPING amber / TAG_RULE teal /
+WAREHOUSE_MAPPING blue / RUNNER_RULE purple / USER indigo / NONE red) — the "why did this land
+here" transparency — plus a **compute chip**
 (SERVERLESS violet / CLASSIC slate, from `cost_fact.is_serverless`; per-query warehouse rows
 show "—").
 
@@ -284,8 +306,9 @@ is published). Currency/percent number formats, bold frozen headers, auto-width 
 
 - **Reconciliation table** (Methodology §7.1): billing truth vs `cost_fact` vs report, per month,
   with pass/fail chips against the configurable tolerance (`RECON_TOLERANCE_USD`, default $1).
-- **Integrity checks** (§7.4 a–d): validity overlaps, orphan bridge products, duplicate bridge
-  keys, inconsistent warehouse flags — listed as explicit violations or a green all-clear.
+- **Integrity checks** (§7.4 a–d): validity overlaps, orphan bridge/rule products, duplicate
+  bridge keys, duplicate/conflicting tag and runner rules, inconsistent warehouse flags — listed
+  as explicit violations or a green all-clear.
 - **Re-run checks** button (expires the `health` cache tag).
 - **Publication diff**: before publishing, the candidate month's **live desk totals (what the
   snapshot will freeze)** side-by-side with the last published month, with per-desk deltas — the
@@ -300,7 +323,7 @@ is published). Currency/percent number formats, bold frozen headers, auto-width 
 
 ## 10. Business Rules & Invariants Enforced in Code
 
-1. **Single write surface** — the app writes only the five mapping tables and the publication
+1. **Single write surface** — the app writes only the seven mapping tables and the publication
    snapshot; all reporting is derived reads.
 2. **History never restates** — desk/domain changes are atomic close-and-insert (single `MERGE`,
    because Databricks has single-statement atomicity only); no catalogue deletes; published

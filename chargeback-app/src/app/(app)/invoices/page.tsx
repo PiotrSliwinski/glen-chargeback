@@ -74,7 +74,9 @@ async function Invoices({ searchParams }: { searchParams: SearchParams }) {
               <TableRow>
                 <TableHead>Desk</TableHead>
                 <TableHead className="text-right">Total for {fmtMonth(month)}</TableHead>
-                <TableHead />
+                <TableHead>
+                  <span className="sr-only">Statement</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

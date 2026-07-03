@@ -8,6 +8,7 @@ import {
   updateOwnerAction,
 } from "@/actions/products";
 import { param, type SearchParams } from "@/lib/report-params";
+import { Plus } from "lucide-react";
 import { ActionForm, Field } from "@/components/action-form";
 import { PAGE_HELP } from "@/lib/kpi-help";
 import { EmptyState, KpiTile, PageTitle, StatusChip } from "@/components/ui";
@@ -80,7 +81,9 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
       <div className="no-print mb-6 flex flex-wrap items-start gap-3">
         <details>
           <Button asChild>
-            <summary className="cursor-pointer">＋ Register new product</summary>
+            <summary className="cursor-pointer">
+              <Plus aria-hidden /> Register new product
+            </summary>
           </Button>
           <Card className="mt-3 max-w-md">
             <CardContent>

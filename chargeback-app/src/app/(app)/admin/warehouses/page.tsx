@@ -5,6 +5,7 @@ import { listActiveProducts, listWarehouseMappings } from "@/dal/mappings";
 import { getUnassignedWarehouses } from "@/dal/workQueue";
 import { assignWarehouseAction } from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
+import { Plus } from "lucide-react";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
 import { PAGE_HELP } from "@/lib/kpi-help";
 import { EmptyState, KpiTile, PageTitle, StatusChip } from "@/components/ui";
@@ -93,7 +94,9 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
       <div className="no-print mb-6 flex flex-wrap items-start gap-3">
         <details>
           <Button asChild>
-            <summary className="cursor-pointer">＋ Classify a warehouse</summary>
+            <summary className="cursor-pointer">
+              <Plus aria-hidden /> Classify a warehouse
+            </summary>
           </Button>
           <Card className="mt-3 max-w-md">
             <CardContent>
@@ -129,7 +132,9 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
                   <TableHead>Warehouse</TableHead>
                   <TableHead>Classification</TableHead>
                   <TableHead>Product</TableHead>
-                  <TableHead />
+                  <TableHead>
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

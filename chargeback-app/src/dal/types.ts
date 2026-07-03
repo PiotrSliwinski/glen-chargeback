@@ -8,8 +8,10 @@ export type ReportMode = "live" | "published";
 export type AttributionMethod =
   | "TAG"
   | "JOB_MAPPING"
+  | "TAG_RULE"
   | "WAREHOUSE_MAPPING"
-  | "USER"
+  | "RUNNER_RULE"
+  | "USER" // ad-hoc spend only — job cost never defaults to the runner
   | "NONE";
 
 // ---------- reporting ----------
@@ -140,6 +142,8 @@ export interface JobAttributionRow {
   attribution_method: AttributionMethod;
   data_product: string;
   desk: string;
+  /** custom tags of the slice's most expensive row, key-sorted JSON object (null = untagged) */
+  tags_json: string | null;
   dbus_30d: number;
   cost_30d: number;
 }
@@ -160,6 +164,25 @@ export interface DataProductRow {
 export interface JobMappingRow {
   workspace_id: string;
   job_id: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+/** Tag rule (waterfall rule 3): any custom tag key=value → product. */
+export interface TagRuleRow {
+  tag_key: string;
+  tag_value: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+/** Runner rule (waterfall rule 5): everything this identity runs → product. */
+export interface RunnerRuleRow {
+  user_id: string;
   data_product: string;
   note: string | null;
   mapped_by: string | null;
@@ -195,7 +218,12 @@ export interface ReconRow {
 }
 
 export interface IntegrityViolation {
-  check: "overlap" | "orphan_product" | "duplicate_bridge_key" | "warehouse_flags";
+  check:
+    | "overlap"
+    | "orphan_product"
+    | "duplicate_bridge_key"
+    | "duplicate_rule_key"
+    | "warehouse_flags";
   detail: string;
 }
 

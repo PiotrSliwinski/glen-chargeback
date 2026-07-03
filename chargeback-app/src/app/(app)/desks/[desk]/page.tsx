@@ -201,7 +201,9 @@ async function Desk({
                   <TableRow>
                     <TableHead>Month</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <TableHead />
+                    <TableHead>
+                      <span className="sr-only">Statement</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

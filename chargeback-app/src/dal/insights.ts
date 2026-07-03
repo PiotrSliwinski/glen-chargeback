@@ -64,8 +64,10 @@ export async function getJobAttributions(): Promise<JobAttributionRow[]> {
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.jobAttributions];
   return query(
+    // tags_json: the slice's costliest row's tags — what the tag rules saw
     `SELECT workspace_id, job_id, MAX(job_name) AS job_name,
             attribution_method, data_product, desk,
+            MAX_BY(tags_json, cost) AS tags_json,
             SUM(dbus) AS dbus_30d, SUM(cost) AS cost_30d
      FROM ${T("cost_fact")}
      WHERE usage_date >= current_date() - INTERVAL 30 DAYS
@@ -80,6 +82,7 @@ export async function getJobAttributions(): Promise<JobAttributionRow[]> {
       attribution_method: zStr,
       data_product: zStr,
       desk: zStr,
+      tags_json: zStrOrNull,
       dbus_30d: zNum,
       cost_30d: zNum,
     }) as z.ZodType<JobAttributionRow>,

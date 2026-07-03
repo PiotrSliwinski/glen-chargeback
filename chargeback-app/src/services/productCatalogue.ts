@@ -105,16 +105,21 @@ export async function retireProduct(
   if (valid_to <= active.valid_from) {
     throw new DomainError("VALIDATION", `retirement date must be after ${active.valid_from}`);
   }
-  const [jobs, warehouses] = await Promise.all([
+  const [jobs, warehouses, tagRules, runnerRules] = await Promise.all([
     mappings.listJobMappings(),
     mappings.listWarehouseMappings(),
+    mappings.listTagRules(),
+    mappings.listRunnerRules(),
   ]);
   const jobRefs = jobs.filter((j) => j.data_product === data_product).length;
   const whRefs = warehouses.filter((w) => w.data_product === data_product).length;
-  if (jobRefs + whRefs > 0) {
+  const ruleRefs =
+    tagRules.filter((r) => r.data_product === data_product).length +
+    runnerRules.filter((r) => r.data_product === data_product).length;
+  if (jobRefs + whRefs + ruleRefs > 0) {
     throw new DomainError(
       "REFERENCED",
-      `product is still referenced by ${jobRefs} job mapping(s) and ${whRefs} warehouse mapping(s) — remove or remap those first`,
+      `product is still referenced by ${jobRefs} job mapping(s), ${whRefs} warehouse mapping(s) and ${ruleRefs} attribution rule(s) — remove or remap those first`,
     );
   }
   await mappings.retireProduct(data_product, valid_to, actor);

@@ -59,13 +59,34 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.job_product_mapping (
 )
 COMMENT 'Manual bridge: (workspace, job) -> data product, for jobs not yet tagged at source. Rule 2 of the attribution waterfall. Target state is to empty this table by tagging jobs directly.';
 
--- §4.5 Dedicated warehouses (waterfall rule 3)
+-- §4.5 Tag rules (waterfall rule 3)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.tag_product_mapping (
+  tag_key        STRING NOT NULL,     -- custom tag key, exactly as in system.billing.usage.custom_tags
+  tag_value      STRING NOT NULL,     -- composite key with tag_key
+  data_product   STRING NOT NULL,
+  note           STRING,              -- optional: why this rule exists
+  mapped_by      STRING,              -- audit: who created the rule
+  mapped_at      TIMESTAMP            -- audit: when
+)
+COMMENT 'Tag rule: any custom tag key=value on a usage record -> data product. Rule 3 of the attribution waterfall - catches workloads tagged with team/project/etc. tags but no data_product tag. If several rules match one record, the alphabetically first key=value wins (deterministic); the health page flags conflicting rules.';
+
+-- §4.6 Dedicated warehouses (waterfall rule 4)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.warehouse_product_mapping (
   warehouse_id   STRING NOT NULL,
   data_product   STRING,              -- NULL = shared warehouse, allocate per user
   is_shared      BOOLEAN
 )
 COMMENT 'is_shared = false + data_product assigns the ENTIRE warehouse (incl. idle hours) to that product. Shared warehouses: is_shared = true or no row at all.';
+
+-- §4.7 Runner rules (waterfall rule 5)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.runner_product_mapping (
+  user_id        STRING NOT NULL,     -- email or service principal ID, exactly as in identity_metadata.run_as
+  data_product   STRING NOT NULL,
+  note           STRING,              -- optional: why this rule exists
+  mapped_by      STRING,              -- audit: who created the rule
+  mapped_at      TIMESTAMP            -- audit: when
+)
+COMMENT 'Runner rule: EVERYTHING this identity runs (jobs, DLT, serverless) -> data product. Rule 5 of the attribution waterfall. The explicit opt-in replacement for defaulting job cost to the runner: platform service principals whose output serves one product belong here. One row per user_id - duplicates are flagged on the health page.';
 
 -- =====================================================================
 -- §5 Core allocation views (layer 1)
@@ -214,6 +235,8 @@ LEFT JOIN main_dev.cost_reporting.user_mapping um
 --     started; effective_list.default preferred, falls back to default.
 --   * Job names from usage_metadata.job_name, else latest name in
 --     system.workflow.jobs (deduplicated per workspace + job).
+--   * tags_json carries ALL custom tags as a key-sorted JSON object -
+--     the input for tag rules (waterfall rule 3) and the coverage UI.
 --
 -- Scope / reconciliation:
 --   * SQL warehouse usage EXCLUDED (allocated per-query in query_view);
@@ -222,7 +245,7 @@ LEFT JOIN main_dev.cost_reporting.user_mapping um
 --     keep their raw run_as identity.
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.usage_view
-COMMENT 'Daily chargeback of all non-SQL-warehouse spend (jobs, DLT, serverless, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred). SQL warehouse usage excluded - allocated per-query in query_view. Unmapped workspaces surface as UNMAPPED rows so totals reconcile with billing. Exposes job_id and tag_data_product for the attribution waterfall in cost_fact.'
+COMMENT 'Daily chargeback of all non-SQL-warehouse spend (jobs, DLT, serverless, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred). SQL warehouse usage excluded - allocated per-query in query_view. Unmapped workspaces surface as UNMAPPED rows so totals reconcile with billing. Exposes job_id, tag_data_product and tags_json (all custom tags, key-sorted JSON) for the attribution waterfall in cost_fact.'
 AS
 WITH latest_jobs AS (
   -- Latest known name per job. job_id is only unique within a
@@ -262,6 +285,8 @@ SELECT
   u.custom_tags.domain                                        AS domain,
   u.custom_tags.desk                                          AS tag_desk,
   u.custom_tags.Environment                                   AS environment,
+  -- all custom tags, key-sorted so identical tag sets group together
+  to_json(map_from_entries(array_sort(map_entries(u.custom_tags)))) AS tags_json,
   SUM(u.usage_quantity)                                       AS total_dbus,
   SUM(u.usage_quantity
       * COALESCE(lp.pricing.effective_list.default,
@@ -312,7 +337,8 @@ GROUP BY
   u.custom_tags.provider,
   u.custom_tags.domain,
   u.custom_tags.desk,
-  u.custom_tags.Environment;
+  u.custom_tags.Environment,
+  tags_json;
 
 -- §5.3 query_view_daily_summary — convenience rollup
 CREATE OR REPLACE VIEW main_dev.cost_reporting.query_view_daily_summary
@@ -341,9 +367,16 @@ GROUP BY 1, 2, 3;
 --   * Attribution waterfall:
 --       1 TAG                custom_tags.data_product on the record
 --       2 JOB_MAPPING        (workspace_id, job_id) in job_product_mapping
---       3 WAREHOUSE_MAPPING  dedicated warehouse (is_shared = false)
---       4 USER               known runner -> AD_HOC, desk = runner's desk
---       5 NONE               UNALLOCATED
+--       3 TAG_RULE           any custom tag matches tag_product_mapping
+--       4 WAREHOUSE_MAPPING  dedicated warehouse (is_shared = false)
+--       5 RUNNER_RULE        runner in runner_product_mapping
+--       6 USER               ad-hoc spend ONLY (job_id IS NULL): known
+--                            runner -> AD_HOC, desk = runner's desk.
+--                            Job cost NEVER defaults to the runner - jobs
+--                            are run by platform identities but consumed
+--                            by desks, so unresolved job spend falls to
+--                            NONE and surfaces in the work queue.
+--       7 NONE               UNALLOCATED
 --   * data_domain and desk derived from data_product_mapping with a
 --     validity-period join on usage_date - historical months never
 --     restate when a product moves desk.
@@ -351,7 +384,7 @@ GROUP BY 1, 2, 3;
 -- Invariant: SUM(cost) over cost_fact = SUM over billing (methodology §7.1).
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.cost_fact
-COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > WAREHOUSE_MAPPING > USER > NONE) and domain/desk derived from validity-versioned data_product_mapping. Source of truth for monthly chargeback.'
+COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Source of truth for monthly chargeback.'
 AS
 WITH unified AS (
 
@@ -366,6 +399,7 @@ WITH unified AS (
     user_id                            AS runner,
     CAST(NULL AS BOOLEAN)              AS is_serverless,  -- not tracked per-query
     CAST(NULL AS STRING)               AS tag_data_product,
+    CAST(NULL AS STRING)               AS tags_json,      -- no custom tags per query
     statement_id,
     dbu_allocated                      AS dbus,
     cost_allocated                     AS cost
@@ -384,10 +418,34 @@ WITH unified AS (
     job_runner                         AS runner,
     is_serverless,
     tag_data_product,
+    tags_json,
     CAST(NULL AS STRING)               AS statement_id,
     total_dbus                         AS dbus,
     total_cost                         AS cost
   FROM main_dev.cost_reporting.usage_view
+),
+
+-- Resolve tag rules once per DISTINCT tag set, never per usage row:
+-- grouping guarantees at most one product per tag set (no cost fan-out),
+-- MIN_BY makes conflicting rules resolve deterministically (alphabetically
+-- first key=value wins; the health page flags such conflicts).
+tag_rule_matches AS (
+  SELECT
+    t.tags_json,
+    MIN_BY(r.data_product, CONCAT(r.tag_key, '=', r.tag_value)) AS data_product
+  FROM (SELECT DISTINCT tags_json FROM unified WHERE tags_json IS NOT NULL) t
+  JOIN main_dev.cost_reporting.tag_product_mapping r
+    ON element_at(from_json(t.tags_json, 'map<string,string>'), r.tag_key)
+       = r.tag_value
+  GROUP BY t.tags_json
+),
+
+-- One product per runner even if the table holds duplicate rows
+-- (deterministic MIN; duplicates are flagged on the health page).
+runner_rules AS (
+  SELECT user_id, MIN(data_product) AS data_product
+  FROM main_dev.cost_reporting.runner_product_mapping
+  GROUP BY user_id
 ),
 
 attributed AS (
@@ -396,15 +454,21 @@ attributed AS (
     COALESCE(
       u.tag_data_product,                                     -- rule 1: TAG
       jm.data_product,                                        -- rule 2: JOB_MAPPING
-      whm.data_product,                                       -- rule 3: WAREHOUSE_MAPPING
-      CASE WHEN um.user_id IS NOT NULL THEN 'AD_HOC' END,     -- rule 4: USER
-      'UNALLOCATED'                                           -- rule 5: NONE
+      tr.data_product,                                        -- rule 3: TAG_RULE
+      whm.data_product,                                       -- rule 4: WAREHOUSE_MAPPING
+      rr.data_product,                                        -- rule 5: RUNNER_RULE
+      CASE WHEN u.job_id IS NULL                              -- rule 6: USER (ad-hoc only,
+            AND um.user_id IS NOT NULL THEN 'AD_HOC' END,     --   never job spend)
+      'UNALLOCATED'                                           -- rule 7: NONE
     )                                            AS data_product,
     CASE
       WHEN u.tag_data_product IS NOT NULL THEN 'TAG'
       WHEN jm.data_product    IS NOT NULL THEN 'JOB_MAPPING'
+      WHEN tr.data_product    IS NOT NULL THEN 'TAG_RULE'
       WHEN whm.data_product   IS NOT NULL THEN 'WAREHOUSE_MAPPING'
-      WHEN um.user_id         IS NOT NULL THEN 'USER'
+      WHEN rr.data_product    IS NOT NULL THEN 'RUNNER_RULE'
+      WHEN u.job_id IS NULL
+       AND um.user_id         IS NOT NULL THEN 'USER'
       ELSE 'NONE'
     END                                          AS attribution_method,
     um.desk                                      AS runner_desk,
@@ -413,10 +477,14 @@ attributed AS (
   LEFT JOIN main_dev.cost_reporting.job_product_mapping jm
     ON  u.workspace_id = jm.workspace_id
     AND u.job_id       = jm.job_id
+  LEFT JOIN tag_rule_matches tr
+    ON u.tags_json = tr.tags_json
   LEFT JOIN main_dev.cost_reporting.warehouse_product_mapping whm
     ON  u.compute_key = whm.warehouse_id
     AND whm.is_shared = false
     AND whm.data_product IS NOT NULL
+  LEFT JOIN runner_rules rr
+    ON u.runner = rr.user_id
   LEFT JOIN main_dev.cost_reporting.user_mapping um
     ON u.runner = um.user_id
 )
@@ -426,11 +494,16 @@ SELECT
   -- ---- three-level hierarchy
   COALESCE(dp.data_domain, 'UNALLOCATED')       AS data_domain,   -- level 1
   a.data_product,                                                 -- level 2
-  COALESCE(dp.desk, a.runner_desk,
+  -- runner_desk only when the USER rule fired - a NONE job row run by a
+  -- known runner must NOT leak onto the runner's home desk
+  COALESCE(dp.desk,
+           CASE WHEN a.attribution_method = 'USER'
+                THEN a.runner_desk END,
            'UNALLOCATED')                       AS desk,          -- level 3
   -- ---- attribution transparency
   a.attribution_method,
   a.tag_data_product                            AS raw_tag_data_product,
+  a.tags_json,
   -- ---- detail dimensions
   a.usage_category,
   a.is_serverless,                              -- serverless vs classic compute (NULL for per-query warehouse rows)

@@ -4,6 +4,8 @@ import { requirePageRole } from "@/lib/guards";
 import {
   listCatalogue,
   listJobMappings,
+  listRunnerRules,
+  listTagRules,
   listUsers,
   listWarehouseMappings,
   listWorkspaces,
@@ -25,13 +27,16 @@ export default function AdminIndexPage() {
 
 async function AdminIndex() {
   await requirePageRole("steward");
-  const [catalogue, jobs, warehouses, users, workspaces] = await Promise.all([
-    listCatalogue(),
-    listJobMappings(),
-    listWarehouseMappings(),
-    listUsers(),
-    listWorkspaces(),
-  ]);
+  const [catalogue, jobs, warehouses, users, workspaces, tagRules, runnerRules] =
+    await Promise.all([
+      listCatalogue(),
+      listJobMappings(),
+      listWarehouseMappings(),
+      listUsers(),
+      listWorkspaces(),
+      listTagRules(),
+      listRunnerRules(),
+    ]);
   const activeProducts = new Set(
     catalogue.filter((r) => r.valid_to == null).map((r) => r.data_product),
   ).size;
@@ -45,9 +50,9 @@ async function AdminIndex() {
     },
     {
       href: "/admin/jobs",
-      title: "Job bridge",
-      desc: "job_product_mapping — temporary bridge for untagged jobs. Target state: empty.",
-      stat: `${jobs.length} mappings`,
+      title: "Job mapping",
+      desc: "Bridge rows, tag rules and runner rules for jobs not tagged at source. Job spend never defaults to the runner's desk.",
+      stat: `${jobs.length} bridge rows · ${tagRules.length} tag rules · ${runnerRules.length} runner rules`,
     },
     {
       href: "/admin/warehouses",

@@ -103,7 +103,15 @@ export function StackedTrend({
 }
 
 export function CoverageBar({ coverage }: { coverage: CoverageRow[] }) {
-  const order: AttributionMethod[] = ["TAG", "JOB_MAPPING", "WAREHOUSE_MAPPING", "USER", "NONE"];
+  const order: AttributionMethod[] = [
+    "TAG",
+    "JOB_MAPPING",
+    "TAG_RULE",
+    "WAREHOUSE_MAPPING",
+    "RUNNER_RULE",
+    "USER",
+    "NONE",
+  ];
   const rows = order
     .map((m) => coverage.find((c) => c.attribution_method === m))
     .filter((c): c is CoverageRow => !!c && c.pct_of_month > 0);

@@ -7,6 +7,8 @@ import { zDate, zDateOrNull, zId, zStr, zStrOrNull } from "@/dal/parse";
 import type {
   DataProductRow,
   JobMappingRow,
+  RunnerRuleRow,
+  TagRuleRow,
   UserMappingRow,
   WarehouseMappingRow,
   WorkspaceMappingRow,
@@ -74,6 +76,45 @@ export async function listJobMappings(): Promise<JobMappingRow[]> {
       mapped_by: zStrOrNull,
       mapped_at: zStrOrNull,
     }) as z.ZodType<JobMappingRow>,
+  );
+}
+
+export async function listTagRules(): Promise<TagRuleRow[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("mappings");
+  if (env.DAL_MOCK) return [...mockStore.tagRules];
+  return query(
+    `SELECT tag_key, tag_value, data_product, note, mapped_by, mapped_at
+     FROM ${T("tag_product_mapping")} ORDER BY tag_key, tag_value`,
+    {},
+    z.object({
+      tag_key: zStr,
+      tag_value: zStr,
+      data_product: zStr,
+      note: zStrOrNull,
+      mapped_by: zStrOrNull,
+      mapped_at: zStrOrNull,
+    }) as z.ZodType<TagRuleRow>,
+  );
+}
+
+export async function listRunnerRules(): Promise<RunnerRuleRow[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("mappings");
+  if (env.DAL_MOCK) return [...mockStore.runnerRules];
+  return query(
+    `SELECT user_id, data_product, note, mapped_by, mapped_at
+     FROM ${T("runner_product_mapping")} ORDER BY user_id`,
+    {},
+    z.object({
+      user_id: zStr,
+      data_product: zStr,
+      note: zStrOrNull,
+      mapped_by: zStrOrNull,
+      mapped_at: zStrOrNull,
+    }) as z.ZodType<RunnerRuleRow>,
   );
 }
 
@@ -304,6 +345,127 @@ export async function deleteJobMapping(workspace_id: string, job_id: string): Pr
      WHERE workspace_id = :workspace_id AND job_id = :job_id`,
     { workspace_id, job_id },
   );
+}
+
+/** Desk of a product's active catalogue row — mock re-attribution helper. */
+function mockActiveDesk(data_product: string): string {
+  return (
+    mockStore.catalogue.find((c) => c.data_product === data_product && c.valid_to == null)
+      ?.desk ?? "UNALLOCATED"
+  );
+}
+
+export async function insertTagRule(
+  row: { tag_key: string; tag_value: string; data_product: string; note: string | null },
+  actor: string,
+): Promise<void> {
+  if (env.DAL_MOCK) {
+    mockStore.tagRules.push({ ...row, mapped_by: actor, mapped_at: now() });
+    // cost_fact is a view — NONE rows whose tags carry key=value re-attribute
+    const desk = mockActiveDesk(row.data_product);
+    const matched = new Set<string>();
+    for (const a of mockStore.jobAttributions) {
+      if (a.attribution_method !== "NONE" || !a.tags_json) continue;
+      let tags: Record<string, string>;
+      try {
+        tags = JSON.parse(a.tags_json);
+      } catch {
+        continue;
+      }
+      if (tags[row.tag_key] === row.tag_value) {
+        a.attribution_method = "TAG_RULE";
+        a.data_product = row.data_product;
+        a.desk = desk;
+        matched.add(`${a.workspace_id}|${a.job_id}`);
+      }
+    }
+    mockStore.queueUntaggedJobs = mockStore.queueUntaggedJobs.filter(
+      (q) => !matched.has(`${q.workspace_id}|${q.job_id}`),
+    );
+    return;
+  }
+  await exec(
+    `INSERT INTO ${T("tag_product_mapping")}
+       (tag_key, tag_value, data_product, note, mapped_by, mapped_at)
+     VALUES (:tag_key, :tag_value, :data_product, :note, :actor, current_timestamp())`,
+    { ...row, actor },
+  );
+}
+
+export async function deleteTagRule(tag_key: string, tag_value: string): Promise<void> {
+  if (env.DAL_MOCK) {
+    const rule = mockStore.tagRules.find(
+      (r) => r.tag_key === tag_key && r.tag_value === tag_value,
+    );
+    mockStore.tagRules = mockStore.tagRules.filter(
+      (r) => !(r.tag_key === tag_key && r.tag_value === tag_value),
+    );
+    // rows the rule carried fall back to NONE
+    for (const a of mockStore.jobAttributions) {
+      if (a.attribution_method === "TAG_RULE" && a.data_product === rule?.data_product) {
+        a.attribution_method = "NONE";
+        a.data_product = "UNALLOCATED";
+        a.desk = "UNALLOCATED";
+      }
+    }
+    return;
+  }
+  await exec(
+    `DELETE FROM ${T("tag_product_mapping")}
+     WHERE tag_key = :tag_key AND tag_value = :tag_value`,
+    { tag_key, tag_value },
+  );
+}
+
+export async function insertRunnerRule(
+  row: { user_id: string; data_product: string; note: string | null },
+  actor: string,
+): Promise<void> {
+  if (env.DAL_MOCK) {
+    mockStore.runnerRules.push({ ...row, mapped_by: actor, mapped_at: now() });
+    // queue rows carry the runner — use them to find the jobs the rule catches
+    const desk = mockActiveDesk(row.data_product);
+    const matched = new Set(
+      mockStore.queueUntaggedJobs
+        .filter((q) => q.runner === row.user_id)
+        .map((q) => `${q.workspace_id}|${q.job_id}`),
+    );
+    for (const a of mockStore.jobAttributions) {
+      if (a.attribution_method === "NONE" && matched.has(`${a.workspace_id}|${a.job_id}`)) {
+        a.attribution_method = "RUNNER_RULE";
+        a.data_product = row.data_product;
+        a.desk = desk;
+      }
+    }
+    mockStore.queueUntaggedJobs = mockStore.queueUntaggedJobs.filter(
+      (q) => q.runner !== row.user_id,
+    );
+    return;
+  }
+  await exec(
+    `INSERT INTO ${T("runner_product_mapping")}
+       (user_id, data_product, note, mapped_by, mapped_at)
+     VALUES (:user_id, :data_product, :note, :actor, current_timestamp())`,
+    { ...row, actor },
+  );
+}
+
+export async function deleteRunnerRule(user_id: string): Promise<void> {
+  if (env.DAL_MOCK) {
+    const rule = mockStore.runnerRules.find((r) => r.user_id === user_id);
+    mockStore.runnerRules = mockStore.runnerRules.filter((r) => r.user_id !== user_id);
+    for (const a of mockStore.jobAttributions) {
+      if (a.attribution_method === "RUNNER_RULE" && a.data_product === rule?.data_product) {
+        a.attribution_method = "NONE";
+        a.data_product = "UNALLOCATED";
+        a.desk = "UNALLOCATED";
+      }
+    }
+    return;
+  }
+  await exec(`DELETE FROM ${T("runner_product_mapping")} WHERE user_id = :user_id`, {
+    user_id,
+  });
 }
 
 export async function upsertWarehouseMapping(row: WarehouseMappingRow): Promise<void> {

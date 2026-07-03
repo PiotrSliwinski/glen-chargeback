@@ -63,6 +63,92 @@ export async function deleteJobMappingAction(
   });
 }
 
+const AddTagRule = z.object({
+  tag_key: z.string().min(1),
+  tag_value: z.string().min(1),
+  data_product: z.string().min(1),
+  note: optionalText,
+});
+
+export async function addTagRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const input = parseForm(formData, AddTagRule);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listTagRules();
+    if (existing.some((r) => r.tag_key === input.tag_key && r.tag_value === input.tag_value)) {
+      throw new DomainError(
+        "DUPLICATE_KEY",
+        `a rule for tag ${input.tag_key}=${input.tag_value} already exists`,
+      );
+    }
+    await dal.insertTagRule(input, actor);
+    invalidateMappings();
+    return `Rule created: tag ${input.tag_key}=${input.tag_value} → '${input.data_product}'. Applies to all past and future spend carrying that tag.`;
+  });
+}
+
+const DeleteTagRule = z.object({
+  tag_key: z.string().min(1),
+  tag_value: z.string().min(1),
+});
+
+export async function deleteTagRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const input = parseForm(formData, DeleteTagRule);
+    await dal.deleteTagRule(input.tag_key, input.tag_value);
+    invalidateMappings();
+    return `Rule removed for tag ${input.tag_key}=${input.tag_value}. Spend it carried falls back to later waterfall rules — or the work queue.`;
+  });
+}
+
+const AddRunnerRule = z.object({
+  user_id: z.string().min(1),
+  data_product: z.string().min(1),
+  note: optionalText,
+});
+
+export async function addRunnerRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const input = parseForm(formData, AddRunnerRule);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listRunnerRules();
+    if (existing.some((r) => r.user_id === input.user_id)) {
+      throw new DomainError(
+        "DUPLICATE_KEY",
+        `runner '${input.user_id}' already has a rule — remove it first`,
+      );
+    }
+    await dal.insertRunnerRule(input, actor);
+    invalidateMappings();
+    return `Rule created: everything '${input.user_id}' runs → '${input.data_product}'.`;
+  });
+}
+
+const DeleteRunnerRule = z.object({
+  user_id: z.string().min(1),
+});
+
+export async function deleteRunnerRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const input = parseForm(formData, DeleteRunnerRule);
+    await dal.deleteRunnerRule(input.user_id);
+    invalidateMappings();
+    return `Rule removed for '${input.user_id}'. Their job spend no longer attributes via this rule — jobs never default to the runner's desk.`;
+  });
+}
+
 const AddUser = z.object({
   user_id: z.string().min(1),
   user_name: z.string().min(1),
