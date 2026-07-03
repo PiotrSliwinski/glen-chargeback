@@ -8,6 +8,7 @@ import {
   updateOwnerAction,
 } from "@/actions/products";
 import { param, type SearchParams } from "@/lib/report-params";
+import { paginate } from "@/lib/paginate";
 import { Plus } from "lucide-react";
 import { ActionForm, Field } from "@/components/action-form";
 import { SplitEditor } from "@/components/split-editor";
@@ -16,6 +17,7 @@ import { PAGE_HELP } from "@/lib/kpi-help";
 import { firstOfNextMonth, plural } from "@/lib/format";
 import { EmptyState, FilteredCount, KpiTile, PageTitle, StatusChip } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
+import { TablePagination } from "@/components/table-pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -69,6 +71,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
         .toLowerCase()
         .includes(q),
   );
+  const { rows: pageEntries, ...paged } = paginate(entries, param(sp.page));
 
   return (
     <div>
@@ -116,7 +119,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
         q && <FilteredCount shown={entries.length} total={byProduct.size} noun="product" />
       )}
       <div className="space-y-4">
-        {entries.map(([product, versions]) => {
+        {pageEntries.map(([product, versions]) => {
           // one active row per desk of the current split, largest share first
           const active = versions
             .filter((v) => v.valid_to == null)
@@ -234,6 +237,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
           );
         })}
       </div>
+      <TablePagination {...paged} noun="product" />
     </div>
   );
 }

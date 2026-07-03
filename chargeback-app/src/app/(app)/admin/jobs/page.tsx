@@ -64,9 +64,16 @@ async function Jobs({ searchParams }: { searchParams: SearchParams }) {
         }
       >
         {view === "coverage" ? (
-          <CoverageView q={q} method={method} />
+          <CoverageView q={q} method={method} page={param(sp.page)} />
         ) : (
-          <MappingsView q={q} />
+          <MappingsView
+            q={q}
+            pages={{
+              bridge: param(sp.page),
+              tags: param(sp.tagsPage),
+              runners: param(sp.runnersPage),
+            }}
+          />
         )}
       </Suspense>
     </div>

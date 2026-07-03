@@ -368,16 +368,42 @@ export async function insertJobMapping(
   );
 }
 
+export interface JobKey {
+  workspace_id: string;
+  job_id: string;
+}
+
+/** OR-chain over (workspace_id, job_id) pairs + its named params — bulk WHERE clause. */
+function jobKeyPredicate(keys: JobKey[]): { where: string; params: Record<string, string> } {
+  return {
+    where: keys
+      .map((_, i) => `(workspace_id = :w_${i} AND job_id = :j_${i})`)
+      .join(" OR "),
+    params: Object.fromEntries(
+      keys.flatMap((k, i) => [
+        [`w_${i}`, k.workspace_id],
+        [`j_${i}`, k.job_id],
+      ]),
+    ),
+  };
+}
+
 export async function deleteJobMapping(workspace_id: string, job_id: string): Promise<void> {
+  await deleteJobMappings([{ workspace_id, job_id }]);
+}
+
+/** Bulk delete in one statement — Databricks guarantees per-statement atomicity only. */
+export async function deleteJobMappings(keys: JobKey[]): Promise<void> {
+  if (keys.length === 0) return;
   if (env.DAL_MOCK) {
+    const wanted = new Set(keys.map((k) => `${k.workspace_id}|${k.job_id}`));
     mockStore.jobMappings = mockStore.jobMappings.filter(
-      (j) => !(j.workspace_id === workspace_id && j.job_id === job_id),
+      (j) => !wanted.has(`${j.workspace_id}|${j.job_id}`),
     );
-    // without the bridge row, the job's JOB_MAPPING attribution recomputes to NONE
+    // without the bridge rows, the jobs' JOB_MAPPING attributions recompute to NONE
     for (const a of mockStore.jobAttributions) {
       if (
-        a.workspace_id === workspace_id &&
-        a.job_id === job_id &&
+        wanted.has(`${a.workspace_id}|${a.job_id}`) &&
         a.attribution_method === "JOB_MAPPING"
       ) {
         a.attribution_method = "NONE";
@@ -387,10 +413,47 @@ export async function deleteJobMapping(workspace_id: string, job_id: string): Pr
     }
     return;
   }
+  const { where, params } = jobKeyPredicate(keys);
+  await exec(`DELETE FROM ${T("job_product_mapping")} WHERE ${where}`, params);
+}
+
+/** Point existing bridge rows at a new product in one atomic UPDATE. */
+export async function remapJobs(
+  keys: JobKey[],
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  if (keys.length === 0) return;
+  if (env.DAL_MOCK) {
+    const wanted = new Set(keys.map((k) => `${k.workspace_id}|${k.job_id}`));
+    for (const j of mockStore.jobMappings) {
+      if (!wanted.has(`${j.workspace_id}|${j.job_id}`)) continue;
+      j.data_product = data_product;
+      j.note = note;
+      j.mapped_by = actor;
+      j.mapped_at = now();
+    }
+    // cost_fact is a view — JOB_MAPPING rows follow the bridge to the new product
+    const desk = mockActiveDesk(data_product);
+    for (const a of mockStore.jobAttributions) {
+      if (
+        wanted.has(`${a.workspace_id}|${a.job_id}`) &&
+        a.attribution_method === "JOB_MAPPING"
+      ) {
+        a.data_product = data_product;
+        a.desk = desk;
+      }
+    }
+    return;
+  }
+  const { where, params } = jobKeyPredicate(keys);
   await exec(
-    `DELETE FROM ${T("job_product_mapping")}
-     WHERE workspace_id = :workspace_id AND job_id = :job_id`,
-    { workspace_id, job_id },
+    `UPDATE ${T("job_product_mapping")}
+     SET data_product = :data_product, note = :note,
+         mapped_by = :actor, mapped_at = current_timestamp()
+     WHERE ${where}`,
+    { ...params, data_product, note, actor },
   );
 }
 

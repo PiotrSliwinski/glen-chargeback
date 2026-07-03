@@ -229,8 +229,9 @@ export async function deleteWorkspaceAction(
 
 // ============================== bulk actions ==============================
 // Each bulk action validates the whole batch up front (§7.4(b) still holds:
-// referenced products must exist before commit), then applies row by row —
-// the DAL has no multi-row statements.
+// referenced products must exist before commit). Job-bridge batches apply as
+// ONE statement (Databricks has single-statement atomicity only); the other
+// mapping tables still apply row by row.
 
 /** Bridge-row keys travel as 'workspace_id|job_id' — same shape as React keys. */
 function parseJobKeys(formData: FormData): { workspace_id: string; job_id: string }[] {
@@ -249,9 +250,7 @@ export async function bulkDeleteJobMappingsAction(
 ): Promise<ActionResult> {
   return runAction("steward", async () => {
     const keys = parseJobKeys(formData);
-    for (const { workspace_id, job_id } of keys) {
-      await dal.deleteJobMapping(workspace_id, job_id);
-    }
+    await dal.deleteJobMappings(keys);
     invalidateMappings();
     return `${keys.length} bridge mapping${keys.length > 1 ? "s" : ""} removed. Future spend for those jobs attributes via tags — or falls to the work queue.`;
   });
@@ -278,13 +277,7 @@ export async function bulkRemapJobsAction(
         `no bridge row for job${missing.length > 1 ? "s" : ""} ${missing.map((k) => k.job_id).join(", ")}`,
       );
     }
-    for (const { workspace_id, job_id } of keys) {
-      await dal.deleteJobMapping(workspace_id, job_id);
-      await dal.insertJobMapping(
-        { workspace_id, job_id, data_product: input.data_product, note: input.note },
-        actor,
-      );
-    }
+    await dal.remapJobs(keys, input.data_product, input.note, actor);
     invalidateMappings();
     return `${keys.length} job${keys.length > 1 ? "s" : ""} re-mapped to '${input.data_product}'. Reminder: the durable fix is tagging at source.`;
   });

@@ -27,6 +27,10 @@ export function TableFilter({ placeholder = "Filter…" }: { placeholder?: strin
       const params = new URLSearchParams(searchParams);
       if (next.trim()) params.set("q", next.trim());
       else params.delete("q");
+      // a new filter changes the row set — any pagination cursor is stale
+      for (const key of [...params.keys()]) {
+        if (key === "page" || key.endsWith("Page")) params.delete(key);
+      }
       router.replace(`${pathname}${params.size ? `?${params}` : ""}`, { scroll: false });
     }, 250);
   }

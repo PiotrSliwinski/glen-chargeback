@@ -5,6 +5,8 @@ import { listActiveProducts, listWarehouseMappings } from "@/dal/mappings";
 import { getUnassignedWarehouses } from "@/dal/workQueue";
 import { assignWarehouseAction, bulkAssignWarehousesAction } from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
+import { paginate } from "@/lib/paginate";
+import { toProductOptions } from "@/lib/product-options";
 import { Plus, Tags } from "lucide-react";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
@@ -30,6 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TablePagination } from "@/components/table-pagination";
 import { TablePageSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Warehouses" };
@@ -52,10 +55,7 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
     listActiveProducts(),
     getUnassignedWarehouses(),
   ]);
-  const productOptions = [
-    { value: "", label: "—" },
-    ...products.map((p) => ({ value: p.data_product, label: `${p.data_product} (${p.desk})` })),
-  ];
+  const productOptions = [{ value: "", label: "—" }, ...toProductOptions(products)];
   const sharedCount = rows.filter((r) => r.is_shared).length;
 
   const shown = rows.filter(
@@ -65,6 +65,7 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
         .toLowerCase()
         .includes(q),
   );
+  const { rows: pageRows, ...paged } = paginate(shown, param(sp.page));
 
   return (
     <div>
@@ -118,7 +119,7 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
         </div>
       </div>
 
-      <BulkSelect values={shown.map((r) => r.warehouse_id)}>
+      <BulkSelect values={pageRows.map((r) => r.warehouse_id)}>
       <Card>
         <CardContent>
           {shown.length === 0 ? (
@@ -147,7 +148,7 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shown.map((r) => (
+                {pageRows.map((r) => (
                   <TableRow key={r.warehouse_id}>
                     <TableCell>
                       <BulkCheckbox
@@ -177,6 +178,7 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
                 ))}
               </TableBody>
             </Table>
+            <TablePagination {...paged} noun="warehouse" />
             </>
           )}
         </CardContent>

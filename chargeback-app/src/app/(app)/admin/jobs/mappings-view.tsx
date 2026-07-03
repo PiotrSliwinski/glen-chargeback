@@ -30,6 +30,7 @@ import {
 } from "@/components/bulk-select";
 import { EmptyState, FilteredCount, KpiTile } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
+import { TablePagination } from "@/components/table-pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -41,9 +42,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fmtMoney } from "@/lib/format";
+import { paginate } from "@/lib/paginate";
+import { toProductOptions } from "@/lib/product-options";
 
 /** Write surface: job bridge rows, tag rules and runner rules. */
-export async function MappingsView({ q }: { q: string }) {
+export async function MappingsView({
+  q,
+  pages,
+}: {
+  q: string;
+  // one page cursor per table on this view: ?page= (bridge), ?tagsPage=, ?runnersPage=
+  pages: { bridge?: string; tags?: string; runners?: string };
+}) {
   const [rows, products, workspaces, taggedJobs, untaggedJobs, tagRules, runnerRules] =
     await Promise.all([
       listJobMappings(),
@@ -54,10 +64,7 @@ export async function MappingsView({ q }: { q: string }) {
       listTagRules(),
       listRunnerRules(),
     ]);
-  const productOptions = products.map((p) => ({
-    value: p.data_product,
-    label: `${p.data_product} (${p.desk})`,
-  }));
+  const productOptions = toProductOptions(products);
   const wsName = new Map(workspaces.map((w) => [w.workspace_id, w.workspace_name]));
   const productsReferenced = new Set(rows.map((r) => r.data_product)).size;
 
@@ -69,6 +76,9 @@ export async function MappingsView({ q }: { q: string }) {
         .toLowerCase()
         .includes(query),
   );
+  const { rows: pageRows, ...bridgePaged } = paginate(shown, pages.bridge);
+  const { rows: tagRulePage, ...tagsPaged } = paginate(tagRules, pages.tags);
+  const { rows: runnerRulePage, ...runnersPaged } = paginate(runnerRules, pages.runners);
 
   return (
     <div>
@@ -209,7 +219,7 @@ export async function MappingsView({ q }: { q: string }) {
         </Card>
       )}
 
-      <BulkSelect values={shown.map((r) => `${r.workspace_id}|${r.job_id}`)}>
+      <BulkSelect values={pageRows.map((r) => `${r.workspace_id}|${r.job_id}`)}>
       <Card>
         <CardHeader>
           <CardTitle>Job bridge — job_product_mapping</CardTitle>
@@ -247,7 +257,7 @@ export async function MappingsView({ q }: { q: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shown.map((r) => (
+                {pageRows.map((r) => (
                   <TableRow key={`${r.workspace_id}|${r.job_id}`}>
                     <TableCell>
                       <BulkCheckbox
@@ -291,6 +301,7 @@ export async function MappingsView({ q }: { q: string }) {
                 ))}
               </TableBody>
             </Table>
+            <TablePagination {...bridgePaged} noun="mapping" />
             </>
           )}
         </CardContent>
@@ -378,7 +389,7 @@ export async function MappingsView({ q }: { q: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tagRules.map((r) => (
+                {tagRulePage.map((r) => (
                   <TableRow key={`${r.tag_key}|${r.tag_value}`}>
                     <TableCell className="font-mono text-xs">
                       {r.tag_key}={r.tag_value}
@@ -406,6 +417,7 @@ export async function MappingsView({ q }: { q: string }) {
               </TableBody>
             </Table>
           )}
+          <TablePagination {...tagsPaged} noun="tag rule" paramName="tagsPage" />
         </CardContent>
       </Card>
 
@@ -453,7 +465,7 @@ export async function MappingsView({ q }: { q: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {runnerRules.map((r) => (
+                {runnerRulePage.map((r) => (
                   <TableRow key={r.user_id}>
                     <TableCell className="font-mono text-xs">{r.user_id}</TableCell>
                     <TableCell className="font-mono text-xs">{r.data_product}</TableCell>
@@ -478,6 +490,7 @@ export async function MappingsView({ q }: { q: string }) {
               </TableBody>
             </Table>
           )}
+          <TablePagination {...runnersPaged} noun="runner rule" paramName="runnersPage" />
         </CardContent>
       </Card>
     </div>

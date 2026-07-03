@@ -2,7 +2,10 @@ import Link from "next/link";
 import { requirePageRole } from "@/lib/guards";
 import { firstOfNextMonth, fmtDbu, fmtInt, fmtMoney, fmtPct } from "@/lib/format";
 import { param, type SearchParams } from "@/lib/report-params";
+import { paginate } from "@/lib/paginate";
+import { toProductOptions } from "@/lib/product-options";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
+import { isServicePrincipal } from "@/lib/identity";
 import {
   getQueueSummary,
   getRogueTags,
@@ -11,7 +14,7 @@ import {
   getUnknownWorkspaces,
   getUntaggedJobs,
 } from "@/dal/workQueue";
-import { listActiveProducts } from "@/dal/mappings";
+import { listActiveProducts, listUsers, listWorkspaces } from "@/dal/mappings";
 import {
   assignWarehouseAction,
   mapJobAction,
@@ -21,7 +24,10 @@ import {
 import { createProductAction } from "@/actions/products";
 import { Download } from "lucide-react";
 import { ActionForm, DatalistField, Field, SelectField } from "@/components/action-form";
+import { EditDialog, RowAction } from "@/components/edit-dialog";
+import { SpNameField } from "@/components/unmapped-runners-body";
 import { EmptyState, KpiTile, PageTitle } from "@/components/ui";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -32,6 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TablePagination } from "@/components/table-pagination";
 import { TablePageSkeleton } from "@/components/loading-skeletons";
 import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
@@ -63,13 +70,18 @@ async function Queue({ searchParams }: { searchParams: SearchParams }) {
   await requirePageRole("steward");
   const sp = await searchParams;
   const tab: TabKey = (TABS.find((t) => t.key === param(sp.tab))?.key ?? "jobs") as TabKey;
+  const page = param(sp.page);
 
-  const [summary, products] = await Promise.all([getQueueSummary(), listActiveProducts()]);
-  const productOptions = products.map((p) => ({
-    value: p.data_product,
-    label: `${p.data_product} (${p.desk})`,
-  }));
+  const [summary, products, workspaces, users] = await Promise.all([
+    getQueueSummary(),
+    listActiveProducts(),
+    listWorkspaces(),
+    listUsers(),
+  ]);
+  const productOptions = toProductOptions(products);
   const deskOptions = [...new Set(products.map((p) => p.desk))].sort();
+  const wsName = new Map(workspaces.map((w) => [w.workspace_id, w.workspace_name]));
+  const runnerName = new Map(users.map((u) => [u.user_id, u.user_name]));
 
   const counts: Record<TabKey, number> = {
     jobs: summary.untaggedJobs,
@@ -141,37 +153,79 @@ async function Queue({ searchParams }: { searchParams: SearchParams }) {
         For jobs, the durable fix is tagging at source — a mapping is a bridge.
       </p>
 
-      {tab === "jobs" && <UntaggedJobsTab productOptions={productOptions} />}
-      {tab === "runners" && <UnknownRunnersTab deskOptions={deskOptions} />}
-      {tab === "workspaces" && <UnknownWorkspacesTab />}
-      {tab === "tags" && <RogueTagsTab deskOptions={deskOptions} />}
-      {tab === "warehouses" && <UnassignedWarehousesTab productOptions={productOptions} />}
+      {tab === "jobs" && (
+        <UntaggedJobsTab productOptions={productOptions} wsName={wsName} runnerName={runnerName} page={page} />
+      )}
+      {tab === "runners" && <UnknownRunnersTab deskOptions={deskOptions} page={page} />}
+      {tab === "workspaces" && <UnknownWorkspacesTab page={page} />}
+      {tab === "tags" && <RogueTagsTab deskOptions={deskOptions} page={page} />}
+      {tab === "warehouses" && (
+        <UnassignedWarehousesTab productOptions={productOptions} wsName={wsName} page={page} />
+      )}
     </div>
   );
 }
 
-function RowActions({ children }: { children: React.ReactNode }) {
+/** Workspace cell: friendly name when mapped, otherwise the raw billing ID. */
+function WorkspaceCell({ id, wsName }: { id: string; wsName: Map<string, string> }) {
+  const name = wsName.get(id);
+  if (!name) return <span className="font-mono text-xs">{id}</span>;
   return (
-    <details className="group">
-      <summary className="cursor-pointer text-sm font-medium text-primary hover:underline">
-        Fix →
-      </summary>
-      <div className="mt-2 max-w-md rounded-lg border bg-muted/50 p-3">{children}</div>
-    </details>
+    <span title={`workspace ${id}`} className="text-sm">
+      {name}
+    </span>
+  );
+}
+
+/** Runner cell: mapped display name, else the raw identity (SPN GUIDs flagged). */
+function RunnerCell({
+  runner,
+  runnerName,
+}: {
+  runner: string | null;
+  runnerName: Map<string, string>;
+}) {
+  if (!runner) return <span className="text-muted-foreground">—</span>;
+  const name = runnerName.get(runner);
+  if (name) {
+    return (
+      <span title={runner} className="text-sm">
+        {name}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span title={runner} className="inline-block max-w-44 truncate align-bottom font-mono text-xs">
+        {runner}
+      </span>
+      {isServicePrincipal(runner) && (
+        <Badge variant="secondary" className="font-sans">
+          SP
+        </Badge>
+      )}
+    </span>
   );
 }
 
 async function UntaggedJobsTab({
   productOptions,
+  wsName,
+  runnerName,
+  page,
 }: {
   productOptions: { value: string; label: string }[];
+  wsName: Map<string, string>;
+  runnerName: Map<string, string>;
+  page: string | undefined;
 }) {
-  const rows = await getUntaggedJobs();
-  if (rows.length === 0) return <EmptyState message="No untagged jobs — queue clear." />;
+  const all = await getUntaggedJobs();
+  if (all.length === 0) return <EmptyState message="No untagged jobs — queue clear." />;
+  const { rows, ...paged } = paginate(all, page);
   return (
     <Card>
       <CardContent>
-        <Table className="align-top">
+        <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Work item</TableHead>
@@ -179,45 +233,64 @@ async function UntaggedJobsTab({
               <TableHead>Workspace</TableHead>
               <TableHead>Runner</TableHead>
               <TableHead className="text-right">Cost 30d</TableHead>
-              <TableHead>Action</TableHead>
+              <TableHead>
+                <span className="sr-only">Action</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
               <TableRow key={`${r.workspace_id}|${r.job_id}`}>
-                <TableCell className="font-medium">{r.work_item}</TableCell>
-                <TableCell>{r.usage_category}</TableCell>
-                <TableCell>{r.workspace_id}</TableCell>
-                <TableCell>{r.runner ?? "—"}</TableCell>
+                <TableCell>
+                  <p className="text-sm font-medium">{r.work_item}</p>
+                  {r.job_id && (
+                    <p className="font-mono text-xs text-muted-foreground">job {r.job_id}</p>
+                  )}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">{r.usage_category}</TableCell>
+                <TableCell>
+                  <WorkspaceCell id={r.workspace_id} wsName={wsName} />
+                </TableCell>
+                <TableCell>
+                  <RunnerCell runner={r.runner} runnerName={runnerName} />
+                </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {fmtMoney(r.unallocated_cost_30d)}
                 </TableCell>
-                <TableCell>
-                  <RowActions>
-                    <ActionForm
-                      action={mapJobAction}
-                      submitLabel="Map to product"
-                      note="Bridge only — remind the owning team to tag the job at source."
-                    >
+                <TableCell className="text-right">
+                  <EditDialog
+                    trigger={<RowAction>Map to product</RowAction>}
+                    title={`Map ${r.work_item}`}
+                    description="Bridge only — the durable fix is tagging the job at source; remind the owning team. The job ID is pre-filled from billing data and read-only."
+                  >
+                    <ActionForm action={mapJobAction} submitLabel="Map to product">
                       <input type="hidden" name="workspace_id" value={r.workspace_id} />
                       <Field label="Job ID" name="job_id" defaultValue={r.job_id ?? ""} readOnly />
                       <SelectField label="Data product" name="data_product" options={productOptions} />
                       <Field label="Note (why mapped manually)" name="note" required={false} />
                     </ActionForm>
-                  </RowActions>
+                  </EditDialog>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        <TablePagination {...paged} noun="untagged job" />
       </CardContent>
     </Card>
   );
 }
 
-async function UnknownRunnersTab({ deskOptions }: { deskOptions: string[] }) {
-  const rows = await getUnknownRunners();
-  if (rows.length === 0) return <EmptyState message="Every spending runner is mapped." />;
+async function UnknownRunnersTab({
+  deskOptions,
+  page,
+}: {
+  deskOptions: string[];
+  page: string | undefined;
+}) {
+  const all = await getUnknownRunners();
+  if (all.length === 0) return <EmptyState message="Every spending runner is mapped." />;
+  const { rows, ...paged } = paginate(all, page);
   return (
     <Card>
       <CardContent>
@@ -227,38 +300,55 @@ async function UnknownRunnersTab({ deskOptions }: { deskOptions: string[] }) {
               <TableHead>Runner (as in system tables)</TableHead>
               <TableHead className="text-right">Cost 30d</TableHead>
               <TableHead className="text-right">Rows 30d</TableHead>
-              <TableHead>Action</TableHead>
+              <TableHead>
+                <span className="sr-only">Action</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.runner}>
-                <TableCell className="font-mono text-xs">{r.runner}</TableCell>
+                <TableCell>
+                  <span className="font-mono text-xs">{r.runner}</span>
+                  {isServicePrincipal(r.runner) && (
+                    <Badge variant="secondary" className="ml-2">
+                      SP
+                    </Badge>
+                  )}
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(r.cost_30d)}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtInt(r.rows_30d)}</TableCell>
-                <TableCell>
-                  <RowActions>
+                <TableCell className="text-right">
+                  <EditDialog
+                    trigger={<RowAction>Add user</RowAction>}
+                    title={`Add user ${r.runner}`}
+                    description="The user ID is pre-filled from the system tables and read-only — it must match executed_by / run_as exactly, so stewards never type it."
+                  >
                     <ActionForm action={upsertUserAction} submitLabel="Add user">
-                      {/* user_id pre-filled read-only: it must match the system
-                          tables exactly, so stewards never type it */}
                       <Field label="User ID" name="user_id" defaultValue={r.runner} readOnly />
-                      <Field label="Display name" name="user_name" />
+                      {isServicePrincipal(r.runner) ? (
+                        <SpNameField runnerId={r.runner} />
+                      ) : (
+                        <Field label="Display name" name="user_name" />
+                      )}
                       <DatalistField label="Desk" name="desk" options={deskOptions} />
                     </ActionForm>
-                  </RowActions>
+                  </EditDialog>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        <TablePagination {...paged} noun="unknown runner" />
       </CardContent>
     </Card>
   );
 }
 
-async function UnknownWorkspacesTab() {
-  const rows = await getUnknownWorkspaces();
-  if (rows.length === 0) return <EmptyState message="All billing workspaces are mapped." />;
+async function UnknownWorkspacesTab({ page }: { page: string | undefined }) {
+  const all = await getUnknownWorkspaces();
+  if (all.length === 0) return <EmptyState message="All billing workspaces are mapped." />;
+  const { rows, ...paged } = paginate(all, page);
   return (
     <Card>
       <CardContent>
@@ -267,7 +357,9 @@ async function UnknownWorkspacesTab() {
             <TableRow>
               <TableHead>Workspace ID</TableHead>
               <TableHead className="text-right">DBUs 30d</TableHead>
-              <TableHead>Action</TableHead>
+              <TableHead>
+                <span className="sr-only">Action</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -275,8 +367,12 @@ async function UnknownWorkspacesTab() {
               <TableRow key={r.workspace_id}>
                 <TableCell className="font-mono text-xs">{r.workspace_id}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtDbu(r.dbus_30d)}</TableCell>
-                <TableCell>
-                  <RowActions>
+                <TableCell className="text-right">
+                  <EditDialog
+                    trigger={<RowAction>Add workspace</RowAction>}
+                    title={`Add workspace ${r.workspace_id}`}
+                    description="The workspace ID is pre-filled from billing data and read-only. The friendly name appears in reports; attribution is unaffected."
+                  >
                     <ActionForm action={upsertWorkspaceAction} submitLabel="Add workspace">
                       <Field
                         label="Workspace ID"
@@ -286,21 +382,29 @@ async function UnknownWorkspacesTab() {
                       />
                       <Field label="Friendly name" name="workspace_name" />
                     </ActionForm>
-                  </RowActions>
+                  </EditDialog>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        <TablePagination {...paged} noun="unknown workspace" />
       </CardContent>
     </Card>
   );
 }
 
-async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
-  const rows = await getRogueTags();
-  if (rows.length === 0)
+async function RogueTagsTab({
+  deskOptions,
+  page,
+}: {
+  deskOptions: string[];
+  page: string | undefined;
+}) {
+  const all = await getRogueTags();
+  if (all.length === 0)
     return <EmptyState message="Every tag in use matches the product catalogue." />;
+  const { rows, ...paged } = paginate(all, page);
   return (
     <Card>
       <CardContent>
@@ -314,7 +418,9 @@ async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
               <TableHead>Tag value</TableHead>
               <TableHead className="text-right">Cost 30d</TableHead>
               <TableHead className="text-right">Rows 30d</TableHead>
-              <TableHead>Action</TableHead>
+              <TableHead>
+                <span className="sr-only">Action</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -323,13 +429,13 @@ async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
                 <TableCell className="font-mono text-xs">{r.raw_tag_data_product}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(r.cost_30d)}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtInt(r.rows_30d)}</TableCell>
-                <TableCell>
-                  <RowActions>
-                    <ActionForm
-                      action={createProductAction}
-                      submitLabel="Register as product"
-                      note="If the tag is a typo, don't register it — get it fixed at source instead."
-                    >
+                <TableCell className="text-right">
+                  <EditDialog
+                    trigger={<RowAction>Register as product</RowAction>}
+                    title={`Register ${r.raw_tag_data_product}`}
+                    description="If the tag is a typo, don't register it — get it fixed at source instead. The product key must equal the tag and is read-only."
+                  >
+                    <ActionForm action={createProductAction} submitLabel="Register as product">
                       <Field
                         label="Product key (must equal the tag)"
                         name="data_product"
@@ -346,12 +452,13 @@ async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
                         defaultValue={firstOfNextMonth()}
                       />
                     </ActionForm>
-                  </RowActions>
+                  </EditDialog>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        <TablePagination {...paged} noun="rogue tag" />
       </CardContent>
     </Card>
   );
@@ -359,11 +466,16 @@ async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
 
 async function UnassignedWarehousesTab({
   productOptions,
+  wsName,
+  page,
 }: {
   productOptions: { value: string; label: string }[];
+  wsName: Map<string, string>;
+  page: string | undefined;
 }) {
-  const rows = await getUnassignedWarehouses();
-  if (rows.length === 0) return <EmptyState message="No dedicated-warehouse candidates." />;
+  const all = await getUnassignedWarehouses();
+  if (all.length === 0) return <EmptyState message="No dedicated-warehouse candidates." />;
+  const { rows, ...paged } = paginate(all, page);
   return (
     <Card>
       <CardContent>
@@ -379,18 +491,26 @@ async function UnassignedWarehousesTab({
               <TableHead>Workspace</TableHead>
               <TableHead className="text-right">Cost 30d</TableHead>
               <TableHead className="text-right">Idle share</TableHead>
-              <TableHead>Action</TableHead>
+              <TableHead>
+                <span className="sr-only">Action</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.warehouse_id}>
                 <TableCell className="font-medium">{r.warehouse_id}</TableCell>
-                <TableCell>{r.workspace_id}</TableCell>
+                <TableCell>
+                  <WorkspaceCell id={r.workspace_id} wsName={wsName} />
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(r.cost_30d)}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtPct(r.idle_share)}</TableCell>
-                <TableCell>
-                  <RowActions>
+                <TableCell className="text-right">
+                  <EditDialog
+                    trigger={<RowAction>Classify</RowAction>}
+                    title={`Classify warehouse ${r.warehouse_id}`}
+                    description="Dedicated charges the whole warehouse (idle included) to one product; shared allocates per query. A dedicated warehouse requires a product."
+                  >
                     <ActionForm action={assignWarehouseAction} submitLabel="Save">
                       <Field
                         label="Warehouse ID"
@@ -413,12 +533,13 @@ async function UnassignedWarehousesTab({
                         options={[{ value: "", label: "—" }, ...productOptions]}
                       />
                     </ActionForm>
-                  </RowActions>
+                  </EditDialog>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        <TablePagination {...paged} noun="warehouse" />
       </CardContent>
     </Card>
   );

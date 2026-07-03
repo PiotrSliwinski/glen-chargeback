@@ -9,6 +9,7 @@ import {
   upsertWorkspaceAction,
 } from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
+import { paginate } from "@/lib/paginate";
 import { Plus, Trash2 } from "lucide-react";
 import { ActionForm, Field } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
@@ -34,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TablePagination } from "@/components/table-pagination";
 import { TablePageSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Workspaces" };
@@ -62,6 +64,7 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
   const shown = rows.filter(
     (r) => !q || `${r.workspace_id} ${r.workspace_name}`.toLowerCase().includes(q),
   );
+  const { rows: pageRows, ...paged } = paginate(shown, param(sp.page));
 
   return (
     <div>
@@ -107,7 +110,7 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
         </div>
       </div>
 
-      <BulkSelect values={shown.map((r) => r.workspace_id)}>
+      <BulkSelect values={pageRows.map((r) => r.workspace_id)}>
       <Card>
         <CardContent>
           {shown.length === 0 ? (
@@ -132,7 +135,7 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shown.map((r) => (
+                {pageRows.map((r) => (
                   <TableRow key={r.workspace_id}>
                     <TableCell>
                       <BulkCheckbox
@@ -198,6 +201,7 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
                 ))}
               </TableBody>
             </Table>
+            <TablePagination {...paged} noun="workspace" />
             </>
           )}
         </CardContent>

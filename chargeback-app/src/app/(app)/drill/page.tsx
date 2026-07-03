@@ -7,6 +7,8 @@ import { PAGE_HELP } from "@/lib/kpi-help";
 import { ComputeChip, EmptyState, MethodBadge, PageTitle } from "@/components/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TablePagination } from "@/components/table-pagination";
+import { paginate } from "@/lib/paginate";
 import { MonthModePicker } from "@/components/month-picker";
 import { ModeBanner } from "@/components/mode-banner";
 import { ReportFooter } from "@/components/report-footer";
@@ -122,7 +124,7 @@ async function Drill({ searchParams }: { searchParams: SearchParams }) {
 
         {product && (
           <Suspense fallback={<TableCardSkeleton rows={8} />}>
-            <DetailPanel month={month} product={product} />
+            <DetailPanel month={month} product={product} page={param(sp.page)} />
           </Suspense>
         )}
       </div>
@@ -197,8 +199,17 @@ async function ProductsPanel({
   );
 }
 
-async function DetailPanel({ month, product }: { month: string; product: string }) {
+async function DetailPanel({
+  month,
+  product,
+  page,
+}: {
+  month: string;
+  product: string;
+  page?: string;
+}) {
   const detail = await getProductDetail(month, product);
+  const { rows: pageRows, ...paged } = paginate(detail, page);
   return (
     <Card>
       <CardHeader>
@@ -226,7 +237,7 @@ async function DetailPanel({ month, product }: { month: string; product: string 
               </TableRow>
             </TableHeader>
             <TableBody>
-              {detail.map((d, i) => (
+              {pageRows.map((d, i) => (
                 <TableRow key={i}>
                   <TableCell>{d.usage_category}</TableCell>
                   <TableCell>{d.job_name ?? d.warehouse_id ?? "—"}</TableCell>
@@ -244,6 +255,7 @@ async function DetailPanel({ month, product }: { month: string; product: string 
             </TableBody>
           </Table>
         )}
+        <TablePagination {...paged} noun="detail row" />
       </CardContent>
     </Card>
   );

@@ -22,8 +22,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TablePagination } from "@/components/table-pagination";
 import { fmtDbu, fmtMoney } from "@/lib/format";
 import { isServicePrincipal } from "@/lib/identity";
+import { paginate } from "@/lib/paginate";
 
 /**
  * Display-name field for SPN rows: queries Entra ID for the service
@@ -32,7 +34,7 @@ import { isServicePrincipal } from "@/lib/identity";
  * convenience, not a source of record — and on miss/failure the field simply
  * behaves like the plain manual input.
  */
-function SpNameField({ runnerId }: { runnerId: string }) {
+export function SpNameField({ runnerId }: { runnerId: string }) {
   const id = useId();
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<"pending" | "done" | { error: string }>("pending");
@@ -85,6 +87,8 @@ function SpNameField({ runnerId }: { runnerId: string }) {
 export default function UnmappedRunnersBody({ deskOptions }: { deskOptions: string[] }) {
   const [result, setResult] = useState<UnmappedRunnersResult | null>(null);
   const [scanId, setScanId] = useState(0);
+  // panel is lazy-loaded client-side, so its page lives in state, not the URL
+  const [page, setPage] = useState(1);
 
   // result is reset to null (→ skeleton) in the re-scan handlers, not here —
   // the effect only kicks off the fetch and stores its outcome.
@@ -100,6 +104,7 @@ export default function UnmappedRunnersBody({ deskOptions }: { deskOptions: stri
 
   const rescan = () => {
     setResult(null);
+    setPage(1);
     setScanId((n) => n + 1);
   };
 
@@ -120,6 +125,7 @@ export default function UnmappedRunnersBody({ deskOptions }: { deskOptions: stri
 
   const total = result.rows.reduce((s, r) => s + r.cost_30d, 0);
   const spCount = result.rows.filter((r) => isServicePrincipal(r.runner)).length;
+  const { rows: pageRows, ...paged } = paginate(result.rows, String(page));
 
   return (
     <div className="space-y-3">
@@ -159,7 +165,7 @@ export default function UnmappedRunnersBody({ deskOptions }: { deskOptions: stri
             </TableRow>
           </TableHeader>
           <TableBody>
-            {result.rows.map((r) => (
+            {pageRows.map((r) => (
               <TableRow key={r.runner}>
                 <TableCell className="font-mono text-xs">
                   {r.runner}
@@ -205,6 +211,7 @@ export default function UnmappedRunnersBody({ deskOptions }: { deskOptions: stri
           </TableBody>
         </Table>
       )}
+      <TablePagination {...paged} noun="runner" onPageChange={setPage} />
 
       <p className="text-xs text-muted-foreground">
         Scanned at {new Date(result.fetchedAt).toLocaleTimeString()} · trailing 30 days · all

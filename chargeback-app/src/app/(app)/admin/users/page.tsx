@@ -9,6 +9,7 @@ import {
   upsertUserAction,
 } from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
+import { paginate } from "@/lib/paginate";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { ArrowRightLeft, Plus, Trash2 } from "lucide-react";
 import { ActionForm, DatalistField, Field } from "@/components/action-form";
@@ -35,6 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TablePagination } from "@/components/table-pagination";
 import { TablePageSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Users" };
@@ -71,6 +73,7 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
         .toLowerCase()
         .includes(q),
   );
+  const { rows: pageRows, ...paged } = paginate(shown, param(sp.page));
 
   return (
     <div>
@@ -126,7 +129,7 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
         </div>
       </div>
 
-      <BulkSelect values={shown.map((r) => r.user_id)}>
+      <BulkSelect values={pageRows.map((r) => r.user_id)}>
       <Card>
         <CardContent>
           {shown.length === 0 ? (
@@ -150,7 +153,7 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {shown.map((r) => (
+                  {pageRows.map((r) => (
                     <TableRow key={r.user_id}>
                       <TableCell>
                         <BulkCheckbox value={r.user_id} label={`Select user ${r.user_name}`} />
@@ -189,6 +192,7 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
                   ))}
                 </TableBody>
               </Table>
+              <TablePagination {...paged} noun="user" />
             </>
           )}
         </CardContent>

@@ -5,6 +5,8 @@ import { KPI_HELP } from "@/lib/kpi-help";
 import { fmtMoney } from "@/lib/format";
 import { EmptyState, FilteredCount, KpiTile, MethodBadge, METHOD_STYLE } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
+import { TablePagination } from "@/components/table-pagination";
+import { paginate } from "@/lib/paginate";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,7 +54,15 @@ interface JobGroup {
 }
 
 /** Read-only audit: how every job with recent cost was attributed. */
-export async function CoverageView({ q, method }: { q: string; method: string }) {
+export async function CoverageView({
+  q,
+  method,
+  page,
+}: {
+  q: string;
+  method: string;
+  page?: string;
+}) {
   const query = q.toLowerCase();
 
   const [attributions, bridges, workspaces] = await Promise.all([
@@ -121,6 +131,7 @@ export async function CoverageView({ q, method }: { q: string; method: string })
   const shown = all.filter(
     (g) => matchesQ(g) && (method === "all" || g.methods.has(method as AttributionMethod)),
   );
+  const { rows: pageGroups, ...paged } = paginate(shown, page);
 
   return (
     <div>
@@ -197,7 +208,7 @@ export async function CoverageView({ q, method }: { q: string; method: string })
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {shown.map((g) => (
+                  {pageGroups.map((g) => (
                     <TableRow key={`${g.workspace_id}|${g.job_id}`}>
                       <TableCell>
                         <p className="text-sm font-medium">{g.job_name ?? "—"}</p>
@@ -254,6 +265,7 @@ export async function CoverageView({ q, method }: { q: string; method: string })
                   ))}
                 </TableBody>
               </Table>
+              <TablePagination {...paged} noun="job" />
             </>
           )}
         </CardContent>
