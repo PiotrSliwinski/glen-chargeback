@@ -7,7 +7,7 @@ import type {
   MonthlyChargebackRow,
   ReconRow,
   RunnerRuleRow,
-  ServerlessGapRow,
+  UnmappedRunnerRow,
   RogueTagRow,
   TagRuleRow,
   UnassignedWarehouseRow,
@@ -43,7 +43,7 @@ export interface MockStore {
   queueUnknownWorkspaces: UnknownWorkspaceRow[];
   queueRogueTags: RogueTagRow[];
   queueUnassignedWarehouses: UnassignedWarehouseRow[];
-  serverlessGap: ServerlessGapRow[];
+  unmappedRunners: UnmappedRunnerRow[];
   jobAttributions: JobAttributionRow[];
   recon: ReconRow[];
 }
@@ -221,6 +221,8 @@ function createStore(): MockStore {
       { runner: "tomasz.lis@example.com", cost_30d: 2510, rows_30d: 64 },
       { runner: "ewa.mazur@example.com", cost_30d: 940, rows_30d: 18 },
       { runner: "9a1b2c3d-svc-legacy", cost_30d: 3300, rows_30d: 31 },
+      // GUID-only service principal on classic job compute — no display name, no serverless spend
+      { runner: "f3b825e2-6a10-4c4d-9d3f-8a51e2c4a0b7", cost_30d: 4150, rows_30d: 58 },
     ],
     queueUnknownWorkspaces: [
       { workspace_id: "4444444444444444", dbus_30d: 5120 },
@@ -233,15 +235,17 @@ function createStore(): MockStore {
       { warehouse_id: "wh-quant-research", workspace_id: "1111111111111111", cost_30d: 6800, idle_share: 0.41 },
       { warehouse_id: "wh-reporting-bi", workspace_id: "1111111111111111", cost_30d: 3900, idle_share: 0.22 },
     ],
-    // Runners with serverless spend (30d) absent from user_mapping — the
-    // serverless attribution gap. Overlaps with queueUnknownRunners where the
-    // runner's spend is serverless; karol has serverless-only spend below the
+    // ALL runners with 30d spend absent from user_mapping, serverless slice
+    // broken out. The f3b825e2… GUID service principal runs classic job
+    // compute only (serverless_cost_30d: 0) — the row the old serverless-only
+    // scan used to hide. karol has serverless-only spend below the
     // unknown-runners queue radar.
-    serverlessGap: [
-      { runner: "tomasz.lis@example.com", serverless_cost_30d: 1890, serverless_dbus_30d: 4130, rows_30d: 41, workspace_count: 2, top_category: "JOBS", last_seen: "2026-07-02" },
-      { runner: "ewa.mazur@example.com", serverless_cost_30d: 940, serverless_dbus_30d: 2050, rows_30d: 18, workspace_count: 1, top_category: "DLT", last_seen: "2026-07-01" },
-      { runner: "9a1b2c3d-svc-legacy", serverless_cost_30d: 610, serverless_dbus_30d: 1380, rows_30d: 9, workspace_count: 1, top_category: "JOBS", last_seen: "2026-06-27" },
-      { runner: "karol.adamski@example.com", serverless_cost_30d: 240, serverless_dbus_30d: 460, rows_30d: 6, workspace_count: 1, top_category: "MODEL_SERVING", last_seen: "2026-06-30" },
+    unmappedRunners: [
+      { runner: "f3b825e2-6a10-4c4d-9d3f-8a51e2c4a0b7", cost_30d: 4150, serverless_cost_30d: 0, dbus_30d: 9200, rows_30d: 58, workspace_count: 1, top_category: "JOBS", last_seen: "2026-07-02" },
+      { runner: "9a1b2c3d-svc-legacy", cost_30d: 3300, serverless_cost_30d: 610, dbus_30d: 7300, rows_30d: 31, workspace_count: 1, top_category: "JOBS", last_seen: "2026-06-27" },
+      { runner: "tomasz.lis@example.com", cost_30d: 2510, serverless_cost_30d: 1890, dbus_30d: 5480, rows_30d: 64, workspace_count: 2, top_category: "JOBS", last_seen: "2026-07-02" },
+      { runner: "ewa.mazur@example.com", cost_30d: 940, serverless_cost_30d: 940, dbus_30d: 2050, rows_30d: 18, workspace_count: 1, top_category: "DLT", last_seen: "2026-07-01" },
+      { runner: "karol.adamski@example.com", cost_30d: 240, serverless_cost_30d: 240, dbus_30d: 460, rows_30d: 6, workspace_count: 1, top_category: "MODEL_SERVING", last_seen: "2026-06-30" },
     ],
     // How every job with 30d cost attributed. pnl-explain (1022) shows two
     // rows on purpose: bridge-mapped early in the window, tagged at source

@@ -10,8 +10,10 @@ import {
 import { param, type SearchParams } from "@/lib/report-params";
 import { Plus } from "lucide-react";
 import { ActionForm, Field } from "@/components/action-form";
+import { EditDialog, RowAction } from "@/components/edit-dialog";
 import { PAGE_HELP } from "@/lib/kpi-help";
-import { EmptyState, KpiTile, PageTitle, StatusChip } from "@/components/ui";
+import { firstOfNextMonth, plural } from "@/lib/format";
+import { EmptyState, FilteredCount, KpiTile, PageTitle, StatusChip } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,42 +81,34 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
       </div>
 
       <div className="no-print mb-6 flex flex-wrap items-start gap-3">
-        <details>
-          <Button asChild>
-            <summary className="cursor-pointer">
+        <EditDialog
+          trigger={
+            <Button>
               <Plus aria-hidden /> Register new product
-            </summary>
-          </Button>
-          <Card className="mt-3 max-w-md">
-            <CardContent>
-              <ActionForm
-                action={createProductAction}
-                submitLabel="Create product"
-                note="The key becomes the tag vocabulary — lowercase, hyphen/underscore, no spaces (e.g. pricing-curves). Valid-from defaults to the first of next month."
-              >
-                <Field label="Product key" name="data_product" placeholder="pricing-curves" />
-                <Field label="Data domain" name="data_domain" placeholder="market-data" />
-                <Field label="Desk (who pays)" name="desk" placeholder="rates" />
-                <Field label="Product owner" name="product_owner" required={false} />
-                <Field label="Valid from" name="valid_from" type="date" defaultValue={firstOfNextMonth()} />
-              </ActionForm>
-            </CardContent>
-          </Card>
-        </details>
+            </Button>
+          }
+          title="Register new product"
+          description="The key becomes the tag vocabulary — lowercase, hyphen/underscore, no spaces (e.g. pricing-curves). Valid-from defaults to the first of next month."
+        >
+          <ActionForm action={createProductAction} submitLabel="Create product" resetOnSuccess>
+            <Field label="Product key" name="data_product" placeholder="pricing-curves" />
+            <Field label="Data domain" name="data_domain" placeholder="market-data" />
+            <Field label="Desk (who pays)" name="desk" placeholder="rates" />
+            <Field label="Product owner" name="product_owner" required={false} />
+            <Field label="Valid from" name="valid_from" type="date" defaultValue={firstOfNextMonth()} />
+          </ActionForm>
+        </EditDialog>
         <div className="ml-auto">
           <TableFilter placeholder="Filter by key, domain, desk, owner…" />
         </div>
       </div>
 
-      {q && (
-        <p className="mb-2 text-xs text-muted-foreground">
-          {entries.length} of {byProduct.size} products shown
-        </p>
-      )}
-      {entries.length === 0 && (
+      {entries.length === 0 ? (
         <EmptyState
           message={byProduct.size === 0 ? "No products registered yet." : "No products match the filter."}
         />
+      ) : (
+        q && <FilteredCount shown={entries.length} total={byProduct.size} noun="product" />
       )}
       <div className="space-y-4">
         {entries.map(([product, versions]) => {
@@ -130,7 +124,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
                     <StatusChip ok={!!active} label={active ? "active" : "retired"} />
                     {refs > 0 && (
                       <Badge variant="secondary" className="bg-muted text-muted-foreground">
-                        referenced by {refs} bridge mapping{refs > 1 ? "s" : ""}
+                        referenced by {refs} job/warehouse {plural(refs, "mapping")}
                       </Badge>
                     )}
                   </div>
@@ -156,53 +150,41 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
 
                 {active && (
                   <div className="no-print mt-3 flex flex-wrap gap-4">
-                    <details>
-                      <summary className="cursor-pointer text-sm font-medium text-indigo-600 hover:underline">
-                        Move to another desk/domain
-                      </summary>
-                      <div className="mt-2 max-w-md rounded-lg border bg-muted/50 p-3">
-                        <ActionForm
-                          action={moveProductAction}
-                          submitLabel="Move product"
-                          note={`Closes the current version at the cutover and starts a new one. History before the cutover keeps desk '${active.desk}'; published months never restate.`}
-                        >
-                          <input type="hidden" name="data_product" value={product} />
-                          <Field label="Cutover date" name="cutover" type="date" defaultValue={firstOfNextMonth()} />
-                          <Field label="New domain" name="new_domain" defaultValue={active.data_domain} />
-                          <Field label="New desk" name="new_desk" defaultValue={active.desk} />
-                          <Field label="Owner" name="new_owner" defaultValue={active.product_owner ?? ""} required={false} />
-                        </ActionForm>
-                      </div>
-                    </details>
+                    <EditDialog
+                      trigger={<RowAction>Move to another desk/domain</RowAction>}
+                      title={`Move ${product}`}
+                      description={`Closes the current version at the cutover and starts a new one. History before the cutover keeps desk '${active.desk}'; published months never restate.`}
+                    >
+                      <ActionForm action={moveProductAction} submitLabel="Move product">
+                        <input type="hidden" name="data_product" value={product} />
+                        <Field label="Cutover date" name="cutover" type="date" defaultValue={firstOfNextMonth()} />
+                        <Field label="New domain" name="new_domain" defaultValue={active.data_domain} />
+                        <Field label="New desk" name="new_desk" defaultValue={active.desk} />
+                        <Field label="Owner" name="new_owner" defaultValue={active.product_owner ?? ""} required={false} />
+                      </ActionForm>
+                    </EditDialog>
 
-                    <details>
-                      <summary className="cursor-pointer text-sm font-medium text-indigo-600 hover:underline">
-                        Edit owner
-                      </summary>
-                      <div className="mt-2 max-w-md rounded-lg border bg-muted/50 p-3">
-                        <ActionForm action={updateOwnerAction} submitLabel="Update owner">
-                          <input type="hidden" name="data_product" value={product} />
-                          <Field label="Product owner" name="product_owner" defaultValue={active.product_owner ?? ""} required={false} />
-                        </ActionForm>
-                      </div>
-                    </details>
+                    <EditDialog
+                      trigger={<RowAction>Edit owner</RowAction>}
+                      title={`Edit owner of ${product}`}
+                      description="Owner is metadata on the current version — no new version is created."
+                    >
+                      <ActionForm action={updateOwnerAction} submitLabel="Update owner">
+                        <input type="hidden" name="data_product" value={product} />
+                        <Field label="Product owner" name="product_owner" defaultValue={active.product_owner ?? ""} required={false} />
+                      </ActionForm>
+                    </EditDialog>
 
-                    <details>
-                      <summary className="cursor-pointer text-sm font-medium text-destructive hover:underline">
-                        Retire
-                      </summary>
-                      <div className="mt-2 max-w-md rounded-lg border border-destructive/30 bg-destructive/10 p-3">
-                        <ActionForm
-                          action={retireProductAction}
-                          submitLabel="Retire product"
-                          danger
-                          note="Blocked while bridge mappings still reference this product. Usage after retirement falls to the work queue. Rows are never deleted."
-                        >
-                          <input type="hidden" name="data_product" value={product} />
-                          <Field label="Retire as of" name="valid_to" type="date" defaultValue={firstOfNextMonth()} />
-                        </ActionForm>
-                      </div>
-                    </details>
+                    <EditDialog
+                      trigger={<RowAction danger>Retire</RowAction>}
+                      title={`Retire ${product}?`}
+                      description="Blocked while bridge mappings still reference this product. Usage after retirement falls to the work queue. Rows are never deleted."
+                    >
+                      <ActionForm action={retireProductAction} submitLabel="Retire product" danger>
+                        <input type="hidden" name="data_product" value={product} />
+                        <Field label="Retire as of" name="valid_to" type="date" defaultValue={firstOfNextMonth()} />
+                      </ActionForm>
+                    </EditDialog>
                   </div>
                 )}
               </CardContent>
@@ -212,11 +194,4 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
       </div>
     </div>
   );
-}
-
-function firstOfNextMonth(): string {
-  const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))
-    .toISOString()
-    .slice(0, 10);
 }

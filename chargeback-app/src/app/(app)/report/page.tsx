@@ -3,7 +3,7 @@ import { Download } from "lucide-react";
 import { getDashboard, getMonthlyRows } from "@/dal/reports";
 import { buildCommentary, getDeskMovement, getProductMovement } from "@/dal/movement";
 import { getDeskScorecard } from "@/dal/desks";
-import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct } from "@/lib/format";
+import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { KPI_HELP, PAGE_HELP, REPORT_SECTION_HELP } from "@/lib/kpi-help";
 import { EmptyState, InfoTip, KpiTile, PageTitle } from "@/components/ui";
@@ -117,16 +117,7 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
               />
               <KpiTile
                 label="MoM change"
-                value={
-                  dashboard.prevMonthCost == null
-                    ? "—"
-                    : `${dashboard.totalCost - dashboard.prevMonthCost >= 0 ? "+" : ""}${fmtMoney(dashboard.totalCost - dashboard.prevMonthCost)}`
-                }
-                hint={
-                  dashboard.prevMonthCost
-                    ? `${(((dashboard.totalCost - dashboard.prevMonthCost) / dashboard.prevMonthCost) * 100).toFixed(1)}% vs ${fmtMonth(monthBefore(month))}`
-                    : undefined
-                }
+                {...momKpi(dashboard.totalCost, dashboard.prevMonthCost, fmtMonth(monthBefore(month)))}
                 info={KPI_HELP.momChange}
               />
               <KpiTile

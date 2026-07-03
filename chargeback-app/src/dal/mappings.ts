@@ -508,7 +508,9 @@ export async function upsertUser(row: UserMappingRow): Promise<void> {
     mockStore.queueUnknownRunners = mockStore.queueUnknownRunners.filter(
       (q) => q.runner !== row.user_id,
     );
-    mockStore.serverlessGap = mockStore.serverlessGap.filter((g) => g.runner !== row.user_id);
+    mockStore.unmappedRunners = mockStore.unmappedRunners.filter(
+      (g) => g.runner !== row.user_id,
+    );
     return;
   }
   await exec(

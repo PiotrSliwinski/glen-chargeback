@@ -2,7 +2,7 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { getDeskDetail, getDeskScorecard, getDeskTrend } from "@/dal/desks";
 import { getDeskInvoice, getMonthlyRows, getPublishedMonths } from "@/dal/reports";
-import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct } from "@/lib/format";
+import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { ComputeChip, EmptyState, KpiTile, MethodBadge, PageTitle } from "@/components/ui";
@@ -144,12 +144,11 @@ async function Desk({
         />
         <KpiTile
           label="MoM change"
-          value={
-            prevPoint == null
-              ? "—"
-              : `${monthTotal - prevPoint.total_cost >= 0 ? "+" : ""}${fmtMoney(monthTotal - prevPoint.total_cost)}`
-          }
-          hint={prevPoint ? `vs ${fmtMonth(prevPoint.billing_month)}` : undefined}
+          {...momKpi(
+            monthTotal,
+            prevPoint?.total_cost ?? null,
+            prevPoint ? fmtMonth(prevPoint.billing_month) : "prior month",
+          )}
           info={KPI_HELP.deskMomChange}
         />
         <KpiTile

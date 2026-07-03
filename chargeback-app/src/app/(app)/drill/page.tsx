@@ -76,6 +76,15 @@ async function Drill({ searchParams }: { searchParams: SearchParams }) {
             <CardTitle>Domains (level 1)</CardTitle>
           </CardHeader>
           <CardContent>
+            {dashboard.byDomain.length === 0 ? (
+              <EmptyState
+                message={
+                  mode === "published" && !publishedMonths.includes(month)
+                    ? "This month has not been published yet — switch to live or pick a published month."
+                    : "No cost recorded for the selected month."
+                }
+              />
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -101,6 +110,7 @@ async function Drill({ searchParams }: { searchParams: SearchParams }) {
                 ))}
               </TableBody>
             </Table>
+            )}
           </CardContent>
         </Card>
 
@@ -166,9 +176,11 @@ async function ProductsPanel({
                     </Link>
                   </TableCell>
                   <TableCell>
+                    {/* the desk view is mode-aware; an invoice link could silently
+                        fall back to a different (published) month in live mode */}
                     <Link
                       className="text-indigo-600 hover:underline"
-                      href={`/invoices/${encodeURIComponent(p.desk)}?month=${month}`}
+                      href={`/desks/${encodeURIComponent(p.desk)}?month=${month}&mode=${mode}`}
                     >
                       {p.desk}
                     </Link>

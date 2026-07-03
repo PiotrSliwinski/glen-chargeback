@@ -68,13 +68,17 @@ export function MonthModePicker({
       />
       <Select value={month} onValueChange={(m) => navigate({ month: m })}>
         <SelectTrigger aria-label="Billing month">
-          <SelectValue />
+          {/* explicit children: the trigger shows just the month — the
+              "✓ published" marker stays in the dropdown list only */}
+          <SelectValue>{fmtMonth(month)}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {months.map((m) => (
             <SelectItem key={m} value={m}>
               {fmtMonth(m)}
-              {publishedMonths.includes(m) ? " ✓ published" : ""}
+              {publishedMonths.includes(m) && (
+                <span className="text-xs text-muted-foreground">✓ published</span>
+              )}
             </SelectItem>
           ))}
         </SelectContent>

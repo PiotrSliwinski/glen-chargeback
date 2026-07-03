@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useId } from "react";
+import { useActionState, useEffect, useId, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +18,7 @@ export function ActionForm({
   submitLabel,
   danger = false,
   note,
+  resetOnSuccess = false,
   children,
   className,
 }: {
@@ -25,15 +26,21 @@ export function ActionForm({
   submitLabel: string;
   danger?: boolean;
   note?: string;
+  /** For "add another" forms: clear the fields once the action succeeds, so a stray second submit can't re-post the same row. Leave off for edit forms, whose defaults are meaningful. */
+  resetOnSuccess?: boolean;
   children?: React.ReactNode;
   className?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, null);
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (resetOnSuccess && state?.ok) formRef.current?.reset();
+  }, [state, resetOnSuccess]);
   return (
     // whitespace-normal: these forms often render inside table cells, which
     // set whitespace-nowrap — without the reset, notes and status messages
     // refuse to wrap and blow out the table width.
-    <form action={formAction} className={cn("space-y-3 whitespace-normal", className)}>
+    <form ref={formRef} action={formAction} className={cn("space-y-3 whitespace-normal", className)}>
       {children}
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
       <Button type="submit" disabled={pending} variant={danger ? "destructive" : "default"}>

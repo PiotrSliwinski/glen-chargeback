@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
 import { query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
 import { zDate, zId, zNum, zStr, zStrOrNull } from "@/dal/parse";
-import type { JobAttributionRow, ServerlessGapRow } from "@/dal/types";
+import type { JobAttributionRow, UnmappedRunnerRow } from "@/dal/types";
 
 /**
  * Attribution-transparency reads on top of cost_fact: who is missing from the
@@ -13,42 +13,45 @@ import type { JobAttributionRow, ServerlessGapRow } from "@/dal/types";
  */
 
 /**
- * Runners with serverless spend in the trailing 30 days who are NOT in
- * user_mapping. Serverless compute has no warehouse to classify, so an
- * unmapped runner means the USER rule (waterfall rule 4) can never catch
- * their ad-hoc serverless spend — it falls straight to NONE.
+ * ALL runners with spend in the trailing 30 days who are NOT in user_mapping —
+ * humans and service principals (GUID application ids) alike. No is_serverless
+ * filter: SPNs mostly run classic job compute (is_serverless = false, or NULL
+ * on per-query warehouse rows), so a serverless-only scan silently hides them.
+ * Serverless spend is broken out as a column instead, because that slice is
+ * the one the USER rule (waterfall rule 6) can never catch while unmapped.
  */
-export async function getServerlessGap(): Promise<ServerlessGapRow[]> {
+export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
   "use cache";
   cacheLife("minutes");
   cacheTag("queue");
   cacheTag("mappings");
-  if (env.DAL_MOCK) return [...mockStore.serverlessGap];
+  if (env.DAL_MOCK) return [...mockStore.unmappedRunners];
   return query(
     `SELECT runner,
-            SUM(cost)                    AS serverless_cost_30d,
-            SUM(dbus)                    AS serverless_dbus_30d,
+            SUM(cost)                    AS cost_30d,
+            SUM(CASE WHEN is_serverless THEN cost ELSE 0 END) AS serverless_cost_30d,
+            SUM(dbus)                    AS dbus_30d,
             COUNT(*)                     AS rows_30d,
             COUNT(DISTINCT workspace_id) AS workspace_count,
             MAX_BY(usage_category, cost) AS top_category,
             MAX(usage_date)              AS last_seen
      FROM ${T("cost_fact")}
      WHERE usage_date >= current_date() - INTERVAL 30 DAYS
-       AND is_serverless = true
        AND runner IS NOT NULL
        AND runner <> 'UNALLOCATED_IDLE'
        AND runner NOT IN (SELECT user_id FROM ${T("user_mapping")})
-     GROUP BY runner ORDER BY serverless_cost_30d DESC LIMIT 100`,
+     GROUP BY runner ORDER BY cost_30d DESC LIMIT 100`,
     {},
     z.object({
       runner: zStr,
+      cost_30d: zNum,
       serverless_cost_30d: zNum,
-      serverless_dbus_30d: zNum,
+      dbus_30d: zNum,
       rows_30d: zNum,
       workspace_count: zNum,
       top_category: zStr,
       last_seen: zDate,
-    }) as z.ZodType<ServerlessGapRow>,
+    }) as z.ZodType<UnmappedRunnerRow>,
   );
 }
 

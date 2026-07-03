@@ -50,8 +50,8 @@ async function AdminIndex() {
     },
     {
       href: "/admin/jobs",
-      title: "Job mapping",
-      desc: "Bridge rows, tag rules and runner rules for jobs not tagged at source. Job spend never defaults to the runner's desk.",
+      title: "Job attribution",
+      desc: "Bridge rows, tag rules and runner rules for jobs not tagged at source, plus a 30-day coverage audit of how every job actually attributed. Job spend never defaults to the runner's desk.",
       stat: `${jobs.length} bridge rows · ${tagRules.length} tag rules · ${runnerRules.length} runner rules`,
     },
     {
@@ -71,12 +71,6 @@ async function AdminIndex() {
       title: "Workspaces",
       desc: "workspace_mapping — workspace ID → friendly name.",
       stat: `${workspaces.length} workspaces`,
-    },
-    {
-      href: "/admin/jobs/coverage",
-      title: "Job attribution coverage",
-      desc: "Read-only: how every job with recent cost was mapped — tag at source, bridge row, or nothing.",
-      stat: "trailing 30 days, per-method breakdown",
     },
   ];
 

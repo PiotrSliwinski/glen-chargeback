@@ -122,14 +122,16 @@ export interface UnassignedWarehouseRow {
   idle_share: number;
 }
 
-/** Runner with serverless spend in the trailing 30 days who is absent from user_mapping. */
-export interface ServerlessGapRow {
+/** Runner with spend in the trailing 30 days who is absent from user_mapping. */
+export interface UnmappedRunnerRow {
   runner: string;
+  cost_30d: number;
+  /** slice of cost_30d on serverless compute — the part the USER rule can never catch while unmapped */
   serverless_cost_30d: number;
-  serverless_dbus_30d: number;
+  dbus_30d: number;
   rows_30d: number;
   workspace_count: number;
-  /** usage_category of the runner's single most expensive serverless row */
+  /** usage_category of the runner's single most expensive row */
   top_category: string;
   last_seen: string;
 }

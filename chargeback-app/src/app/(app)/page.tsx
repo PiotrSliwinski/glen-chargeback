@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getDashboard } from "@/dal/reports";
-import { fmtMoney, fmtMonth, fmtPct } from "@/lib/format";
+import { fmtMoney, fmtMonth, fmtPct, momKpi, shiftMonth } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { getSession } from "@/lib/auth";
@@ -27,12 +27,7 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
   const [data, session] = await Promise.all([getDashboard(month, mode), getSession()]);
   const isSteward = atLeast(session?.user.role ?? null, "steward");
   const notPublished = mode === "published" && !publishedMonths.includes(month);
-  const delta =
-    data.prevMonthCost == null ? null : data.totalCost - data.prevMonthCost;
-  const deltaPct =
-    data.prevMonthCost == null || data.prevMonthCost === 0
-      ? null
-      : data.totalCost / data.prevMonthCost - 1;
+  const mom = momKpi(data.totalCost, data.prevMonthCost, fmtMonth(shiftMonth(month, -1)));
 
   return (
     <div>
@@ -61,9 +56,9 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
             <KpiTile label="Total cost" value={fmtMoney(data.totalCost)} info={KPI_HELP.totalCost} />
             <KpiTile
               label="MoM change"
-              value={delta == null ? "—" : `${delta >= 0 ? "+" : ""}${fmtMoney(delta)}`}
-              hint={deltaPct == null ? undefined : `${(deltaPct * 100).toFixed(1)}% vs prior month (live)`}
-              tone={delta != null && delta > 0 ? "warn" : "default"}
+              value={mom.value}
+              hint={mom.hint}
+              tone={mom.tone}
               info={KPI_HELP.momChange}
             />
             <KpiTile

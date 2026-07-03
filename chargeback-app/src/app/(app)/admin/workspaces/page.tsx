@@ -3,12 +3,26 @@ import Link from "next/link";
 import { requirePageRole } from "@/lib/guards";
 import { listJobMappings, listWorkspaces } from "@/dal/mappings";
 import { getUnknownWorkspaces } from "@/dal/workQueue";
-import { deleteWorkspaceAction, upsertWorkspaceAction } from "@/actions/mappings";
+import {
+  bulkDeleteWorkspacesAction,
+  deleteWorkspaceAction,
+  upsertWorkspaceAction,
+} from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { ActionForm, Field } from "@/components/action-form";
+import { EditDialog, RowAction } from "@/components/edit-dialog";
+import {
+  BulkActionBar,
+  BulkAppliesTo,
+  BulkCheckbox,
+  BulkCheckboxAll,
+  BulkSelect,
+  BulkSelectedInputs,
+} from "@/components/bulk-select";
 import { PAGE_HELP } from "@/lib/kpi-help";
-import { EmptyState, KpiTile, PageTitle } from "@/components/ui";
+import { plural } from "@/lib/format";
+import { EmptyState, FilteredCount, KpiTile, PageTitle, QueueHintCard } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,7 +76,7 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
         <KpiTile
           label="Referenced by job bridge"
           value={String(referencedCount)}
-          hint={`${jobMappings.length} bridge mapping${jobMappings.length === 1 ? "" : "s"} total`}
+          hint={`${jobMappings.length} bridge ${plural(jobMappings.length, "mapping")} total`}
         />
         <KpiTile
           label="Unknown workspaces 30d"
@@ -70,47 +84,30 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
           hint="billing but not mapped"
           tone={unknownWorkspaces.length > 0 ? "warn" : "good"}
         />
-        <Card size="sm" className="no-print">
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Fix unknowns
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Prefer the{" "}
-              <Link href="/queue" className="font-medium text-indigo-600 hover:underline">
-                work queue
-              </Link>{" "}
-              — workspace IDs there are pre-filled from billing data.
-            </p>
-          </CardContent>
-        </Card>
+        <QueueHintCard>— workspace IDs there are pre-filled from billing data.</QueueHintCard>
       </div>
 
       <div className="no-print mb-6 flex flex-wrap items-start gap-3">
-        <details>
-          <Button asChild>
-            <summary className="cursor-pointer">
+        <EditDialog
+          trigger={
+            <Button>
               <Plus aria-hidden /> Add workspace
-            </summary>
-          </Button>
-          <Card className="mt-3 max-w-md">
-            <CardContent>
-              <ActionForm
-                action={upsertWorkspaceAction}
-                submitLabel="Save workspace"
-                note="Prefer adding workspaces from the Work Queue — there the ID is pre-filled from billing data and cannot be mistyped."
-              >
-                <Field label="Workspace ID" name="workspace_id" />
-                <Field label="Friendly name" name="workspace_name" />
-              </ActionForm>
-            </CardContent>
-          </Card>
-        </details>
+            </Button>
+          }
+          title="Add workspace"
+          description="Prefer adding workspaces from the Work Queue — there the ID is pre-filled from billing data and cannot be mistyped."
+        >
+          <ActionForm action={upsertWorkspaceAction} submitLabel="Save workspace" resetOnSuccess>
+            <Field label="Workspace ID" name="workspace_id" />
+            <Field label="Friendly name" name="workspace_name" />
+          </ActionForm>
+        </EditDialog>
         <div className="ml-auto">
           <TableFilter placeholder="Filter by ID or name…" />
         </div>
       </div>
 
+      <BulkSelect values={shown.map((r) => r.workspace_id)}>
       <Card>
         <CardContent>
           {shown.length === 0 ? (
@@ -121,14 +118,13 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
             />
           ) : (
             <>
-              {q && (
-                <p className="mb-2 text-xs text-muted-foreground">
-                  {shown.length} of {rows.length} workspaces shown
-                </p>
-              )}
+              {q && <FilteredCount shown={shown.length} total={rows.length} noun="workspace" />}
             <Table className="align-top">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <BulkCheckboxAll label="Select all shown workspaces" />
+                  </TableHead>
                   <TableHead>Workspace ID</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Job bridge refs</TableHead>
@@ -138,6 +134,12 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
               <TableBody>
                 {shown.map((r) => (
                   <TableRow key={r.workspace_id}>
+                    <TableCell>
+                      <BulkCheckbox
+                        value={r.workspace_id}
+                        label={`Select workspace ${r.workspace_name}`}
+                      />
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{r.workspace_id}</TableCell>
                     <TableCell>{r.workspace_name}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
@@ -146,7 +148,7 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
                           href={`/admin/jobs?q=${encodeURIComponent(r.workspace_id)}`}
                           className="text-indigo-600 hover:underline"
                         >
-                          {jobRefs(r.workspace_id)} mapping{jobRefs(r.workspace_id) > 1 ? "s" : ""}
+                          {jobRefs(r.workspace_id)} {plural(jobRefs(r.workspace_id), "mapping")}
                         </Link>
                       ) : (
                         "—"
@@ -154,49 +156,42 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-4">
-                        <details>
-                          <summary className="cursor-pointer text-xs font-medium text-indigo-600 hover:underline">
-                            Rename
-                          </summary>
-                          <div className="mt-2 max-w-md rounded-lg border bg-muted/50 p-3">
-                            <ActionForm
-                              action={upsertWorkspaceAction}
-                              submitLabel="Update name"
-                              note="Cosmetic only — the name appears in reports; attribution is unaffected. The ID cannot change: it comes from system.billing.usage."
-                            >
-                              <Field
-                                label="Workspace ID"
-                                name="workspace_id"
-                                defaultValue={r.workspace_id}
-                                readOnly
-                              />
-                              <Field
-                                label="Friendly name"
-                                name="workspace_name"
-                                defaultValue={r.workspace_name}
-                              />
-                            </ActionForm>
-                          </div>
-                        </details>
-                        <details>
-                          <summary className="cursor-pointer text-xs font-medium text-destructive hover:underline">
-                            Remove
-                          </summary>
-                          <div className="mt-2 max-w-md rounded-lg border border-destructive/30 bg-destructive/10 p-3">
-                            <ActionForm
-                              action={deleteWorkspaceAction}
-                              submitLabel="Remove workspace"
-                              danger
-                              note={
-                                jobRefs(r.workspace_id) > 0
-                                  ? `Heads up: ${jobRefs(r.workspace_id)} job mapping(s) reference this workspace — they keep working, but reports will show 'UNMAPPED: ${r.workspace_id}'. Remove only for decommissioned workspaces.`
-                                  : `If this workspace still bills, reports will show 'UNMAPPED: ${r.workspace_id}' and it reappears in the work queue. Remove only for decommissioned workspaces.`
-                              }
-                            >
-                              <input type="hidden" name="workspace_id" value={r.workspace_id} />
-                            </ActionForm>
-                          </div>
-                        </details>
+                        <EditDialog
+                          trigger={<RowAction>Rename</RowAction>}
+                          title={`Rename workspace ${r.workspace_id}`}
+                          description="Cosmetic only — the name appears in reports; attribution is unaffected. The ID cannot change: it comes from system.billing.usage."
+                        >
+                          <ActionForm action={upsertWorkspaceAction} submitLabel="Update name">
+                            <Field
+                              label="Workspace ID"
+                              name="workspace_id"
+                              defaultValue={r.workspace_id}
+                              readOnly
+                            />
+                            <Field
+                              label="Friendly name"
+                              name="workspace_name"
+                              defaultValue={r.workspace_name}
+                            />
+                          </ActionForm>
+                        </EditDialog>
+                        <EditDialog
+                          trigger={<RowAction danger>Remove</RowAction>}
+                          title={`Remove workspace ${r.workspace_name}?`}
+                          description={
+                            jobRefs(r.workspace_id) > 0
+                              ? `Heads up: ${jobRefs(r.workspace_id)} job mapping(s) reference this workspace — they keep working, but reports will show 'UNMAPPED: ${r.workspace_id}'. Remove only for decommissioned workspaces.`
+                              : `If this workspace still bills, reports will show 'UNMAPPED: ${r.workspace_id}' and it reappears in the work queue. Remove only for decommissioned workspaces.`
+                          }
+                        >
+                          <ActionForm
+                            action={deleteWorkspaceAction}
+                            submitLabel="Remove workspace"
+                            danger
+                          >
+                            <input type="hidden" name="workspace_id" value={r.workspace_id} />
+                          </ActionForm>
+                        </EditDialog>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -207,6 +202,24 @@ async function Workspaces({ searchParams }: { searchParams: SearchParams }) {
           )}
         </CardContent>
       </Card>
+
+      <BulkActionBar noun="workspace">
+        <EditDialog
+          trigger={
+            <Button variant="destructive" size="sm">
+              <Trash2 aria-hidden /> Remove selected
+            </Button>
+          }
+          title="Remove selected workspaces?"
+          description="Any that still bill show as 'UNMAPPED: <id>' in reports and reappear in the work queue — spend is never dropped. Remove only decommissioned workspaces."
+        >
+          <ActionForm action={bulkDeleteWorkspacesAction} submitLabel="Remove workspaces" danger>
+            <BulkSelectedInputs name="workspace_ids" />
+            <BulkAppliesTo noun="workspace" />
+          </ActionForm>
+        </EditDialog>
+      </BulkActionBar>
+      </BulkSelect>
     </div>
   );
 }

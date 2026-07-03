@@ -3,7 +3,7 @@
 import { updateTag } from "next/cache";
 import { z } from "zod";
 import type { ActionResult } from "@/lib/action-result";
-import { optionalText, parseForm, runAction } from "@/actions/run";
+import { formList, optionalText, parseForm, runAction } from "@/actions/run";
 import * as dal from "@/dal/mappings";
 import { assertProductExists } from "@/services/productCatalogue";
 import { DomainError } from "@/services/errors";
@@ -224,6 +224,164 @@ export async function deleteWorkspaceAction(
     await dal.deleteWorkspace(input.workspace_id);
     invalidateMappings();
     return `Workspace ${input.workspace_id} removed. If it still bills, it will show as 'UNMAPPED: ${input.workspace_id}' in reports and reappear in the work queue — spend is never dropped.`;
+  });
+}
+
+// ============================== bulk actions ==============================
+// Each bulk action validates the whole batch up front (§7.4(b) still holds:
+// referenced products must exist before commit), then applies row by row —
+// the DAL has no multi-row statements.
+
+/** Bridge-row keys travel as 'workspace_id|job_id' — same shape as React keys. */
+function parseJobKeys(formData: FormData): { workspace_id: string; job_id: string }[] {
+  return formList(formData, "keys").map((key) => {
+    const [workspace_id, job_id, ...rest] = key.split("|");
+    if (!workspace_id || !job_id || rest.length > 0) {
+      throw new DomainError("VALIDATION", `malformed job key '${key}'`);
+    }
+    return { workspace_id, job_id };
+  });
+}
+
+export async function bulkDeleteJobMappingsAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const keys = parseJobKeys(formData);
+    for (const { workspace_id, job_id } of keys) {
+      await dal.deleteJobMapping(workspace_id, job_id);
+    }
+    invalidateMappings();
+    return `${keys.length} bridge mapping${keys.length > 1 ? "s" : ""} removed. Future spend for those jobs attributes via tags — or falls to the work queue.`;
+  });
+}
+
+const BulkRemapJobs = z.object({ data_product: z.string().min(1), note: optionalText });
+
+export async function bulkRemapJobsAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const keys = parseJobKeys(formData);
+    const input = parseForm(formData, BulkRemapJobs);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listJobMappings();
+    const missing = keys.filter(
+      (k) =>
+        !existing.some((j) => j.workspace_id === k.workspace_id && j.job_id === k.job_id),
+    );
+    if (missing.length > 0) {
+      throw new DomainError(
+        "NOT_FOUND",
+        `no bridge row for job${missing.length > 1 ? "s" : ""} ${missing.map((k) => k.job_id).join(", ")}`,
+      );
+    }
+    for (const { workspace_id, job_id } of keys) {
+      await dal.deleteJobMapping(workspace_id, job_id);
+      await dal.insertJobMapping(
+        { workspace_id, job_id, data_product: input.data_product, note: input.note },
+        actor,
+      );
+    }
+    invalidateMappings();
+    return `${keys.length} job${keys.length > 1 ? "s" : ""} re-mapped to '${input.data_product}'. Reminder: the durable fix is tagging at source.`;
+  });
+}
+
+const BulkAssignWarehouses = z.object({
+  mode: z.enum(["shared", "dedicated"]),
+  data_product: optionalText,
+});
+
+export async function bulkAssignWarehousesAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const ids = formList(formData, "warehouse_ids");
+    const input = parseForm(formData, BulkAssignWarehouses);
+    // Same invariant as the single-row action: dedicated ⇔ product present.
+    if (input.mode === "dedicated") {
+      if (!input.data_product) {
+        throw new DomainError("VALIDATION", "a dedicated warehouse needs a data product");
+      }
+      await assertProductExists(input.data_product);
+    }
+    const data_product = input.mode === "dedicated" ? input.data_product : null;
+    for (const warehouse_id of ids) {
+      await dal.upsertWarehouseMapping({
+        warehouse_id,
+        data_product,
+        is_shared: input.mode === "shared",
+      });
+    }
+    invalidateMappings();
+    return input.mode === "dedicated"
+      ? `${ids.length} warehouse${ids.length > 1 ? "s" : ""} dedicated to '${input.data_product}' — including idle cost.`
+      : `${ids.length} warehouse${ids.length > 1 ? "s" : ""} marked shared — allocated per query.`;
+  });
+}
+
+const BulkSetDesk = z.object({ desk: z.string().min(1) });
+
+export async function bulkSetUserDeskAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const ids = formList(formData, "user_ids");
+    const input = parseForm(formData, BulkSetDesk);
+    const existing = new Map((await dal.listUsers()).map((u) => [u.user_id, u]));
+    const missing = ids.filter((id) => !existing.has(id));
+    if (missing.length > 0) {
+      throw new DomainError("NOT_FOUND", `not in user_mapping: ${missing.join(", ")}`);
+    }
+    for (const id of ids) {
+      const row = existing.get(id)!;
+      await dal.upsertUser({ user_id: id, user_name: row.user_name, desk: input.desk });
+    }
+    invalidateMappings();
+    return `${ids.length} runner${ids.length > 1 ? "s" : ""} moved to desk ${input.desk}. Live AD_HOC spend re-routes from now on; published months are unaffected.`;
+  });
+}
+
+export async function bulkDeleteUsersAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const ids = formList(formData, "user_ids");
+    const existing = await dal.listUsers();
+    const missing = ids.filter((id) => !existing.some((u) => u.user_id === id));
+    if (missing.length > 0) {
+      throw new DomainError("NOT_FOUND", `not in user_mapping: ${missing.join(", ")}`);
+    }
+    for (const id of ids) {
+      await dal.deleteUser(id);
+    }
+    invalidateMappings();
+    return `${ids.length} runner${ids.length > 1 ? "s" : ""} removed. Their future ad-hoc spend loses its desk and surfaces in the work queue.`;
+  });
+}
+
+export async function bulkDeleteWorkspacesAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const ids = formList(formData, "workspace_ids");
+    const existing = await dal.listWorkspaces();
+    const missing = ids.filter((id) => !existing.some((w) => w.workspace_id === id));
+    if (missing.length > 0) {
+      throw new DomainError("NOT_FOUND", `not in workspace_mapping: ${missing.join(", ")}`);
+    }
+    for (const id of ids) {
+      await dal.deleteWorkspace(id);
+    }
+    invalidateMappings();
+    return `${ids.length} workspace${ids.length > 1 ? "s" : ""} removed. Any that still bill show as 'UNMAPPED: <id>' and reappear in the work queue — spend is never dropped.`;
   });
 }
 

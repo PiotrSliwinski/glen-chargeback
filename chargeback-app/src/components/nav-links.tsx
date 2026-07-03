@@ -42,7 +42,7 @@ export function NavLinks({ items }: { items: NavItem[] }) {
             variant={active ? "secondary" : "ghost"}
             className={cn("relative", active ? undefined : "text-muted-foreground")}
           >
-            <Link href={item.href}>
+            <Link href={item.href} aria-current={active ? "page" : undefined}>
               {item.label}
               <PendingIndicator />
             </Link>

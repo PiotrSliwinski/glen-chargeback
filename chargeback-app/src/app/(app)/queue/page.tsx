@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requirePageRole } from "@/lib/guards";
-import { fmtMoney, fmtDbu, fmtPct } from "@/lib/format";
+import { firstOfNextMonth, fmtDbu, fmtInt, fmtMoney, fmtPct } from "@/lib/format";
 import { param, type SearchParams } from "@/lib/report-params";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import {
@@ -119,7 +119,7 @@ async function Queue({ searchParams }: { searchParams: SearchParams }) {
             variant={tab === t.key ? "secondary" : "ghost"}
             className={tab === t.key ? undefined : "text-muted-foreground"}
           >
-            <Link href={`/queue?tab=${t.key}`}>
+            <Link href={`/queue?tab=${t.key}`} aria-current={tab === t.key ? "page" : undefined}>
               {t.label}
               <span className="ml-1.5 rounded-full bg-muted px-1.5 text-xs text-muted-foreground">
                 {counts[t.key]}
@@ -167,7 +167,7 @@ async function UntaggedJobsTab({
   productOptions: { value: string; label: string }[];
 }) {
   const rows = await getUntaggedJobs();
-  if (rows.length === 0) return <EmptyState message="No untagged jobs — queue clear. 🎉" />;
+  if (rows.length === 0) return <EmptyState message="No untagged jobs — queue clear." />;
   return (
     <Card>
       <CardContent>
@@ -217,7 +217,7 @@ async function UntaggedJobsTab({
 
 async function UnknownRunnersTab({ deskOptions }: { deskOptions: string[] }) {
   const rows = await getUnknownRunners();
-  if (rows.length === 0) return <EmptyState message="Every spending runner is mapped. 🎉" />;
+  if (rows.length === 0) return <EmptyState message="Every spending runner is mapped." />;
   return (
     <Card>
       <CardContent>
@@ -235,7 +235,7 @@ async function UnknownRunnersTab({ deskOptions }: { deskOptions: string[] }) {
               <TableRow key={r.runner}>
                 <TableCell className="font-mono text-xs">{r.runner}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(r.cost_30d)}</TableCell>
-                <TableCell className="text-right tabular-nums">{r.rows_30d}</TableCell>
+                <TableCell className="text-right tabular-nums">{fmtInt(r.rows_30d)}</TableCell>
                 <TableCell>
                   <RowActions>
                     <ActionForm action={upsertUserAction} submitLabel="Add user">
@@ -258,7 +258,7 @@ async function UnknownRunnersTab({ deskOptions }: { deskOptions: string[] }) {
 
 async function UnknownWorkspacesTab() {
   const rows = await getUnknownWorkspaces();
-  if (rows.length === 0) return <EmptyState message="All billing workspaces are mapped. 🎉" />;
+  if (rows.length === 0) return <EmptyState message="All billing workspaces are mapped." />;
   return (
     <Card>
       <CardContent>
@@ -300,7 +300,7 @@ async function UnknownWorkspacesTab() {
 async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
   const rows = await getRogueTags();
   if (rows.length === 0)
-    return <EmptyState message="Every tag in use matches the product catalogue. 🎉" />;
+    return <EmptyState message="Every tag in use matches the product catalogue." />;
   return (
     <Card>
       <CardContent>
@@ -322,7 +322,7 @@ async function RogueTagsTab({ deskOptions }: { deskOptions: string[] }) {
               <TableRow key={r.raw_tag_data_product}>
                 <TableCell className="font-mono text-xs">{r.raw_tag_data_product}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(r.cost_30d)}</TableCell>
-                <TableCell className="text-right tabular-nums">{r.rows_30d}</TableCell>
+                <TableCell className="text-right tabular-nums">{fmtInt(r.rows_30d)}</TableCell>
                 <TableCell>
                   <RowActions>
                     <ActionForm
@@ -363,7 +363,7 @@ async function UnassignedWarehousesTab({
   productOptions: { value: string; label: string }[];
 }) {
   const rows = await getUnassignedWarehouses();
-  if (rows.length === 0) return <EmptyState message="No dedicated-warehouse candidates. 🎉" />;
+  if (rows.length === 0) return <EmptyState message="No dedicated-warehouse candidates." />;
   return (
     <Card>
       <CardContent>
@@ -422,11 +422,4 @@ async function UnassignedWarehousesTab({
       </CardContent>
     </Card>
   );
-}
-
-function firstOfNextMonth(): string {
-  const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))
-    .toISOString()
-    .slice(0, 10);
 }

@@ -46,6 +46,21 @@ export function parseForm<T>(formData: FormData, schema: z.ZodType<T>): T {
   return schema.parse(raw);
 }
 
+/**
+ * Multi-value field (bulk selection checkboxes / hidden inputs). parseForm
+ * collapses repeated keys to the last value, so bulk actions read their key
+ * list through this instead.
+ */
+export function formList(formData: FormData, name: string): string[] {
+  const values = formData
+    .getAll(name)
+    .filter((v): v is string => typeof v === "string" && v.trim() !== "");
+  if (values.length === 0) {
+    throw new DomainError("VALIDATION", "select at least one row first");
+  }
+  return [...new Set(values)];
+}
+
 /** empty string → null (optional text inputs) */
 export const optionalText = z
   .string()

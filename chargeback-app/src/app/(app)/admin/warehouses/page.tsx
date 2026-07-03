@@ -3,12 +3,22 @@ import Link from "next/link";
 import { requirePageRole } from "@/lib/guards";
 import { listActiveProducts, listWarehouseMappings } from "@/dal/mappings";
 import { getUnassignedWarehouses } from "@/dal/workQueue";
-import { assignWarehouseAction } from "@/actions/mappings";
+import { assignWarehouseAction, bulkAssignWarehousesAction } from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
-import { Plus } from "lucide-react";
+import { Plus, Tags } from "lucide-react";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
+import { EditDialog, RowAction } from "@/components/edit-dialog";
+import {
+  BulkActionBar,
+  BulkAppliesTo,
+  BulkCheckbox,
+  BulkCheckboxAll,
+  BulkSelect,
+  BulkSelectedInputs,
+} from "@/components/bulk-select";
 import { PAGE_HELP } from "@/lib/kpi-help";
-import { EmptyState, KpiTile, PageTitle, StatusChip } from "@/components/ui";
+import { plural } from "@/lib/format";
+import { EmptyState, FilteredCount, KpiTile, PageTitle, StatusChip } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -82,7 +92,7 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
 
       {candidates.length > 0 && (
         <p className="no-print mb-4 text-sm text-muted-foreground">
-          {candidates.length} warehouse{candidates.length > 1 ? "s" : ""} with meaningful idle cost
+          {candidates.length} {plural(candidates.length, "warehouse")} with meaningful idle cost
           await classification in the{" "}
           <Link href="/queue" className="font-medium text-indigo-600 hover:underline">
             work queue
@@ -92,23 +102,23 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
       )}
 
       <div className="no-print mb-6 flex flex-wrap items-start gap-3">
-        <details>
-          <Button asChild>
-            <summary className="cursor-pointer">
+        <EditDialog
+          trigger={
+            <Button>
               <Plus aria-hidden /> Classify a warehouse
-            </summary>
-          </Button>
-          <Card className="mt-3 max-w-md">
-            <CardContent>
-              <WarehouseForm productOptions={productOptions} />
-            </CardContent>
-          </Card>
-        </details>
+            </Button>
+          }
+          title="Classify a warehouse"
+          description="A dedicated warehouse requires a product; a shared one must not have one — invalid combinations are rejected."
+        >
+          <WarehouseForm productOptions={productOptions} />
+        </EditDialog>
         <div className="ml-auto">
           <TableFilter placeholder="Filter by warehouse, product, class…" />
         </div>
       </div>
 
+      <BulkSelect values={shown.map((r) => r.warehouse_id)}>
       <Card>
         <CardContent>
           {shown.length === 0 ? (
@@ -121,14 +131,13 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
             />
           ) : (
             <>
-              {q && (
-                <p className="mb-2 text-xs text-muted-foreground">
-                  {shown.length} of {rows.length} warehouses shown
-                </p>
-              )}
+              {q && <FilteredCount shown={shown.length} total={rows.length} noun="warehouse" />}
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <BulkCheckboxAll label="Select all shown warehouses" />
+                  </TableHead>
                   <TableHead>Warehouse</TableHead>
                   <TableHead>Classification</TableHead>
                   <TableHead>Product</TableHead>
@@ -140,24 +149,29 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
               <TableBody>
                 {shown.map((r) => (
                   <TableRow key={r.warehouse_id}>
+                    <TableCell>
+                      <BulkCheckbox
+                        value={r.warehouse_id}
+                        label={`Select warehouse ${r.warehouse_id}`}
+                      />
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{r.warehouse_id}</TableCell>
                     <TableCell>
                       <StatusChip ok={r.is_shared} label={r.is_shared ? "shared" : "dedicated"} />
                     </TableCell>
                     <TableCell className="font-mono text-xs">{r.data_product ?? "—"}</TableCell>
                     <TableCell>
-                      <details>
-                        <summary className="cursor-pointer text-xs font-medium text-indigo-600 hover:underline">
-                          Reclassify
-                        </summary>
-                        <div className="mt-2 max-w-md rounded-lg border bg-muted/50 p-3">
-                          <WarehouseForm
-                            productOptions={productOptions}
-                            warehouseId={r.warehouse_id}
-                            defaultMode={r.is_shared ? "shared" : "dedicated"}
-                          />
-                        </div>
-                      </details>
+                      <EditDialog
+                        trigger={<RowAction>Reclassify</RowAction>}
+                        title={`Reclassify warehouse ${r.warehouse_id}`}
+                        description="A dedicated warehouse requires a product; a shared one must not have one — invalid combinations are rejected."
+                      >
+                        <WarehouseForm
+                          productOptions={productOptions}
+                          warehouseId={r.warehouse_id}
+                          defaultMode={r.is_shared ? "shared" : "dedicated"}
+                        />
+                      </EditDialog>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -167,6 +181,39 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
           )}
         </CardContent>
       </Card>
+
+      <BulkActionBar noun="warehouse">
+        <EditDialog
+          trigger={
+            <Button variant="outline" size="sm">
+              <Tags aria-hidden /> Reclassify selected
+            </Button>
+          }
+          title="Reclassify selected warehouses"
+          description="Applies one classification to every selected warehouse. Dedicated requires a product (idle cost included); shared allocates per query."
+        >
+          <ActionForm action={bulkAssignWarehousesAction} submitLabel="Apply to selected">
+            <BulkSelectedInputs name="warehouse_ids" />
+            <SelectField
+              label="Classification"
+              name="mode"
+              defaultValue="shared"
+              options={[
+                { value: "shared", label: "Shared — allocate per query" },
+                { value: "dedicated", label: "Dedicated — whole warehouse to one product" },
+              ]}
+            />
+            <SelectField
+              label="Data product (dedicated only)"
+              name="data_product"
+              required={false}
+              options={productOptions}
+            />
+            <BulkAppliesTo noun="warehouse" />
+          </ActionForm>
+        </EditDialog>
+      </BulkActionBar>
+      </BulkSelect>
     </div>
   );
 }
@@ -181,11 +228,7 @@ function WarehouseForm({
   defaultMode?: "shared" | "dedicated";
 }) {
   return (
-    <ActionForm
-      action={assignWarehouseAction}
-      submitLabel="Save"
-      note="A dedicated warehouse requires a product; a shared one must not have one — invalid combinations are rejected."
-    >
+    <ActionForm action={assignWarehouseAction} submitLabel="Save">
       {warehouseId ? (
         <Field label="Warehouse ID" name="warehouse_id" defaultValue={warehouseId} readOnly />
       ) : (

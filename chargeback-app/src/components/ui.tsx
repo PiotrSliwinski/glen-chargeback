@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { AttributionMethod } from "@/dal/types";
 
@@ -98,7 +100,7 @@ export function KpiTile({
             "text-foreground": tone === "default",
             "text-emerald-600": tone === "good",
             "text-destructive": tone === "bad",
-            "text-amber-600": tone === "warn",
+            "text-amber-700": tone === "warn",
           })}
         >
           {value}
@@ -154,6 +156,43 @@ export function StatusChip({ ok, label }: { ok: boolean; label: string }) {
       <span className={cn("size-1.5 rounded-full", ok ? "bg-emerald-500" : "bg-red-500")} />
       {label}
     </Badge>
+  );
+}
+
+/** "Fix unknowns via the work queue" pointer card shared by the admin mapping pages. */
+export function QueueHintCard({ children }: { children: React.ReactNode }) {
+  return (
+    <Card size="sm" className="no-print">
+      <CardContent>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Fix unknowns
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Prefer the{" "}
+          <Link href="/queue" className="font-medium text-indigo-600 hover:underline">
+            work queue
+          </Link>{" "}
+          {children}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** "N of M nouns shown" line above a filtered table — one voice everywhere. */
+export function FilteredCount({
+  shown,
+  total,
+  noun,
+}: {
+  shown: number;
+  total: number;
+  noun: string;
+}) {
+  return (
+    <p className="mb-2 text-xs text-muted-foreground">
+      {shown} of {total} {plural(total, noun)} shown
+    </p>
   );
 }
 

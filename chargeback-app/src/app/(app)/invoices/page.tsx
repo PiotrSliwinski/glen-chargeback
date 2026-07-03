@@ -61,7 +61,9 @@ async function Invoices({ searchParams }: { searchParams: SearchParams }) {
               variant={m === month ? "secondary" : "ghost"}
               className={m === month ? undefined : "text-muted-foreground"}
             >
-              <Link href={`/invoices?month=${m}`}>{fmtMonth(m)}</Link>
+              <Link href={`/invoices?month=${m}`} aria-current={m === month ? "page" : undefined}>
+                {fmtMonth(m)}
+              </Link>
             </Button>
           ))}
         </div>
@@ -69,6 +71,9 @@ async function Invoices({ searchParams }: { searchParams: SearchParams }) {
 
       <Card>
         <CardContent>
+          {desks.length === 0 ? (
+            <EmptyState message="No desk cost in this published month." />
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -96,6 +101,7 @@ async function Invoices({ searchParams }: { searchParams: SearchParams }) {
               ))}
             </TableBody>
           </Table>
+          )}
         </CardContent>
       </Card>
     </div>
