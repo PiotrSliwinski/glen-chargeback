@@ -13,10 +13,44 @@ function invalidateCatalogue() {
   updateTag("health");
 }
 
+/**
+ * Desk split as posted by <SplitEditor>: a JSON array of { desk, pct }
+ * rows, pct in percent. Semantic rules (sum = 100%, unique desks) are
+ * enforced in the service layer.
+ */
+const splitsField = z
+  .string()
+  .transform((v, ctx): { desk: string; pct: number }[] => {
+    try {
+      const parsed: unknown = JSON.parse(v);
+      if (
+        Array.isArray(parsed) &&
+        parsed.every(
+          (r) =>
+            r != null &&
+            typeof r === "object" &&
+            typeof (r as { desk?: unknown }).desk === "string" &&
+            typeof (r as { pct?: unknown }).pct === "number",
+        )
+      ) {
+        return parsed as { desk: string; pct: number }[];
+      }
+    } catch {
+      // fall through to the issue below
+    }
+    ctx.addIssue({ code: "custom", message: "expected desk split rows" });
+    return z.NEVER;
+  });
+
+function describeSplits(splits: { desk: string; pct: number }[]): string {
+  if (splits.length === 1) return `desk ${splits[0].desk}`;
+  return `desks ${splits.map((s) => `${s.desk} (${s.pct}%)`).join(" + ")}`;
+}
+
 const CreateProduct = z.object({
   data_product: z.string().min(1),
   data_domain: z.string().min(1),
-  desk: z.string().min(1),
+  splits: splitsField,
   product_owner: optionalText,
   valid_from: dateString,
 });
@@ -29,7 +63,7 @@ export async function createProductAction(
     const input = parseForm(formData, CreateProduct);
     await catalogue.createProduct(input, actor);
     invalidateCatalogue();
-    return `Product '${input.data_product}' registered (valid from ${input.valid_from}).`;
+    return `Product '${input.data_product}' registered on ${describeSplits(input.splits)} (valid from ${input.valid_from}).`;
   });
 }
 
@@ -37,7 +71,7 @@ const MoveProduct = z.object({
   data_product: z.string().min(1),
   cutover: dateString,
   new_domain: z.string().min(1),
-  new_desk: z.string().min(1),
+  splits: splitsField,
   new_owner: optionalText,
 });
 
@@ -49,7 +83,7 @@ export async function moveProductAction(
     const input = parseForm(formData, MoveProduct);
     await catalogue.moveProduct(input, actor);
     invalidateCatalogue();
-    return `'${input.data_product}' moves to ${input.new_desk}/${input.new_domain} on ${input.cutover}. History before the cutover keeps the old desk; published months are unaffected.`;
+    return `'${input.data_product}' moves to ${describeSplits(input.splits)} in ${input.new_domain} on ${input.cutover}. History before the cutover keeps the old desk split; published months are unaffected.`;
   });
 }
 

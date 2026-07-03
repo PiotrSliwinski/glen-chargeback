@@ -152,11 +152,18 @@ export interface JobAttributionRow {
 
 // ---------- mapping tables ----------
 
+/**
+ * One catalogue row per product PER DESK per validity window. A product
+ * billed to a single desk has one row with cost_split_pct = 1; a product
+ * shared between desks has one row per desk, shares summing to 1.
+ */
 export interface DataProductRow {
   data_product: string;
   data_domain: string;
   desk: string;
   product_owner: string | null;
+  /** this desk's share of the product's cost, 0–1 */
+  cost_split_pct: number;
   valid_from: string;
   valid_to: string | null;
   mapped_by: string | null;
@@ -222,6 +229,7 @@ export interface ReconRow {
 export interface IntegrityViolation {
   check:
     | "overlap"
+    | "split_sum"
     | "orphan_product"
     | "duplicate_bridge_key"
     | "duplicate_rule_key"

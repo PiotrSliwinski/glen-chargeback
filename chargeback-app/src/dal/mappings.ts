@@ -3,7 +3,7 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { exec, query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
-import { zDate, zDateOrNull, zId, zStr, zStrOrNull } from "@/dal/parse";
+import { zDate, zDateOrNull, zId, zNum, zStr, zStrOrNull } from "@/dal/parse";
 import type {
   DataProductRow,
   JobMappingRow,
@@ -34,16 +34,18 @@ export async function listCatalogue(): Promise<DataProductRow[]> {
     );
   }
   return query(
-    `SELECT data_product, data_domain, desk, product_owner, valid_from, valid_to,
+    `SELECT data_product, data_domain, desk, product_owner,
+            COALESCE(cost_split_pct, 1.0) AS cost_split_pct, valid_from, valid_to,
             mapped_by, mapped_at
      FROM ${T("data_product_mapping")}
-     ORDER BY data_product, valid_from DESC`,
+     ORDER BY data_product, valid_from DESC, cost_split_pct DESC, desk`,
     {},
     z.object({
       data_product: zStr,
       data_domain: zStr,
       desk: zStr,
       product_owner: zStrOrNull,
+      cost_split_pct: zNum,
       valid_from: zDate,
       valid_to: zDateOrNull,
       mapped_by: zStrOrNull,
@@ -163,66 +165,113 @@ export async function listWorkspaces(): Promise<WorkspaceMappingRow[]> {
 
 const now = () => new Date().toISOString();
 
+/** One desk's share of a product; shares across a window sum to 1. */
+export interface DeskShare {
+  desk: string;
+  cost_split_pct: number;
+}
+
 export async function insertProduct(
-  row: Pick<DataProductRow, "data_product" | "data_domain" | "desk" | "product_owner" | "valid_from">,
+  row: Pick<DataProductRow, "data_product" | "data_domain" | "product_owner" | "valid_from"> & {
+    splits: DeskShare[];
+  },
   actor: string,
 ): Promise<void> {
+  const { splits, ...shared } = row;
   if (env.DAL_MOCK) {
-    mockStore.catalogue.push({ ...row, valid_to: null, mapped_by: actor, mapped_at: now() });
+    for (const s of splits) {
+      mockStore.catalogue.push({
+        ...shared,
+        desk: s.desk,
+        cost_split_pct: s.cost_split_pct,
+        valid_to: null,
+        mapped_by: actor,
+        mapped_at: now(),
+      });
+    }
     // registering a product clears a matching rogue-tag queue entry
     mockStore.queueRogueTags = mockStore.queueRogueTags.filter(
       (r) => r.raw_tag_data_product !== row.data_product,
     );
     return;
   }
+  // one INSERT for all desk shares — Databricks guarantees per-statement atomicity only
+  const values = splits
+    .map((_, i) => `(:data_product, :data_domain, :desk_${i}, :product_owner, :pct_${i},
+             :valid_from, NULL, :actor, current_timestamp())`)
+    .join(",\n            ");
+  const splitParams = Object.fromEntries(
+    splits.flatMap((s, i) => [
+      [`desk_${i}`, s.desk],
+      [`pct_${i}`, s.cost_split_pct],
+    ]),
+  );
   await exec(
     `INSERT INTO ${T("data_product_mapping")}
        (data_product, data_domain, desk, product_owner, cost_split_pct,
         valid_from, valid_to, mapped_by, mapped_at)
-     VALUES (:data_product, :data_domain, :desk, :product_owner, 1.0,
-             :valid_from, NULL, :actor, current_timestamp())`,
-    { ...row, actor },
+     VALUES ${values}`,
+    { ...shared, ...splitParams, actor },
   );
 }
 
 /**
- * Move a product to a new desk/domain: close the active row AND insert the
- * successor in ONE atomic MERGE (Databricks has single-statement atomicity
- * only — see implementation guide §8.1). Exclusive-join semantics: old row
- * valid_to = cutover, new row valid_from = cutover.
+ * Move a product to a new domain and/or desk split: close ALL active rows
+ * (one per desk) AND insert the successor rows in ONE atomic MERGE
+ * (Databricks has single-statement atomicity only — see implementation
+ * guide §8.1). Exclusive-join semantics: old rows valid_to = cutover, new
+ * rows valid_from = cutover.
  */
 export async function moveProduct(
   args: {
     data_product: string;
     cutover: string;
     new_domain: string;
-    new_desk: string;
     new_owner: string | null;
+    splits: DeskShare[];
   },
   actor: string,
 ): Promise<void> {
+  const { splits, ...rest } = args;
   if (env.DAL_MOCK) {
-    const active = mockStore.catalogue.find(
-      (r) => r.data_product === args.data_product && r.valid_to == null,
-    );
-    if (active) active.valid_to = args.cutover;
-    mockStore.catalogue.push({
-      data_product: args.data_product,
-      data_domain: args.new_domain,
-      desk: args.new_desk,
-      product_owner: args.new_owner,
-      valid_from: args.cutover,
-      valid_to: null,
-      mapped_by: actor,
-      mapped_at: now(),
-    });
+    for (const r of mockStore.catalogue) {
+      if (r.data_product === args.data_product && r.valid_to == null) {
+        r.valid_to = args.cutover;
+      }
+    }
+    for (const s of splits) {
+      mockStore.catalogue.push({
+        data_product: args.data_product,
+        data_domain: args.new_domain,
+        desk: s.desk,
+        product_owner: args.new_owner,
+        cost_split_pct: s.cost_split_pct,
+        valid_from: args.cutover,
+        valid_to: null,
+        mapped_by: actor,
+        mapped_at: now(),
+      });
+    }
     return;
   }
+  // Source: one 'close' row (matches every active target row) + one 'insert'
+  // row per desk share (never matches → inserted).
+  const insertRows = splits
+    .map((_, i) => `SELECT :data_product, 'insert', :desk_${i}, CAST(:pct_${i} AS DOUBLE)`)
+    .join(" UNION ALL\n       ");
+  const splitParams = Object.fromEntries(
+    splits.flatMap((s, i) => [
+      [`desk_${i}`, s.desk],
+      [`pct_${i}`, s.cost_split_pct],
+    ]),
+  );
   await exec(
     `MERGE INTO ${T("data_product_mapping")} t
      USING (
-       SELECT :data_product AS data_product, 'close' AS action UNION ALL
-       SELECT :data_product, 'insert'
+       SELECT :data_product AS data_product, 'close' AS action,
+              CAST(NULL AS STRING) AS new_desk, CAST(NULL AS DOUBLE) AS new_pct
+       UNION ALL
+       ${insertRows}
      ) s
      ON  t.data_product = s.data_product
      AND s.action = 'close'
@@ -232,9 +281,9 @@ export async function moveProduct(
      WHEN NOT MATCHED AND s.action = 'insert' THEN
        INSERT (data_product, data_domain, desk, product_owner, cost_split_pct,
                valid_from, valid_to, mapped_by, mapped_at)
-       VALUES (:data_product, :new_domain, :new_desk, :new_owner, 1.0,
+       VALUES (:data_product, :new_domain, s.new_desk, :new_owner, s.new_pct,
                :cutover, NULL, :actor, current_timestamp())`,
-    { ...args, actor },
+    { ...rest, ...splitParams, actor },
   );
 }
 
@@ -244,13 +293,13 @@ export async function retireProduct(
   actor: string,
 ): Promise<void> {
   if (env.DAL_MOCK) {
-    const active = mockStore.catalogue.find(
-      (r) => r.data_product === data_product && r.valid_to == null,
-    );
-    if (active) {
-      active.valid_to = valid_to;
-      active.mapped_by = actor;
-      active.mapped_at = now();
+    // all active rows — a split product retires as a whole
+    for (const r of mockStore.catalogue) {
+      if (r.data_product === data_product && r.valid_to == null) {
+        r.valid_to = valid_to;
+        r.mapped_by = actor;
+        r.mapped_at = now();
+      }
     }
     return;
   }
@@ -269,13 +318,13 @@ export async function updateProductOwner(
   actor: string,
 ): Promise<void> {
   if (env.DAL_MOCK) {
-    const active = mockStore.catalogue.find(
-      (r) => r.data_product === data_product && r.valid_to == null,
-    );
-    if (active) {
-      active.product_owner = product_owner;
-      active.mapped_by = actor;
-      active.mapped_at = now();
+    // all active rows — split rows share the same owner
+    for (const r of mockStore.catalogue) {
+      if (r.data_product === data_product && r.valid_to == null) {
+        r.product_owner = product_owner;
+        r.mapped_by = actor;
+        r.mapped_at = now();
+      }
     }
     return;
   }
@@ -297,9 +346,7 @@ export async function insertJobMapping(
       (q) => !(q.workspace_id === row.workspace_id && q.job_id === row.job_id),
     );
     // cost_fact is a view — the job's NONE rows re-attribute via the new bridge row
-    const desk = mockStore.catalogue.find(
-      (c) => c.data_product === row.data_product && c.valid_to == null,
-    )?.desk;
+    const desk = mockActiveDesk(row.data_product);
     for (const a of mockStore.jobAttributions) {
       if (
         a.workspace_id === row.workspace_id &&
@@ -308,7 +355,7 @@ export async function insertJobMapping(
       ) {
         a.attribution_method = "JOB_MAPPING";
         a.data_product = row.data_product;
-        a.desk = desk ?? "UNALLOCATED";
+        a.desk = desk;
       }
     }
     return;
@@ -347,12 +394,16 @@ export async function deleteJobMapping(workspace_id: string, job_id: string): Pr
   );
 }
 
-/** Desk of a product's active catalogue row — mock re-attribution helper. */
+/**
+ * Desk of a product's active catalogue row — mock re-attribution helper.
+ * For split products the mock's single-desk attribution rows use the
+ * primary desk (largest share).
+ */
 function mockActiveDesk(data_product: string): string {
-  return (
-    mockStore.catalogue.find((c) => c.data_product === data_product && c.valid_to == null)
-      ?.desk ?? "UNALLOCATED"
+  const actives = mockStore.catalogue.filter(
+    (c) => c.data_product === data_product && c.valid_to == null,
   );
+  return actives.sort((a, b) => b.cost_split_pct - a.cost_split_pct)[0]?.desk ?? "UNALLOCATED";
 }
 
 export async function insertTagRule(

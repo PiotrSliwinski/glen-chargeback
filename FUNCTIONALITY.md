@@ -130,17 +130,21 @@ The write surface (Methodology §4). All writes: steward+, zod-validated, audite
 
 ### 5.1 Product catalogue — `/admin/products` (`data_product_mapping`)
 
-The hierarchy backbone: domain and desk always derive from here, never from tags.
+The hierarchy backbone: domain and desk always derive from here, never from tags. A product is
+billed to one desk (one row, `cost_split_pct = 1.0`) or **split across several desks by % share**
+(one active row per desk, shares summing to 100%) — `cost_fact` fans each cost line out per desk
+and scales it by the share.
 
 | Operation | Behavior |
 |---|---|
-| **Register product** | Key format enforced (`^[a-z0-9]+([_-][a-z0-9]+)*$` — the tag vocabulary); duplicate-active and historical-overlap checks; `valid_from` defaults to first of next month |
-| **Move to another desk/domain** | **One atomic `MERGE`** closes the active validity window at the cutover and inserts the successor row — never an in-place UPDATE, so published history never restates. UI states explicitly that history before the cutover keeps the old desk |
-| **Edit owner** | In-place update (owner is metadata, not hierarchy) |
-| **Retire** | Sets `valid_to`; **blocked** while job/warehouse bridge rows or tag/runner rules still reference the product; later usage falls to the work queue |
+| **Register product** | Key format enforced (`^[a-z0-9]+([_-][a-z0-9]+)*$` — the tag vocabulary); duplicate-active and historical-overlap checks; `valid_from` defaults to first of next month. The desk split editor defaults to one desk at 100%; "Add desk" opens a % split (client + server validated: unique desks, shares in (0, 100], total exactly 100%) |
+| **Move / change desk split** | **One atomic `MERGE`** closes ALL active desk rows at the cutover and inserts the successor split — never an in-place UPDATE, so published history never restates. UI states explicitly that history before the cutover keeps the old split |
+| **Edit owner** | In-place update on all active desk rows (owner is metadata, not hierarchy) |
+| **Retire** | Sets `valid_to` on all active desk rows; **blocked** while job/warehouse bridge rows or tag/runner rules still reference the product; later usage falls to the work queue |
 | **Delete** | Not offered, ever (Methodology §10.7.3) |
 
-Each product renders as a card: active version, full **validity history timeline**, bridge-reference
+Each product renders as a card: active version (desk shares shown when split), full **validity
+history timeline** (one line per window, past splits with their shares), bridge-reference
 badges, and the three operation forms. Every write runs the scoped §7.4 checks as a post-condition.
 
 ### 5.2 Job mapping — `/admin/jobs` (`job_product_mapping`, `tag_product_mapping`, `runner_product_mapping`)
@@ -306,9 +310,10 @@ is published). Currency/percent number formats, bold frozen headers, auto-width 
 
 - **Reconciliation table** (Methodology §7.1): billing truth vs `cost_fact` vs report, per month,
   with pass/fail chips against the configurable tolerance (`RECON_TOLERANCE_USD`, default $1).
-- **Integrity checks** (§7.4 a–d): validity overlaps, orphan bridge/rule products, duplicate
-  bridge keys, duplicate/conflicting tag and runner rules, inconsistent warehouse flags — listed
-  as explicit violations or a green all-clear.
+- **Integrity checks** (§7.4 a–e): validity overlaps (per product **and desk** — concurrent rows
+  for different desks are a split, not an overlap), desk splits whose shares don't sum to 100%,
+  orphan bridge/rule products, duplicate bridge keys, duplicate/conflicting tag and runner rules,
+  inconsistent warehouse flags — listed as explicit violations or a green all-clear.
 - **Re-run checks** button (expires the `health` cache tag).
 - **Publication diff**: before publishing, the candidate month's **live desk totals (what the
   snapshot will freeze)** side-by-side with the last published month, with per-desk deltas — the
@@ -405,7 +410,6 @@ Honest statement of what has and hasn't been exercised:
 | Automated tests | Vitest for `services/` (versioning edge cases), Playwright golden paths, RBAC E2E |
 | Audit trail screen | Browsable `mapped_by`/`mapped_at` + Delta history feed |
 | Correction/restatement workflow | Superseding snapshots with later `published_at` — only if finance ever needs restatements |
-| Multi-desk splits | `data_product_split` (Methodology §4.6) — deliberately deferred |
 
 ---
 

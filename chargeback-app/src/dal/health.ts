@@ -72,16 +72,20 @@ export async function getIntegrityViolations(product?: string): Promise<Integrit
   const productFilter = product ? ` AND a.data_product = :product` : "";
   const params: Record<string, string> = product ? { product } : {};
 
+  // overlap is per (product, desk): concurrent rows for DIFFERENT desks are
+  // a legitimate multi-desk split, not a violation
   const overlaps = await query(
-    `SELECT a.data_product, a.valid_from, a.valid_to, b.valid_from AS conflicting_from
+    `SELECT a.data_product, a.desk, a.valid_from, a.valid_to, b.valid_from AS conflicting_from
      FROM ${T("data_product_mapping")} a
      JOIN ${T("data_product_mapping")} b
        ON  a.data_product = b.data_product
+       AND a.desk = b.desk
        AND a.valid_from < b.valid_from
        AND COALESCE(a.valid_to, DATE '9999-12-31') > b.valid_from${productFilter}`,
     params,
     z.object({
       data_product: zStr,
+      desk: zStr,
       valid_from: zDateOrNull,
       valid_to: zDateOrNull,
       conflicting_from: zDateOrNull,
@@ -90,7 +94,25 @@ export async function getIntegrityViolations(product?: string): Promise<Integrit
   for (const o of overlaps) {
     violations.push({
       check: "overlap",
-      detail: `${o.data_product}: window from ${o.valid_from} overlaps window starting ${o.conflicting_from}`,
+      detail: `${o.data_product} (desk ${o.desk}): window from ${o.valid_from} overlaps window starting ${o.conflicting_from}`,
+    });
+  }
+
+  // split shares of one validity window must sum to 1 — otherwise cost_fact
+  // mints or loses money on every row of the product (§7.1 invariant)
+  const splitSums = await query(
+    `SELECT a.data_product, a.valid_from, SUM(COALESCE(a.cost_split_pct, 1.0)) AS split_sum
+     FROM ${T("data_product_mapping")} a
+     ${product ? "WHERE a.data_product = :product" : ""}
+     GROUP BY a.data_product, a.valid_from, a.valid_to
+     HAVING ABS(SUM(COALESCE(a.cost_split_pct, 1.0)) - 1.0) > 0.001`,
+    params,
+    z.object({ data_product: zStr, valid_from: zDateOrNull, split_sum: zNum }),
+  );
+  for (const s of splitSums) {
+    violations.push({
+      check: "split_sum",
+      detail: `${s.data_product}: desk shares of the window starting ${s.valid_from} sum to ${(s.split_sum * 100).toFixed(2)}% — must be 100%`,
     });
   }
 
@@ -176,20 +198,40 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
     ? mockStore.catalogue.filter((r) => r.data_product === product)
     : mockStore.catalogue;
 
-  const byProduct = new Map<string, typeof rows>();
+  // overlap is per (product, desk): concurrent rows for DIFFERENT desks are
+  // a legitimate multi-desk split, not a violation
+  const byProductDesk = new Map<string, typeof rows>();
   for (const r of rows) {
-    byProduct.set(r.data_product, [...(byProduct.get(r.data_product) ?? []), r]);
+    const key = `${r.data_product}|${r.desk}`;
+    byProductDesk.set(key, [...(byProductDesk.get(key) ?? []), r]);
   }
-  for (const [p, versions] of byProduct) {
+  for (const versions of byProductDesk.values()) {
     const sorted = [...versions].sort((a, b) => a.valid_from.localeCompare(b.valid_from));
     for (let i = 0; i < sorted.length - 1; i++) {
       const endsAt = sorted[i].valid_to ?? "9999-12-31";
       if (endsAt > sorted[i + 1].valid_from) {
         violations.push({
           check: "overlap",
-          detail: `${p}: window from ${sorted[i].valid_from} overlaps window starting ${sorted[i + 1].valid_from}`,
+          detail: `${sorted[i].data_product} (desk ${sorted[i].desk}): window from ${sorted[i].valid_from} overlaps window starting ${sorted[i + 1].valid_from}`,
         });
       }
+    }
+  }
+
+  // split shares of one validity window must sum to 1 (§7.1 invariant)
+  const byWindow = new Map<string, { product: string; from: string; sum: number }>();
+  for (const r of rows) {
+    const key = `${r.data_product}|${r.valid_from}|${r.valid_to ?? ""}`;
+    const w = byWindow.get(key) ?? { product: r.data_product, from: r.valid_from, sum: 0 };
+    w.sum += r.cost_split_pct;
+    byWindow.set(key, w);
+  }
+  for (const w of byWindow.values()) {
+    if (Math.abs(w.sum - 1) > 0.001) {
+      violations.push({
+        check: "split_sum",
+        detail: `${w.product}: desk shares of the window starting ${w.from} sum to ${(w.sum * 100).toFixed(2)}% — must be 100%`,
+      });
     }
   }
 

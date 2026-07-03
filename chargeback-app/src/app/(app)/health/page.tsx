@@ -117,8 +117,8 @@ async function Health() {
         <CardContent>
           {report.violations.length === 0 ? (
             <p className="text-sm text-emerald-700">
-              ✓ No overlapping validity windows, orphan bridge products, duplicate bridge keys, or
-              inconsistent warehouse flags.
+              ✓ No overlapping validity windows, desk splits off 100%, orphan bridge products,
+              duplicate bridge keys, or inconsistent warehouse flags.
             </p>
           ) : (
             <ul className="space-y-1">

@@ -53,12 +53,14 @@ function createStore(): MockStore {
 
   const catalogue: DataProductRow[] = [
     // pricing-curves moved desk fx -> rates on 2026-05-01: two validity rows
-    { data_product: "pricing-curves", data_domain: "market-data", desk: "fx", product_owner: "anna.kowalska@example.com", valid_from: "2025-10-01", valid_to: "2026-05-01", mapped_by: "steward@example.com", mapped_at: "2026-04-20T10:00:00Z" },
-    { data_product: "pricing-curves", data_domain: "market-data", desk: "rates", product_owner: "anna.kowalska@example.com", valid_from: "2026-05-01", valid_to: null, mapped_by: "steward@example.com", mapped_at: "2026-04-20T10:00:00Z" },
-    { data_product: "ref-data-ingest", data_domain: "market-data", desk: "rates", product_owner: "jan.nowak@example.com", valid_from: "2025-10-01", valid_to: null, mapped_by: null, mapped_at: null },
-    { data_product: "var-engine", data_domain: "risk", desk: "risk", product_owner: "maria.wisniewska@example.com", valid_from: "2025-10-01", valid_to: null, mapped_by: null, mapped_at: null },
-    { data_product: "stress-testing", data_domain: "risk", desk: "risk", product_owner: "maria.wisniewska@example.com", valid_from: "2026-01-01", valid_to: null, mapped_by: null, mapped_at: null },
-    { data_product: "trade-pnl", data_domain: "pnl", desk: "credit", product_owner: "piotr.zielinski@example.com", valid_from: "2025-10-01", valid_to: null, mapped_by: null, mapped_at: null },
+    { data_product: "pricing-curves", data_domain: "market-data", desk: "fx", product_owner: "anna.kowalska@example.com", cost_split_pct: 1, valid_from: "2025-10-01", valid_to: "2026-05-01", mapped_by: "steward@example.com", mapped_at: "2026-04-20T10:00:00Z" },
+    { data_product: "pricing-curves", data_domain: "market-data", desk: "rates", product_owner: "anna.kowalska@example.com", cost_split_pct: 1, valid_from: "2026-05-01", valid_to: null, mapped_by: "steward@example.com", mapped_at: "2026-04-20T10:00:00Z" },
+    { data_product: "ref-data-ingest", data_domain: "market-data", desk: "rates", product_owner: "jan.nowak@example.com", cost_split_pct: 1, valid_from: "2025-10-01", valid_to: null, mapped_by: null, mapped_at: null },
+    { data_product: "var-engine", data_domain: "risk", desk: "risk", product_owner: "maria.wisniewska@example.com", cost_split_pct: 1, valid_from: "2025-10-01", valid_to: null, mapped_by: null, mapped_at: null },
+    // stress-testing is shared: risk pays 70%, credit 30% — two concurrent rows, one per desk
+    { data_product: "stress-testing", data_domain: "risk", desk: "risk", product_owner: "maria.wisniewska@example.com", cost_split_pct: 0.7, valid_from: "2026-01-01", valid_to: null, mapped_by: null, mapped_at: null },
+    { data_product: "stress-testing", data_domain: "risk", desk: "credit", product_owner: "maria.wisniewska@example.com", cost_split_pct: 0.3, valid_from: "2026-01-01", valid_to: null, mapped_by: null, mapped_at: null },
+    { data_product: "trade-pnl", data_domain: "pnl", desk: "credit", product_owner: "piotr.zielinski@example.com", cost_split_pct: 1, valid_from: "2025-10-01", valid_to: null, mapped_by: null, mapped_at: null },
   ];
 
   const users: UserMappingRow[] = [
@@ -108,7 +110,9 @@ function createStore(): MockStore {
     ["market-data", "ref-data-ingest", "rates", "DLT", 1, 9800, 4600],
     ["risk", "var-engine", "risk", "JOBS", 2, 52300, 24100],
     ["risk", "var-engine", "risk", "SQL_WAREHOUSE", 4, 15600, 7100],
-    ["risk", "stress-testing", "risk", "JOBS", 1, 11900, 5400],
+    // stress-testing fans out 70/30 across risk and credit (cost_split_pct)
+    ["risk", "stress-testing", "risk", "JOBS", 1, 8330, 3780],
+    ["risk", "stress-testing", "credit", "JOBS", 1, 3570, 1620],
     ["pnl", "trade-pnl", "credit", "JOBS", 3, 33400, 15200],
     ["pnl", "trade-pnl", "credit", "MODEL_SERVING", 1, 4100, 2300],
     ["UNALLOCATED", "AD_HOC", "rates", "SQL_WAREHOUSE", 9, 8900, 3900],

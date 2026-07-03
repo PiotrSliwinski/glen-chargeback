@@ -39,13 +39,13 @@ COMMENT 'Workspace ID -> friendly name. Workspaces missing here surface in repor
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.data_product_mapping (
   data_product      STRING NOT NULL,   -- canonical key, matches tag values
   data_domain       STRING NOT NULL,   -- level 1 rollup
-  desk              STRING NOT NULL,   -- main beneficiary (level 3)
+  desk              STRING NOT NULL,   -- beneficiary (level 3); several rows per product = multi-desk split
   product_owner     STRING,            -- accountable person
-  cost_split_pct    DOUBLE DEFAULT 1.0,-- reserved for future multi-desk splits
+  cost_split_pct    DOUBLE DEFAULT 1.0,-- this desk's share of the product's cost; shares per validity window must sum to 1.0
   valid_from        DATE   NOT NULL,
   valid_to          DATE               -- NULL = current; keeps history for restated months
 )
-COMMENT 'One row per data product (per validity period). Domain and desk are ALWAYS derived from here, never from tags directly.'
+COMMENT 'One row per data product PER DESK (per validity period). A product billed to one desk has a single row with cost_split_pct = 1.0; a product shared between desks has one row per desk whose cost_split_pct values sum to 1.0 within the same validity window. Domain and desk are ALWAYS derived from here, never from tags directly.'
 TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported');
 
 -- §4.4 Bridge for untagged jobs (waterfall rule 2)
@@ -380,11 +380,18 @@ GROUP BY 1, 2, 3;
 --   * data_domain and desk derived from data_product_mapping with a
 --     validity-period join on usage_date - historical months never
 --     restate when a product moves desk.
+--   * Multi-desk splits: a product with several mapping rows (one per
+--     desk, cost_split_pct summing to 1.0) fans each usage row out into
+--     one row per desk, with dbus/cost scaled by that desk's share.
+--     Products without a mapping row (AD_HOC, UNALLOCATED) keep a
+--     factor of 1.0.
 --
--- Invariant: SUM(cost) over cost_fact = SUM over billing (methodology §7.1).
+-- Invariant: SUM(cost) over cost_fact = SUM over billing (methodology §7.1)
+-- - holds as long as each product's splits sum to 1.0, which the health
+-- page checks (§7.4).
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.cost_fact
-COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Source of truth for monthly chargeback.'
+COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Source of truth for monthly chargeback.'
 AS
 WITH unified AS (
 
@@ -502,6 +509,7 @@ SELECT
            'UNALLOCATED')                       AS desk,          -- level 3
   -- ---- attribution transparency
   a.attribution_method,
+  COALESCE(dp.cost_split_pct, 1.0)              AS cost_split_pct,  -- this desk's share of the row's product
   a.tag_data_product                            AS raw_tag_data_product,
   a.tags_json,
   -- ---- detail dimensions
@@ -514,9 +522,11 @@ SELECT
   a.runner,
   a.runner_name,
   a.statement_id,
-  -- ---- measures
-  a.dbus,
-  a.cost
+  -- ---- measures, scaled by the desk's split share (1.0 = no split).
+  -- The dp join deliberately fans out for split products: one mapping
+  -- row per desk means one cost_fact row per desk.
+  a.dbus * COALESCE(dp.cost_split_pct, 1.0)     AS dbus,
+  a.cost * COALESCE(dp.cost_split_pct, 1.0)     AS cost
 FROM attributed a
 LEFT JOIN main_dev.cost_reporting.data_product_mapping dp
   ON  a.data_product = dp.data_product

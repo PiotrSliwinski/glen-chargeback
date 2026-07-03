@@ -24,11 +24,11 @@ export const PAGE_HELP = {
   queue:
     "The operational to-do list: cost drivers from the trailing 30 days that the attribution waterfall could not (fully) place, split into five queues. Every row carries a pre-filled inline fix that writes to the mapping tables. Fixes change live views immediately and never touch published months.",
   health:
-    "Pre-publication control room. Reconciliation proves billing truth = cost_fact = report for every month within the configured tolerance; integrity checks catch catalogue overlaps, orphan bridge rows, duplicate keys and inconsistent warehouse flags; the diff shows exactly what the snapshot will freeze. Publication unlocks only when everything is green — and the gate re-checks server-side at submit.",
+    "Pre-publication control room. Reconciliation proves billing truth = cost_fact = report for every month within the configured tolerance; integrity checks catch catalogue overlaps, desk splits that don't sum to 100%, orphan bridge rows, duplicate keys and inconsistent warehouse flags; the diff shows exactly what the snapshot will freeze. Publication unlocks only when everything is green — and the gate re-checks server-side at submit.",
   admin:
     "The write surface of the chargeback system: the seven mapping tables that steer the attribution waterfall. Everything else in the app is derived, read-only reporting. Edits here change live views immediately and never restate published months.",
   products:
-    "The hierarchy backbone: data_product_mapping, one row per product per validity window. Domain and desk always derive from here — never from tags. Desk/domain moves atomically close the old window and insert a successor row, so published history never restates; products are retired, never deleted.",
+    "The hierarchy backbone: data_product_mapping, one row per product per desk per validity window. A product can be split across several desks by % share (shares must sum to 100%) — cost_fact then bills each desk its share of every cost line. Domain and desk always derive from here — never from tags. Desk/domain/split moves atomically close the old window and insert successor rows, so published history never restates; products are retired, never deleted.",
   jobs:
     "The three explicit mechanisms that route job spend to a product: the per-job bridge (rule 2), tag rules matching any custom tag key=value (rule 3), and runner rules assigning everything an identity runs (rule 5). Jobs are created by the data platform but consumed by desks, so job spend NEVER defaults to the runner's home desk — what none of these mechanisms (or a tag at source) catches goes to the work queue. Target state: bridge empty, rules few and deliberate.",
   jobCoverage:

@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { loadUnmappedRunnersAction, type UnmappedRunnersResult } from "@/actions/insights";
+import { useEffect, useId, useState } from "react";
+import {
+  loadUnmappedRunnersAction,
+  lookupSpNameAction,
+  type UnmappedRunnersResult,
+} from "@/actions/insights";
 import { upsertUserAction } from "@/actions/mappings";
 import { ActionForm, DatalistField, Field } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import { ScanSkeleton } from "@/components/unmapped-runners-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -18,6 +24,58 @@ import {
 } from "@/components/ui/table";
 import { fmtDbu, fmtMoney } from "@/lib/format";
 import { isServicePrincipal } from "@/lib/identity";
+
+/**
+ * Display-name field for SPN rows: queries Entra ID for the service
+ * principal's display name when the dialog opens (dialog content mounts on
+ * open) and prefills the input. The value stays editable — the lookup is a
+ * convenience, not a source of record — and on miss/failure the field simply
+ * behaves like the plain manual input.
+ */
+function SpNameField({ runnerId }: { runnerId: string }) {
+  const id = useId();
+  const [value, setValue] = useState("");
+  const [status, setStatus] = useState<"pending" | "done" | { error: string }>("pending");
+
+  useEffect(() => {
+    let cancelled = false;
+    lookupSpNameAction(runnerId).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) {
+        setStatus({ error: r.message });
+      } else if (r.name == null) {
+        setStatus({ error: "Not in Entra ID (Databricks-native SP?) — enter a name manually." });
+      } else {
+        // Don't clobber anything the steward typed while the lookup ran.
+        setValue((v) => (v === "" ? r.name! : v));
+        setStatus("done");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [runnerId]);
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        Display name
+      </Label>
+      <Input
+        id={id}
+        name="user_name"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        required
+        placeholder={status === "pending" ? "Looking up in Entra ID…" : undefined}
+      />
+      {status === "done" && (
+        <p className="text-xs text-muted-foreground">Name fetched from Entra ID — editable.</p>
+      )}
+      {typeof status === "object" && <p className="text-xs text-destructive">{status.error}</p>}
+    </div>
+  );
+}
 
 /**
  * Lazy-loaded body of the unmapped-runners panel: fetches through the
@@ -133,7 +191,11 @@ export default function UnmappedRunnersBody({ deskOptions }: { deskOptions: stri
                   >
                     <ActionForm action={upsertUserAction} submitLabel="Map user">
                       <Field label="User ID" name="user_id" defaultValue={r.runner} readOnly />
-                      <Field label="Display name" name="user_name" />
+                      {isServicePrincipal(r.runner) ? (
+                        <SpNameField runnerId={r.runner} />
+                      ) : (
+                        <Field label="Display name" name="user_name" />
+                      )}
                       <DatalistField label="Home desk" name="desk" options={deskOptions} />
                     </ActionForm>
                   </EditDialog>

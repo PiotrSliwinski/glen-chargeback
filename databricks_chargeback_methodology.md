@@ -52,7 +52,7 @@ Three layers, each with a distinct responsibility:
 |---|---|---|---|
 | 1 | `data_domain` | derived from `data_product_mapping` | Business/data domain grouping |
 | 2 | `data_product` | tag or mapping (attribution waterfall) | The unit of attribution — the only key teams declare |
-| 3 | `desk` | derived from `data_product_mapping` | Main data beneficiary — who pays |
+| 3 | `desk` | derived from `data_product_mapping` | Data beneficiary — who pays. A product may be split across several desks by `cost_split_pct` shares (§4.3) |
 
 **Core design principle — one attribution key.** Workloads declare only `data_product` (via tag or mapping). Domain and desk are *always* derived by joining `data_product_mapping`. Teams never tag domain or desk directly; this prevents the three dimensions from drifting apart.
 
@@ -124,7 +124,7 @@ This holds because: `query_view` LEFT-joins queries onto usage (idle hours prese
 ### 2.5 Time semantics
 
 - Monthly chargeback is keyed on `usage_date` (billing record date), truncated to month.
-- `data_product_mapping` is **validity-versioned** (`valid_from` / `valid_to`). When a product changes desk or domain, a new row is added and the old row is closed. Historical months therefore never restate — January's report is identical whether run in February or December.
+- `data_product_mapping` is **validity-versioned** (`valid_from` / `valid_to`). When a product changes desk, domain or desk split, new rows are added and the old rows are closed. Historical months therefore never restate — January's report is identical whether run in February or December.
 - `system.query.history` retains ~90 days vs ~1 year for `system.billing.usage`: warehouse spend older than the query-history horizon degrades gracefully to `UNALLOCATED_IDLE`. Materialize `query_view` (see §9) to preserve per-query allocations beyond 90 days.
 
 ---
@@ -174,25 +174,25 @@ COMMENT 'Workspace ID -> friendly name. Workspaces missing here surface in repor
 
 ### 4.3 `data_product_mapping` — the hierarchy backbone
 
-One row per data product per validity period. **Domain and desk are always derived from this table, never from tags.**
+One row per data product **per desk** per validity period. A product billed to a single desk has one row with `cost_split_pct = 1.0`; a product **shared between desks** has one row per desk whose `cost_split_pct` shares sum to 1.0 within the same validity window — `cost_fact` (§6.1) then bills each desk its share of every cost line. **Domain and desk are always derived from this table, never from tags.**
 
 ```sql
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.data_product_mapping (
   data_product      STRING NOT NULL,   -- canonical key, matches tag values
   data_domain       STRING NOT NULL,   -- level 1 rollup
-  desk              STRING NOT NULL,   -- main beneficiary (level 3)
+  desk              STRING NOT NULL,   -- beneficiary (level 3); several rows per product = multi-desk split
   product_owner     STRING,            -- accountable person
-  cost_split_pct    DOUBLE DEFAULT 1.0,-- reserved for future multi-desk splits
+  cost_split_pct    DOUBLE DEFAULT 1.0,-- this desk's share of the product's cost; shares per validity window must sum to 1.0
   valid_from        DATE   NOT NULL,
   valid_to          DATE               -- NULL = current; keeps history for restated months
 )
-COMMENT 'One row per data product (per validity period). Domain and desk are ALWAYS derived from here, never from tags directly.'
+COMMENT 'One row per data product PER DESK (per validity period). A product billed to one desk has a single row with cost_split_pct = 1.0; a product shared between desks has one row per desk whose cost_split_pct values sum to 1.0 within the same validity window. Domain and desk are ALWAYS derived from here, never from tags directly.'
 TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported');
 ```
 
 **Integrity rules (enforced by the management interface, validated by §7.4):**
-1. At any given date, at most **one** active row per `data_product` (no overlapping validity windows).
-2. Moving a product to another desk = `UPDATE` old row's `valid_to` to the cutover date **and** `INSERT` a new row with `valid_from` = cutover date. Never update `desk` in place — that restates history.
+1. At any given date, at most **one** active row per (`data_product`, `desk`) — no overlapping validity windows per desk. Concurrent rows for *different* desks form a multi-desk split; their `cost_split_pct` shares must sum to exactly 1.0, otherwise `cost_fact` mints or loses money on every row of the product.
+2. Moving a product to another desk — or changing its split — = `UPDATE` the old rows' `valid_to` to the cutover date **and** `INSERT` the new desk rows with `valid_from` = cutover date. Never update `desk` or `cost_split_pct` in place — that restates history.
 3. `data_product` values are the canonical vocabulary for tags: lowercase, hyphen/underscore separated, no spaces (e.g. `pricing-curves`, `trade_pnl`). Tags that don't match a row here fall to `UNALLOCATED` attribution at the domain/desk level (§6.1 keeps the raw tag visible).
 
 ### 4.4 `job_product_mapping` — bridge for untagged jobs
@@ -595,6 +595,11 @@ The single source of truth for all reporting. Unions the two allocation views in
 --   * data_domain and desk are derived from data_product_mapping with
 --     validity-period join on usage_date, so historical months never
 --     restate when a product moves desk.
+--   * Multi-desk splits: a product with several mapping rows (one per
+--     desk, cost_split_pct summing to 1.0) fans each usage row out into
+--     one row per desk, with dbus/cost scaled by that desk's share.
+--     Products without a mapping row (AD_HOC, UNALLOCATED) keep a
+--     factor of 1.0.
 --   * raw_tag_data_product is kept so tags that don't match any row in
 --     data_product_mapping remain visible (they attribute as the tag
 --     value at product level but UNALLOCATED at domain/desk level -
@@ -606,7 +611,7 @@ The single source of truth for all reporting. Unions the two allocation views in
 -- =====================================================================
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.cost_fact
-COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Source of truth for monthly chargeback.'
+COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Source of truth for monthly chargeback.'
 AS
 WITH unified AS (
 
@@ -724,6 +729,7 @@ SELECT
            'UNALLOCATED')                       AS desk,          -- level 3
   -- ---- attribution transparency
   a.attribution_method,
+  COALESCE(dp.cost_split_pct, 1.0)              AS cost_split_pct,  -- this desk's share of the row's product
   a.tag_data_product                            AS raw_tag_data_product,
   a.tags_json,
   -- ---- detail dimensions
@@ -736,9 +742,11 @@ SELECT
   a.runner,
   a.runner_name,
   a.statement_id,
-  -- ---- measures
-  a.dbus,
-  a.cost
+  -- ---- measures, scaled by the desk's split share (1.0 = no split).
+  -- The dp join deliberately fans out for split products: one mapping
+  -- row per desk means one cost_fact row per desk.
+  a.dbus * COALESCE(dp.cost_split_pct, 1.0)     AS dbus,
+  a.cost * COALESCE(dp.cost_split_pct, 1.0)     AS cost
 FROM attributed a
 LEFT JOIN main_dev.cost_reporting.data_product_mapping dp
   ON  a.data_product = dp.data_product
@@ -746,7 +754,7 @@ LEFT JOIN main_dev.cost_reporting.data_product_mapping dp
   AND a.usage_date <  COALESCE(dp.valid_to, DATE '9999-12-31');
 ```
 
-Desk resolution logic, explicitly: the **product's desk wins** (`dp.desk`); if the product is `AD_HOC` or unknown to `data_product_mapping`, the **runner's desk** applies; if neither exists, `UNALLOCATED`.
+Desk resolution logic, explicitly: the **product's desk wins** (`dp.desk`); if the product is `AD_HOC` or unknown to `data_product_mapping`, the **runner's desk** applies; if neither exists, `UNALLOCATED`. For a product split across desks, the `dp` join produces one row per desk and scales `dbus`/`cost` by that desk's `cost_split_pct` — totals are preserved because the shares of a validity window sum to 1.0 (checked in §7.4(e)).
 
 ### 6.2 `monthly_chargeback` — the report
 
@@ -918,11 +926,14 @@ GROUP BY 1 ORDER BY 2 DESC;
 ### 7.4 Mapping-table integrity checks
 
 ```sql
--- (a) Overlapping validity periods per product - must return 0 rows.
-SELECT a.data_product, a.valid_from, a.valid_to, b.valid_from AS conflicting_from
+-- (a) Overlapping validity periods per product AND desk - must return 0
+--     rows. Concurrent rows for different desks are a multi-desk split
+--     (checked by (e) below), not an overlap.
+SELECT a.data_product, a.desk, a.valid_from, a.valid_to, b.valid_from AS conflicting_from
 FROM main_dev.cost_reporting.data_product_mapping a
 JOIN main_dev.cost_reporting.data_product_mapping b
   ON  a.data_product = b.data_product
+  AND a.desk = b.desk
   AND a.valid_from < b.valid_from
   AND COALESCE(a.valid_to, DATE '9999-12-31') > b.valid_from;
 ```
@@ -950,6 +961,17 @@ GROUP BY 1, 2 HAVING COUNT(*) > 1;
 SELECT * FROM main_dev.cost_reporting.warehouse_product_mapping
 WHERE (is_shared = false AND data_product IS NULL)
    OR (is_shared = true  AND data_product IS NOT NULL);
+```
+
+```sql
+-- (e) Desk shares of each validity window must sum to 1.0 - must return
+--     0 rows. A sum <> 1.0 breaks the 7.1 reconciliation invariant:
+--     cost_fact would mint or lose money on every row of the product.
+SELECT data_product, valid_from, valid_to,
+       SUM(COALESCE(cost_split_pct, 1.0)) AS split_sum
+FROM main_dev.cost_reporting.data_product_mapping
+GROUP BY 1, 2, 3
+HAVING ABS(SUM(COALESCE(cost_split_pct, 1.0)) - 1.0) > 0.001;
 ```
 
 ### 7.5 Month-over-month movement (report commentary)
