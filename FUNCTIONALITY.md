@@ -35,10 +35,10 @@ rule, and known gap.
 | Area | What you can do |
 |---|---|
 | **Reference data** | Full CRUD (within the methodology's rules) on all eight Databricks mapping tables — product catalogue (versioned), job bridge, tag rules, warehouse classification, AI endpoint bridge, runner rules, users, workspaces — plus the four Azure attribution rule tables (resource bridge, Azure tag rules, resource-group rules, subscription rules) and DBU reservation-discount windows (`dbu_discount_plan`) |
-| **Azure attribution** | Route Azure spend (`azure_cleaned.amortized_costs`) to the same product catalogue via an allowlist waterfall (TAG → resource bridge → tag rule → RG rule → subscription rule), with a 30-day coverage audit and per-desk rollup — only matched cost reaches a desk |
+| **Azure attribution** | Route Azure spend (`azure_cleaned.amortized_costs`) to the same product catalogue via an allowlist waterfall (TAG → resource bridge → tag rule → RG rule → subscription rule), with a 30-day coverage audit, per-desk rollup and a dedicated monthly Azure cost-monitoring screen (`/azure`) — only matched cost reaches a desk |
 | **Work queue** | Five actionable queues of unattributed/unmapped cost with inline, pre-filled fix forms |
 | **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, an AI-costs page (model serving incl. `ai_query` batch inference, per-endpoint spend), printable desk invoices, per-desk self-service pages, tagging scorecard |
-| **Exports** | 12 CSV reports + a 6-sheet XLSX report workbook |
+| **Exports** | 13 CSV reports + a 6-sheet XLSX report workbook |
 | **Governance** | One-click health checks (reconciliation + integrity), publication diff, gated monthly publication with typed confirmation |
 | **Access control** | Entra ID SSO, three hierarchical roles (viewer / steward / publisher) enforced at proxy, page, and action level |
 | **Dev experience** | Runs fully on in-memory mock data with auth bypass — `npm run dev` works with zero external services |
@@ -106,6 +106,7 @@ rule, and known gap.
 | `/report` | viewer | Monthly report pack |
 | `/drill` | viewer | Domain → product → desk → detail drill-down |
 | `/ai` | viewer | AI cost tracking (model serving, batch inference, vector search) |
+| `/azure` | viewer | Azure cost monitoring (the whole Azure bill, attribution mix, per-resource detail) |
 | `/desks`, `/desks/[desk]` | viewer | Desk self-service views |
 | `/invoices`, `/invoices/[desk]` | viewer | Published desk invoices |
 | `/queue` | steward | Work queue (5 tabs) |
@@ -349,6 +350,29 @@ as every other report (so AI figures always reconcile with the monthly chargebac
   tables — the current day's AI spend is always incomplete. Month/mode picker as everywhere;
   endpoint detail always reads live `cost_fact` (never snapshotted).
 
+### 7.3c Azure costs — `/azure`
+
+Dedicated monthly monitoring screen for **the whole Azure bill** — separate money from the
+Databricks chargeback (the two never mix), fed by `azure_monthly_chargeback` /
+`azure_cost_fact` (`src/dal/azure.ts`, cost-monitoring reads):
+
+- KPI tiles: Azure cost (attributed or not), MoM Δ (always live vs live — Azure has no
+  published mode), **attributed-to-desks share**, and the UNALLOCATED remainder (expected for
+  shared platform cost, never billed).
+- **Cost by meter category** (resources, MoM Δ, share) and **cost by desk** — both rolled up
+  from the same monthly rows, so every card sums to the KPI tile.
+- 12-month **stacked trend by desk** (UNALLOCATED grey) and the month's **attribution mix**
+  as a 100%-share bar in waterfall order (TAG → RESOURCE_MAPPING → TAG_RULE → RESOURCE_GROUP
+  → SUBSCRIPTION → NONE), coloured by `AZURE_METHOD_STYLE`.
+- **Resources behind the month's bill**: top 500 by cost, one row per (resource, method,
+  product, desk) — a resource that changed attribution mid-month shows one row per method,
+  like the coverage audit — with text filter, pagination, CSV download and a pointer to
+  `/admin/azure` for stewards.
+- Month picker only (no Live/Published toggle); months come from the Azure data itself
+  (`getAzureMonths`). Freshness note: exports land in `azure_cleaned.amortized_costs` daily,
+  so the current month is always partial. Renders an Azure-specific limitations footer
+  (`<ReportFooter scope="azure" />`).
+
 ### 7.4 Desk self-service — `/desks`, `/desks/[desk]`
 
 - Desk cards with live month totals; **"your desk" highlighted** when the signed-in user's email
@@ -383,6 +407,7 @@ as every other report (so AI figures always reconcile with the monthly chargebac
 | `movement-products` | viewer | Product-level MoM deltas |
 | `scorecard` | viewer | Per-desk TAG%/NONE leaderboard |
 | `ai-endpoints` | viewer | AI spend per endpoint × offering type × product × desk (live `cost_fact`) |
+| `azure-resources` | viewer | The month's Azure cost per resource × method × product × desk (live `azure_cost_fact`) |
 | `desk-invoice` (`&desk=`) | viewer | One desk's published statement |
 | `catalogue` | steward | Full product catalogue incl. history |
 | `queue-jobs` / `queue-runners` / `queue-workspaces` / `queue-tags` / `queue-warehouses` | steward | The five work queues |
@@ -508,7 +533,7 @@ Honest statement of what has and hasn't been exercised:
 
 | Item | Notes |
 |---|---|
-| Azure in reports & invoices | `azure_monthly_chargeback` exists and the coverage tab shows per-desk totals, but the dashboard/report pack/desk invoices are Databricks-only. Needs a publish snapshot + recon story for Azure before invoicing from it |
+| Azure in invoices & report pack | The `/azure` screen now covers monthly Azure monitoring, but the dashboard/report pack/desk invoices remain Databricks-only. Needs a publish snapshot + recon story for Azure before invoicing from it |
 | Azure work-queue tab | Unmatched Azure resources surface on the coverage tab (`method=NONE` filter); a queue tab with inline fixes would mirror the Databricks flow |
 | Azure health checks | Duplicate/conflicting Azure rules and orphan products are prevented at write time but not yet re-checked on the health page |
 | Budgets & burn rate | Needs a new `desk_budget` reference table + admin screen; then MTD vs budget with month-end projection |

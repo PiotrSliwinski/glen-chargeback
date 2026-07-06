@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   Activity,
   ChartColumn,
+  Cloud,
   Database,
   FileText,
   LayoutDashboard,
@@ -82,6 +83,7 @@ async function RoleNav({ orientation = "horizontal" }: { orientation?: "horizont
     { href: "/report", label: "Monthly Report", icon: <FileText aria-hidden /> },
     { href: "/analytics", label: "Analytics", icon: <ChartColumn aria-hidden /> },
     { href: "/ai", label: "AI Costs", icon: <Sparkles aria-hidden /> },
+    { href: "/azure", label: "Azure Costs", icon: <Cloud aria-hidden /> },
     { href: "/drill", label: "Drill-down", icon: <ListTree aria-hidden /> },
     { href: "/desks", label: "Desks", icon: <Users aria-hidden /> },
     { href: "/invoices", label: "Invoices", icon: <Receipt aria-hidden /> },

@@ -41,6 +41,8 @@ export const PAGE_HELP = {
     "The four explicit mechanisms that route Azure spend (azure_cleaned.amortized_costs) to a data product: the per-resource bridge (rule 2), Azure tag rules matching any resource tag key=value (rule 3), resource-group rules (rule 4) and subscription rules (rule 5). A data_product tag on the resource itself (rule 1) always wins. Rules point at the SAME product catalogue as Databricks spend, so domain, desk and multi-desk % splits apply identically. Attribution is an allowlist — only matched cost reaches a desk; the unmatched remainder of the Azure bill stays visible in coverage as UNALLOCATED and never enters the Databricks chargeback report.",
   azureCoverage:
     "Audit of every Azure resource that emitted cost in the trailing 30 days: the tags it actually carries and the attribution method(s) that carried that cost — tag at source, bridge row, tag rule, resource-group rule, subscription rule, or nothing. Use it to see which mappings are still doing work, which resources to chase for tagging, and which tags could power a tag rule.",
+  azureCosts:
+    "Monthly view of the whole Azure bill (azure_cleaned.amortized_costs), separate from the Databricks chargeback: cost by meter category, desk and attribution method, a 12-month trend, and every resource behind the month's spend. Attribution runs through the Azure allowlist waterfall against the SAME product catalogue as Databricks spend — matched cost reaches desks with domain and % splits applied identically; the unmatched remainder stays visible here as UNALLOCATED and is never billed. Live figures only: Azure cost is not part of the published snapshot, so there is no Live/Published toggle.",
   warehouses:
     "Waterfall rule 4 configuration: a Shared warehouse spreads its cost across products per query; a Dedicated warehouse charges the whole warehouse — idle time included — to one product. Invalid combinations (dedicated without a product, shared with one) are rejected by the form and re-checked on the server.",
   endpoints:
@@ -117,6 +119,15 @@ export const KPI_HELP = {
   azureAttributedCost:
     "Sum of 30-day Azure cost the waterfall attributed to a product (any method except NONE) — the slice that reaches desks via the shared catalogue's splits.",
 
+  azureMonthCost:
+    "SUM(total_cost) over the month's azure_monthly_chargeback rows — the whole Azure bill for the month in USD, attributed or not, straight from azure_cleaned.amortized_costs (amortized cost). Separate money from the Databricks chargeback: the two never mix.",
+  azureMomChange:
+    "This month's Azure total minus the previous month's, both from live azure_monthly_chargeback — Azure has no published mode, so this is always live vs live.",
+  azureAttributedShare:
+    "Azure cost the waterfall attributed to a product (any method except NONE) ÷ the month's Azure total — the slice that reaches desks via the shared catalogue's domain, desk and % splits.",
+  azureMonthUnallocated:
+    "The month's Azure cost with attribution_method = NONE. Unlike Databricks spend this is not necessarily a problem: Azure attribution is an allowlist, and shared platform cost is expected to stay unmatched. It never reaches a desk.",
+
   aiMonthCost:
     "SUM(total_cost) over the month's monthly_chargeback rows whose usage category is AI-native (MODEL_SERVING, VECTOR_SEARCH, FOUNDATION_MODEL_TRAINING, AGENT_EVALUATION). Same pricing as everything else: DBUs × time-effective list price less any reservation-plan discount. The hint shows this as a share of the whole bill.",
   aiMomChange:
@@ -145,6 +156,19 @@ export const AI_SECTION_HELP = {
     "The month's AI cost per desk: absolute cost, month-over-month change (previous month always live), the desk's share of all AI spend, and AI intensity — AI cost ÷ the desk's whole bill, i.e. how AI-heavy that desk's usage is. Same monthly_chargeback rows as the KPI tiles, so the desks sum to the AI cost tile.",
   movers:
     "Endpoints ranked by absolute month-over-month cost change (both months live, compared per workspace × endpoint × offering type × category, so a re-mapped endpoint compares against itself). “new” = no spend last month; “gone” = spent last month, nothing this month. The list behind the MoM Δ tile: these are the endpoints that moved the AI bill.",
+} as const;
+
+export const AZURE_SECTION_HELP = {
+  categories:
+    "The month's Azure cost per meter category (Virtual Machines, Storage, Azure Databricks…), with the number of distinct resources behind each and the category's share of the Azure bill. MoM Δ compares against last month's rollup.",
+  trend:
+    "Azure cost per month over the trailing 12 months, stacked by desk. UNALLOCATED (grey) is the unmatched remainder of the bill — watch whether the attributed slice grows as tagging and rules improve.",
+  desks:
+    "The month's attributed Azure cost per desk, via the shared product catalogue (multi-desk % splits applied) — plus UNALLOCATED, the slice no desk pays. Same rows as the KPI tiles, so desks + UNALLOCATED sum to the Azure cost tile.",
+  methods:
+    "How the month's Azure cost was attributed, in waterfall order: TAG = data_product tag on the resource · RESOURCE_MAPPING = per-resource bridge row · TAG_RULE = matched an Azure tag rule · RESOURCE_GROUP = whole-RG rule · SUBSCRIPTION = whole-subscription rule · NONE = unmatched, stays unallocated. Goal: TAG widening, the bridge shrinking.",
+  resources:
+    "Every Azure resource behind the month's bill (top 500 by cost), with the attribution method, product and desk that carried each slice. A resource appearing twice changed how it attributes mid-month — e.g. bridge-mapped early, tagged at source since. Stewards fix attribution under Reference data → Azure attribution.",
 } as const;
 
 export const ANALYTICS_SECTION_HELP = {

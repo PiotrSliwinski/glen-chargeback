@@ -320,6 +320,45 @@ export interface AzureDeskTotalRow {
   cost_30d: number;
 }
 
+// ---------- Azure cost monitoring (/azure) ----------
+
+/** One month of azure_monthly_chargeback at product × desk × meter-category grain. */
+export interface AzureMonthlyRow {
+  data_product: string;
+  desk: string;
+  /** Azure meter_category ('Virtual Machines', 'Storage', …); 'Other' when the export omits it */
+  usage_category: string;
+  distinct_resources: number;
+  total_cost: number;
+}
+
+/** Azure cost per month × desk, trailing 12 months — the Azure trend feed. */
+export interface AzureTrendPoint {
+  billing_month: string;
+  desk: string;
+  total_cost: number;
+}
+
+/** One month's Azure cost per attribution method — the waterfall mix. */
+export interface AzureMethodMixRow {
+  attribution_method: AzureAttributionMethod;
+  cost: number;
+}
+
+/** One month's Azure cost per resource — one row per (resource, method, product, desk), like coverage. */
+export interface AzureMonthResourceRow {
+  subscription_id: string;
+  resource_group: string;
+  resource_id: string;
+  /** last segment of the ARM ID — display name */
+  resource_name: string | null;
+  meter_category: string | null;
+  attribution_method: AzureAttributionMethod;
+  data_product: string;
+  desk: string;
+  cost: number;
+}
+
 // ---------- AI cost tracking ----------
 
 /**

@@ -1,16 +1,21 @@
 import { cacheLife, cacheTag } from "next/cache";
 import { z } from "zod";
 import { env } from "@/lib/env";
+import { monthStart } from "@/lib/format";
 import { exec, query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
-import { zNum, zStr, zStrOrNull } from "@/dal/parse";
+import { zMonth, zNum, zStr, zStrOrNull } from "@/dal/parse";
 import type {
   AzureDeskTotalRow,
+  AzureMethodMixRow,
+  AzureMonthResourceRow,
+  AzureMonthlyRow,
   AzureResourceAttributionRow,
   AzureResourceMappingRow,
   AzureRgRuleRow,
   AzureSubscriptionRuleRow,
   AzureTagRuleRow,
+  AzureTrendPoint,
 } from "@/dal/types";
 
 /**
@@ -169,6 +174,190 @@ export async function getAzureDeskTotals(): Promise<AzureDeskTotalRow[]> {
      GROUP BY desk ORDER BY cost_30d DESC`,
     {},
     z.object({ desk: zStr, cost_30d: zNum }) as z.ZodType<AzureDeskTotalRow>,
+  );
+}
+
+// ==================== cost monitoring reads (/azure) ====================
+// Month-scoped rollups over azure_monthly_chargeback / azure_cost_fact for
+// the Azure cost screen. Azure never enters the published snapshot, so all
+// of these are live-only — no mode parameter. Cached under 'azure' so rule
+// edits (which re-attribute cost) refresh the screen immediately.
+
+/** Scale the (≈ one month) Azure fixtures by the shared mock month factor. */
+const azureMockScale = (month: string) => mockStore.monthFactor[month] ?? 0;
+
+/** Months with any Azure cost, newest first — feeds the /azure month picker. */
+export async function getAzureMonths(): Promise<string[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("azure");
+  if (env.DAL_MOCK) return [...mockStore.months].reverse();
+  const rows = await query(
+    `SELECT DISTINCT billing_month FROM ${T("azure_monthly_chargeback")} ORDER BY 1 DESC`,
+    {},
+    z.object({ billing_month: zMonth }),
+  );
+  return rows.map((r) => r.billing_month);
+}
+
+/** One month of Azure cost at product × desk × meter-category grain. */
+export async function getAzureMonthlyRows(month: string): Promise<AzureMonthlyRow[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("azure");
+  if (env.DAL_MOCK) {
+    const f = azureMockScale(month);
+    const map = new Map<string, AzureMonthlyRow & { resources: Set<string> }>();
+    for (const a of mockStore.azureAttributions) {
+      const category = a.meter_category ?? "Other";
+      const key = `${a.data_product}|${a.desk}|${category}`;
+      const e = map.get(key) ?? {
+        data_product: a.data_product,
+        desk: a.desk,
+        usage_category: category,
+        distinct_resources: 0,
+        total_cost: 0,
+        resources: new Set<string>(),
+      };
+      e.resources.add(a.resource_id);
+      e.total_cost += Math.round(a.cost_30d * f * 100) / 100;
+      map.set(key, e);
+    }
+    return [...map.values()]
+      .map(({ resources, ...row }) => ({ ...row, distinct_resources: resources.size }))
+      .filter((r) => r.total_cost > 0)
+      .sort((a, b) => b.total_cost - a.total_cost);
+  }
+  return query(
+    `SELECT data_product, desk,
+            COALESCE(usage_category, 'Other') AS usage_category,
+            SUM(distinct_resources) AS distinct_resources,
+            SUM(total_cost) AS total_cost
+     FROM ${T("azure_monthly_chargeback")}
+     WHERE billing_month = :month
+     GROUP BY 1, 2, 3 ORDER BY total_cost DESC`,
+    { month: monthStart(month) },
+    z.object({
+      data_product: zStr,
+      desk: zStr,
+      usage_category: zStr,
+      distinct_resources: zNum,
+      total_cost: zNum,
+    }) as z.ZodType<AzureMonthlyRow>,
+  );
+}
+
+/** Azure cost per month × desk, trailing 12 months — the Azure trend feed. */
+export async function getAzureTrend(month: string): Promise<AzureTrendPoint[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("azure");
+  if (env.DAL_MOCK) {
+    const window = mockStore.months.filter((m) => m <= month).slice(-12);
+    return window.flatMap((m) => {
+      const f = azureMockScale(m);
+      const byDesk = new Map<string, number>();
+      for (const a of mockStore.azureAttributions) {
+        byDesk.set(a.desk, (byDesk.get(a.desk) ?? 0) + Math.round(a.cost_30d * f * 100) / 100);
+      }
+      return [...byDesk.entries()]
+        .filter(([, cost]) => cost > 0)
+        .map(([desk, total_cost]) => ({ billing_month: m, desk, total_cost }));
+    });
+  }
+  return query(
+    `SELECT billing_month, desk, SUM(total_cost) AS total_cost
+     FROM ${T("azure_monthly_chargeback")}
+     WHERE billing_month > add_months(:month, -12) AND billing_month <= :month
+     GROUP BY 1, 2 ORDER BY 1`,
+    { month: monthStart(month) },
+    z.object({
+      billing_month: zMonth,
+      desk: zStr,
+      total_cost: zNum,
+    }) as z.ZodType<AzureTrendPoint>,
+  );
+}
+
+/** The month's Azure cost per attribution method — is TAG growing, NONE shrinking? */
+export async function getAzureMethodMix(month: string): Promise<AzureMethodMixRow[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("azure");
+  if (env.DAL_MOCK) {
+    const f = azureMockScale(month);
+    const map = new Map<string, number>();
+    for (const a of mockStore.azureAttributions) {
+      map.set(
+        a.attribution_method,
+        (map.get(a.attribution_method) ?? 0) + Math.round(a.cost_30d * f * 100) / 100,
+      );
+    }
+    return [...map.entries()]
+      .filter(([, cost]) => cost > 0)
+      .map(([attribution_method, cost]) => ({ attribution_method, cost }) as AzureMethodMixRow)
+      .sort((a, b) => b.cost - a.cost);
+  }
+  return query(
+    `SELECT attribution_method, SUM(cost) AS cost
+     FROM ${T("azure_cost_fact")}
+     WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
+     GROUP BY 1 ORDER BY cost DESC`,
+    { month: monthStart(month) },
+    z.object({ attribution_method: zStr, cost: zNum }) as z.ZodType<AzureMethodMixRow>,
+  );
+}
+
+/**
+ * The month's Azure cost per resource — one row per (resource, method,
+ * product, desk), so a resource that changed attribution mid-month shows
+ * one row per method, like the coverage audit.
+ */
+export async function getAzureMonthResources(month: string): Promise<AzureMonthResourceRow[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("azure");
+  if (env.DAL_MOCK) {
+    const f = azureMockScale(month);
+    return mockStore.azureAttributions
+      .map((a) => ({
+        subscription_id: a.subscription_id,
+        resource_group: a.resource_group,
+        resource_id: a.resource_id,
+        resource_name: a.resource_name,
+        meter_category: a.meter_category,
+        attribution_method: a.attribution_method,
+        data_product: a.data_product,
+        desk: a.desk,
+        cost: Math.round(a.cost_30d * f * 100) / 100,
+      }))
+      .filter((r) => r.cost > 0)
+      .sort((a, b) => b.cost - a.cost);
+  }
+  return query(
+    `SELECT subscription_id, resource_group, resource_id,
+            MAX(resource_name) AS resource_name,
+            MAX_BY(meter_category, cost) AS meter_category,
+            attribution_method, data_product, desk,
+            SUM(cost) AS cost
+     FROM ${T("azure_cost_fact")}
+     WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
+       AND resource_id IS NOT NULL
+     GROUP BY subscription_id, resource_group, resource_id,
+              attribution_method, data_product, desk
+     ORDER BY cost DESC LIMIT 500`,
+    { month: monthStart(month) },
+    z.object({
+      subscription_id: zStr,
+      resource_group: zStr,
+      resource_id: zStr,
+      resource_name: zStrOrNull,
+      meter_category: zStrOrNull,
+      attribution_method: zStr,
+      data_product: zStr,
+      desk: zStr,
+      cost: zNum,
+    }) as z.ZodType<AzureMonthResourceRow>,
   );
 }
 

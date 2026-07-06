@@ -11,6 +11,7 @@ import {
 } from "@/dal/reports";
 import { listCatalogue } from "@/dal/mappings";
 import { getAiEndpointUsage } from "@/dal/ai";
+import { getAzureMonthResources } from "@/dal/azure";
 import {
   getRogueTags,
   getUnassignedWarehouses,
@@ -56,6 +57,11 @@ const REPORTS: Record<string, { role: Role; fetch: Fetcher }> = {
     role: "viewer",
     // endpoint detail is live-only — cost_fact is never snapshotted
     fetch: ({ month }) => getAiEndpointUsage(month),
+  },
+  "azure-resources": {
+    role: "viewer",
+    // Azure cost is live-only — it never enters the published snapshot
+    fetch: ({ month }) => getAzureMonthResources(month),
   },
   "desk-invoice": {
     role: "viewer",
