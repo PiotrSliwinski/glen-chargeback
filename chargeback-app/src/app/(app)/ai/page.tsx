@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getAiEndpointUsage, getAiTrend, isAiCategory } from "@/dal/ai";
 import { categoryEconomics } from "@/dal/analytics";
 import { getMonthlyRows } from "@/dal/reports";
-import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi, shiftMonth } from "@/lib/format";
+import { fmtDbu, fmtDelta, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi, shiftMonth } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { AI_SECTION_HELP, KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { cn } from "@/lib/utils";
@@ -43,11 +43,12 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
   const notPublished = mode === "published" && !publishedMonths.includes(month);
   const prevMonth = shiftMonth(month, -1);
 
-  const [curRows, prevRows, trend, endpoints] = await Promise.all([
+  const [curRows, prevRows, trend, endpoints, prevEndpoints] = await Promise.all([
     getMonthlyRows(month, mode),
     getMonthlyRows(prevMonth, "live"),
     getAiTrend(month),
     getAiEndpointUsage(month),
+    getAiEndpointUsage(prevMonth),
   ]);
 
   const aiRows = curRows.filter((r) => isAiCategory(r.usage_category));
@@ -69,6 +70,68 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
   const categories = categoryEconomics(curRows, prevRows).filter((c) =>
     isAiCategory(c.usage_category),
   );
+
+  // ---- AI cost per desk, with each desk's AI intensity (AI ÷ desk's whole bill)
+  const sumBy = (rows: { desk: string; total_cost: number }[]) => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(r.desk, (m.get(r.desk) ?? 0) + r.total_cost);
+    return m;
+  };
+  const deskBill = sumBy(curRows);
+  const prevAiByDesk = sumBy(prevAiRows);
+  const deskRows = [...sumBy(aiRows).entries()]
+    .map(([desk, cost]) => ({
+      desk,
+      cost,
+      delta: prevRows.length > 0 ? cost - (prevAiByDesk.get(desk) ?? 0) : null,
+      aiShare: aiCost > 0 ? cost / aiCost : 0,
+      billShare: (deskBill.get(desk) ?? 0) > 0 ? cost / deskBill.get(desk)! : null,
+    }))
+    .sort((a, b) => b.cost - a.cost);
+
+  // ---- endpoint movement vs last month (live both sides, like every MoM figure).
+  // Identity = workspace × endpoint × offering type × category; product/desk are
+  // deliberately excluded so a re-mapped endpoint compares against itself.
+  const idKey = (r: AiEndpointUsageRow) =>
+    `${r.workspace_id}|${r.endpoint_name ?? ""}|${r.serving_type ?? ""}|${r.usage_category}`;
+  const rollById = (rows: AiEndpointUsageRow[]) => {
+    const m = new Map<string, { cost: number; rows: number; sample: AiEndpointUsageRow }>();
+    for (const r of rows) {
+      const e = m.get(idKey(r)) ?? { cost: 0, rows: 0, sample: r };
+      e.cost += r.cost;
+      e.rows += 1;
+      m.set(idKey(r), e);
+    }
+    return m;
+  };
+  const curById = rollById(endpoints);
+  const prevById = rollById(prevEndpoints);
+  const endpointRows = endpoints.map((e) => {
+    const prev = prevById.get(idKey(e));
+    // a desk-split endpoint fans into several rows — a per-row Δ would double-count
+    const ambiguous = (curById.get(idKey(e))?.rows ?? 1) > 1;
+    return {
+      ...e,
+      delta: ambiguous ? null : e.cost - (prev?.cost ?? 0),
+      isNew: !ambiguous && prev == null,
+    };
+  });
+  const movers = [...new Set([...curById.keys(), ...prevById.keys()])]
+    .map((k) => {
+      const cur = curById.get(k);
+      const prev = prevById.get(k);
+      const sample = (cur ?? prev)!.sample;
+      return {
+        key: k,
+        label: sample.endpoint_name ?? `(no endpoint — ${sample.usage_category})`,
+        serving_type: sample.serving_type,
+        delta: (cur?.cost ?? 0) - (prev?.cost ?? 0),
+        note: prev == null ? "new" : cur == null ? "gone" : null,
+      };
+    })
+    .filter((m) => Math.abs(m.delta) >= 0.005)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 6);
 
   return (
     <div>
@@ -186,6 +249,88 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                 )}
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  AI cost by desk
+                  <InfoTip>{AI_SECTION_HELP.desks}</InfoTip>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {deskRows.length === 0 ? (
+                  <EmptyState message="No AI cost this month." />
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Desk</TableHead>
+                        <TableHead className="text-right">AI cost</TableHead>
+                        <TableHead className="text-right">MoM Δ</TableHead>
+                        <TableHead className="text-right">of AI spend</TableHead>
+                        <TableHead className="text-right">of desk&apos;s bill</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {deskRows.map((d) => (
+                        <TableRow key={d.desk}>
+                          <TableCell className="font-medium">
+                            {d.desk === "UNALLOCATED" ? (
+                              <span className="text-red-700">UNALLOCATED</span>
+                            ) : (
+                              <Link
+                                href={`/desks/${encodeURIComponent(d.desk)}?month=${month}&mode=${mode}`}
+                                className="hover:underline"
+                              >
+                                {d.desk}
+                              </Link>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtMoney(d.cost)}</TableCell>
+                          <TableCell className="text-right">
+                            <DeltaText delta={d.delta} />
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtPct(d.aiShare)}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {d.billShare == null ? "—" : fmtPct(d.billShare)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  Biggest endpoint moves
+                  <InfoTip>{AI_SECTION_HELP.movers}</InfoTip>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {movers.length === 0 ? (
+                  <EmptyState message={`No endpoint movement vs ${fmtMonth(prevMonth)}.`} />
+                ) : (
+                  <ul className="space-y-2">
+                    {movers.map((m) => (
+                      <li key={m.key} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-mono text-xs">{m.label}</span>
+                          {m.serving_type === "BATCH_INFERENCE" && (
+                            <Badge variant="secondary" className="bg-violet-100 text-violet-800">
+                              BATCH
+                            </Badge>
+                          )}
+                        </span>
+                        <DeltaText delta={m.delta} note={m.note} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
           <Card>
@@ -196,10 +341,10 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {endpoints.length === 0 ? (
+              {endpointRows.length === 0 ? (
                 <EmptyState message="No AI usage recorded for this month." />
               ) : (
-                <EndpointTable endpoints={endpoints} month={month} mode={mode} aiCost={endpointCost} />
+                <EndpointTable endpoints={endpointRows} month={month} mode={mode} aiCost={endpointCost} />
               )}
               <p className="no-print mt-3 text-xs text-muted-foreground">
                 Endpoint spend landing in UNALLOCATED? Tag the endpoint at source with{" "}
@@ -225,17 +370,39 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
   );
 }
 
-/** Offering-type chip: batch ai_query jobs get their own hue; anything else renders verbatim. */
+/** MoM movement: signed dollars colored by direction, optional "(new)"/"(gone)" note. */
+function DeltaText({ delta, note }: { delta: number | null; note?: string | null }) {
+  if (delta == null) return <span className="text-sm text-muted-foreground">—</span>;
+  return (
+    <span
+      className={cn(
+        "text-sm tabular-nums",
+        delta > 0 && "text-amber-700",
+        delta < 0 && "text-emerald-700",
+      )}
+    >
+      {fmtDelta(delta)}
+      {note && <span className="ml-1 text-xs text-muted-foreground">({note})</span>}
+    </span>
+  );
+}
+
+/**
+ * Offering-type chip: batch ai_query jobs get their own hue. The two known
+ * offering types drop the _INFERENCE suffix to keep the table narrow (full
+ * value on hover); anything else renders verbatim.
+ */
 function ServingTypeChip({ type }: { type: string | null }) {
   if (type == null) return <span className="text-xs text-muted-foreground">—</span>;
   return (
     <Badge
       variant="secondary"
+      title={type}
       className={
         type === "BATCH_INFERENCE" ? "bg-violet-100 text-violet-800" : "bg-slate-100 text-slate-700"
       }
     >
-      {type}
+      {type.replace(/_INFERENCE$/, "")}
     </Badge>
   );
 }
@@ -246,7 +413,7 @@ function EndpointTable({
   mode,
   aiCost,
 }: {
-  endpoints: AiEndpointUsageRow[];
+  endpoints: (AiEndpointUsageRow & { delta: number | null; isNew: boolean })[];
   month: string;
   mode: string;
   aiCost: number;
@@ -263,13 +430,20 @@ function EndpointTable({
           <TableHead>Attribution</TableHead>
           <TableHead className="text-right">DBUs</TableHead>
           <TableHead className="text-right">Cost</TableHead>
-          <TableHead className="text-right">Share of AI</TableHead>
+          <TableHead className="text-right">MoM Δ</TableHead>
+          <TableHead className="text-right">Share</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {endpoints.map((e, i) => (
           <TableRow key={i}>
-            <TableCell className={cn("font-mono text-xs", e.endpoint_name == null && "text-muted-foreground")}>
+            <TableCell
+              title={e.endpoint_name ?? undefined}
+              className={cn(
+                "max-w-[200px] truncate font-mono text-xs",
+                e.endpoint_name == null && "text-muted-foreground",
+              )}
+            >
               {e.endpoint_name ?? "(no endpoint)"}
             </TableCell>
             <TableCell>
@@ -294,6 +468,9 @@ function EndpointTable({
             </TableCell>
             <TableCell className="text-right tabular-nums">{fmtDbu(e.dbus)}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtMoney(e.cost)}</TableCell>
+            <TableCell className="text-right">
+              <DeltaText delta={e.delta} note={e.isNew ? "new" : null} />
+            </TableCell>
             <TableCell className="text-right tabular-nums">
               {aiCost > 0 ? fmtPct(e.cost / aiCost) : "—"}
             </TableCell>

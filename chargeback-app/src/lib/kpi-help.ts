@@ -140,7 +140,11 @@ export const AI_SECTION_HELP = {
   trend:
     "AI cost per month over the trailing 12 months, stacked by category, always from live history — the adoption curve of AI workloads in the bill.",
   endpoints:
-    "The month's AI spend per serving endpoint × offering type from live cost_fact: which product and desk each endpoint bills to, the attribution rule that routed it, DBUs and cost. BATCH_INFERENCE marks ai_query batch jobs. Rows without an endpoint (vector search, training) group under “(no endpoint)”. Endpoint detail is never snapshotted, so this table reads live data in both modes.",
+    "The month's AI spend per serving endpoint × offering type from live cost_fact: which product and desk each endpoint bills to, the attribution rule that routed it, DBUs and cost. BATCH_INFERENCE marks ai_query batch jobs. Rows without an endpoint (vector search, training) group under “(no endpoint)”. MoM Δ compares the endpoint against last month's live figures — “new” means it had no spend then; a desk-split endpoint shows “—” because a per-row Δ would double-count. Endpoint detail is never snapshotted, so this table reads live data in both modes.",
+  desks:
+    "The month's AI cost per desk: absolute cost, month-over-month change (previous month always live), the desk's share of all AI spend, and AI intensity — AI cost ÷ the desk's whole bill, i.e. how AI-heavy that desk's usage is. Same monthly_chargeback rows as the KPI tiles, so the desks sum to the AI cost tile.",
+  movers:
+    "Endpoints ranked by absolute month-over-month cost change (both months live, compared per workspace × endpoint × offering type × category, so a re-mapped endpoint compares against itself). “new” = no spend last month; “gone” = spent last month, nothing this month. The list behind the MoM Δ tile: these are the endpoints that moved the AI bill.",
 } as const;
 
 export const ANALYTICS_SECTION_HELP = {

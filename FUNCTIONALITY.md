@@ -334,8 +334,14 @@ as every other report (so AI figures always reconcile with the monthly chargebac
 - KPI tiles: AI cost (+ share of the month's bill), MoM Δ, **batch-inference share**
   (`product_features.model_serving.offering_type = 'BATCH_INFERENCE'`), unallocated AI cost.
 - AI cost by category with blended $/DBU; 12-month stacked AI trend (live history).
+- **AI cost by desk**: per-desk AI cost, MoM Δ, share of AI spend, and **AI intensity**
+  (AI cost ÷ the desk's whole bill); desk names link to the self-service pages.
+- **Biggest endpoint moves**: endpoints ranked by |MoM Δ| (both months live, compared per
+  workspace × endpoint × offering type × category so a re-mapped endpoint compares against
+  itself), with "new" / "gone" markers — the list behind the MoM Δ tile.
 - **Serving-endpoints table** from live `cost_fact`: endpoint × offering type × product × desk
-  with attribution badge, DBUs, cost and share of AI spend; rows without an endpoint dimension
+  with attribution badge, DBUs, cost, MoM Δ ("new" = no spend last month; desk-split endpoints
+  show "—" to avoid double-counting) and share of AI spend; rows without an endpoint dimension
   (vector search, training) group under "(no endpoint)"; CSV download and a pointer to
   `/admin/endpoints` for unallocated endpoints.
 - A visible **freshness note**: `system.billing.usage` lags real usage by ~1–2 h (no official
