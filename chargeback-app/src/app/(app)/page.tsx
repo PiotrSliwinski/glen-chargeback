@@ -53,7 +53,14 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
       ) : (
         <>
           <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-            <KpiTile label="Total cost" value={fmtMoney(data.totalCost)} info={KPI_HELP.totalCost} />
+            <Link href={`/report?month=${month}&mode=${mode}`} className="block">
+              <KpiTile
+                label="Total cost"
+                value={fmtMoney(data.totalCost)}
+                hint="click for the full monthly report"
+                info={KPI_HELP.totalCost}
+              />
+            </Link>
             <KpiTile
               label="MoM change"
               value={mom.value}
@@ -119,6 +126,9 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
                     series: t.data_domain,
                     total_cost: t.total_cost,
                   }))}
+                  hrefFor={(domain, m) =>
+                    `/drill?month=${m}&mode=${mode}&domain=${encodeURIComponent(domain)}`
+                  }
                 />
                 <TrendHint month={month} />
               </CardContent>

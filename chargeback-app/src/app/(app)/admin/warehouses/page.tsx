@@ -83,12 +83,14 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
           value={String(rows.length - sharedCount)}
           hint="whole warehouse incl. idle → one product"
         />
-        <KpiTile
-          label="Unassigned candidates 30d"
-          value={String(candidates.length)}
-          hint="idle-heavy, USER/NONE-attributed"
-          tone={candidates.length > 0 ? "warn" : "good"}
-        />
+        <Link href="/queue?tab=warehouses" className="block">
+          <KpiTile
+            label="Unassigned candidates 30d"
+            value={String(candidates.length)}
+            hint="idle-heavy — click to classify in the work queue"
+            tone={candidates.length > 0 ? "warn" : "good"}
+          />
+        </Link>
       </div>
 
       {candidates.length > 0 && (
@@ -160,7 +162,19 @@ async function Warehouses({ searchParams }: { searchParams: SearchParams }) {
                     <TableCell>
                       <StatusChip ok={r.is_shared} label={r.is_shared ? "shared" : "dedicated"} />
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{r.data_product ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {r.data_product ? (
+                        /* the product's cost detail; month defaults to last closed */
+                        <Link
+                          href={`/drill?product=${encodeURIComponent(r.data_product)}`}
+                          className="hover:underline"
+                        >
+                          {r.data_product}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
                     <TableCell>
                       <EditDialog
                         trigger={<RowAction>Reclassify</RowAction>}

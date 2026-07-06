@@ -5,6 +5,8 @@ import { getDeskInvoice, getMonthlyRows, getPublishedMonths } from "@/dal/report
 import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
+import { getSession } from "@/lib/auth";
+import { atLeast } from "@/lib/rbac";
 import { ComputeChip, EmptyState, KpiTile, MethodBadge, PageTitle } from "@/components/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -44,13 +46,15 @@ async function Desk({
   const desk = decodeURIComponent(rawDesk);
   const { month, months, publishedMonths } = await resolveReportParams(searchParams);
 
-  const [trend, monthRows, scorecard, published, deskDetail] = await Promise.all([
+  const [trend, monthRows, scorecard, published, deskDetail, session] = await Promise.all([
     getDeskTrend(desk),
     getMonthlyRows(month, "live"),
     getDeskScorecard(month),
     getPublishedMonths(),
     getDeskDetail(month, desk),
+    getSession(),
   ]);
+  const isSteward = atLeast(session?.user.role ?? null, "steward");
 
   const products = new Map<string, { data_domain: string; cost: number; dbus: number }>();
   for (const r of monthRows.filter((r) => r.desk === desk)) {
@@ -158,14 +162,27 @@ async function Desk({
           hint="this desk's tagging discipline"
           info={KPI_HELP.deskTagCoverage}
         />
-        <KpiTile
-          label="Unallocated cost"
-          value={score ? fmtMoney(score.none_cost) : "—"}
-          hint="attribution NONE — fix in the work queue"
-          tone={score && score.none_cost > 0 ? "bad" : "good"}
-          info={KPI_HELP.deskNoneCost}
-          infoAlign="end"
-        />
+        {isSteward ? (
+          <Link href="/queue" className="block">
+            <KpiTile
+              label="Unallocated cost"
+              value={score ? fmtMoney(score.none_cost) : "—"}
+              hint="attribution NONE — click to open the work queue"
+              tone={score && score.none_cost > 0 ? "bad" : "good"}
+              info={KPI_HELP.deskNoneCost}
+              infoAlign="end"
+            />
+          </Link>
+        ) : (
+          <KpiTile
+            label="Unallocated cost"
+            value={score ? fmtMoney(score.none_cost) : "—"}
+            hint="attribution NONE — fix in the work queue"
+            tone={score && score.none_cost > 0 ? "bad" : "good"}
+            info={KPI_HELP.deskNoneCost}
+            infoAlign="end"
+          />
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -183,6 +200,10 @@ async function Desk({
                   value: t.total_cost,
                   color: t.billing_month === month ? "#4f46e5" : "#94a3b8",
                 }))}
+                hrefFor={(label) => {
+                  const m = trend.find((t) => fmtMonth(t.billing_month) === label)?.billing_month;
+                  return `/desks/${encodeURIComponent(desk)}?month=${m ?? month}`;
+                }}
               />
             )}
           </CardContent>
@@ -258,7 +279,14 @@ async function Desk({
                           {p.data_product}
                         </Link>
                       </TableCell>
-                      <TableCell>{p.data_domain}</TableCell>
+                      <TableCell>
+                        <Link
+                          href={`/drill?month=${month}&mode=live&domain=${encodeURIComponent(p.data_domain)}`}
+                          className="hover:underline"
+                        >
+                          {p.data_domain}
+                        </Link>
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{fmtDbu(p.dbus)}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtMoney(p.cost)}</TableCell>
                       <TableCell className="text-right tabular-nums">

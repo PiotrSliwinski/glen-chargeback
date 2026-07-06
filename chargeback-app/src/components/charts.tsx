@@ -54,9 +54,12 @@ export function BarList({
 export function StackedTrend({
   points,
   specials = DOMAIN_SPECIALS,
+  hrefFor,
 }: {
   points: { billing_month: string; series: string; total_cost: number }[];
   specials?: Record<string, string>;
+  /** Drill-down link per segment; return undefined to leave a segment plain. */
+  hrefFor?: (series: string, month: string) => string | undefined;
 }) {
   const months = [...new Set(points.map((p) => p.billing_month))].sort();
   const series = [...new Set(points.map((p) => p.series))].sort();
@@ -78,15 +81,21 @@ export function StackedTrend({
                 const v =
                   points.find((p) => p.billing_month === m && p.series === d)?.total_cost ?? 0;
                 if (v <= 0 || totals[mi] <= 0) return null;
-                return (
-                  <div
+                const href = hrefFor?.(d, m);
+                const style = {
+                  height: `${(v / totals[mi]) * 100}%`,
+                  backgroundColor: colorFor(d, specials),
+                };
+                return href ? (
+                  <a
                     key={d}
-                    style={{
-                      height: `${(v / totals[mi]) * 100}%`,
-                      backgroundColor: colorFor(d, specials),
-                    }}
+                    href={href}
+                    className="block hover:opacity-80"
+                    style={style}
                     title={`${d}: ${fmtMoney(v)}`}
                   />
+                ) : (
+                  <div key={d} style={style} title={`${d}: ${fmtMoney(v)}`} />
                 );
               })}
             </div>
@@ -213,9 +222,12 @@ export function Sparkline({
 export function ShareBar({
   items,
   specials = DOMAIN_SPECIALS,
+  hrefFor,
 }: {
   items: { label: string; value: number; color?: string }[];
   specials?: Record<string, string>;
+  /** Drill-down link per slice; return undefined to leave a slice plain. */
+  hrefFor?: (label: string) => string | undefined;
 }) {
   const total = items.reduce((s, i) => s + i.value, 0);
   const shown = items.filter((i) => i.value > 0);
@@ -223,16 +235,19 @@ export function ShareBar({
   return (
     <div>
       <div className="flex h-5 w-full overflow-hidden rounded">
-        {shown.map((i) => (
-          <div
-            key={i.label}
-            style={{
-              width: `${(i.value / total) * 100}%`,
-              backgroundColor: i.color ?? colorFor(i.label, specials),
-            }}
-            title={`${i.label}: ${fmtPct(i.value / total)} (${fmtMoney(i.value)})`}
-          />
-        ))}
+        {shown.map((i) => {
+          const href = hrefFor?.(i.label);
+          const style = {
+            width: `${(i.value / total) * 100}%`,
+            backgroundColor: i.color ?? colorFor(i.label, specials),
+          };
+          const title = `${i.label}: ${fmtPct(i.value / total)} (${fmtMoney(i.value)})`;
+          return href ? (
+            <a key={i.label} href={href} className="block hover:opacity-80" style={style} title={title} />
+          ) : (
+            <div key={i.label} style={style} title={title} />
+          );
+        })}
       </div>
       <Legend
         items={shown.map((i) => ({

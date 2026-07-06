@@ -114,8 +114,22 @@ async function DeskInvoice({
             <TableBody>
               {rows.map((r) => (
                 <TableRow key={`${r.data_domain}|${r.data_product}`}>
-                  <TableCell>{r.data_domain}</TableCell>
-                  <TableCell>{r.data_product}</TableCell>
+                  <TableCell>
+                    <Link
+                      href={`/drill?month=${month}&mode=published&domain=${encodeURIComponent(r.data_domain)}`}
+                      className="hover:underline"
+                    >
+                      {r.data_domain}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      href={`/drill?month=${month}&mode=published&domain=${encodeURIComponent(r.data_domain)}&product=${encodeURIComponent(r.data_product)}`}
+                      className="hover:underline"
+                    >
+                      {r.data_product}
+                    </Link>
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{fmtDbu(r.total_dbus)}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {fmtMoneyExact(r.total_cost)}

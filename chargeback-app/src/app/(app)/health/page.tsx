@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { requirePageRole } from "@/lib/guards";
 import { getSession } from "@/lib/auth";
 import { atLeast } from "@/lib/rbac";
@@ -88,7 +89,14 @@ async function Health() {
                 return (
                   <TableRow key={r.billing_month}>
                     <TableCell>
-                      {fmtMonth(r.billing_month)}
+                      <Link
+                        href={`/report?month=${r.billing_month}&mode=${
+                          publishedMonths.includes(r.billing_month) ? "published" : "live"
+                        }`}
+                        className="hover:underline"
+                      >
+                        {fmtMonth(r.billing_month)}
+                      </Link>
                       {publishedMonths.includes(r.billing_month) && (
                         <span className="ml-1.5 text-xs text-indigo-600">published</span>
                       )}
@@ -141,7 +149,11 @@ async function Health() {
                     Math.abs(r.fact_gap) < tolerance && Math.abs(r.report_gap) < tolerance;
                   return (
                     <TableRow key={r.billing_month}>
-                      <TableCell>{fmtMonth(r.billing_month)}</TableCell>
+                      <TableCell>
+                        <Link href={`/azure?month=${r.billing_month}`} className="hover:underline">
+                          {fmtMonth(r.billing_month)}
+                        </Link>
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.billing_cost)}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.fact_cost)}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.report_cost)}</TableCell>
@@ -286,7 +298,15 @@ async function PublicationDiff({
         <TableBody>
           {rows.map((r) => (
             <TableRow key={r.desk}>
-              <TableCell>{r.desk}</TableCell>
+              <TableCell>
+                {/* inspect the moved desk (live view) before signing off */}
+                <Link
+                  href={`/desks/${encodeURIComponent(r.desk)}?month=${candidate}`}
+                  className="hover:underline"
+                >
+                  {r.desk}
+                </Link>
+              </TableCell>
               {prevPublished && (
                 <TableCell className="text-right tabular-nums">
                   {r.prev == null ? "—" : fmtMoneyExact(r.prev)}

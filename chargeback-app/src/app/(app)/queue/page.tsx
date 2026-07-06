@@ -244,7 +244,15 @@ async function UntaggedJobsTab({
                 <TableCell>
                   <p className="text-sm font-medium">{r.work_item}</p>
                   {r.job_id && (
-                    <p className="font-mono text-xs text-muted-foreground">job {r.job_id}</p>
+                    <p className="font-mono text-xs text-muted-foreground">
+                      {/* the job's 30-day attribution history */}
+                      <Link
+                        href={`/admin/jobs?view=coverage&q=${encodeURIComponent(r.job_id)}`}
+                        className="hover:underline"
+                      >
+                        job {r.job_id}
+                      </Link>
+                    </p>
                   )}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">{r.usage_category}</TableCell>

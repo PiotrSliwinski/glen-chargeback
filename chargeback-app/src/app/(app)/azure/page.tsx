@@ -253,7 +253,15 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                   <TableBody>
                     {categoryRows.map((c) => (
                       <TableRow key={c.category}>
-                        <TableCell className="font-medium">{c.category}</TableCell>
+                        <TableCell className="font-medium">
+                          {/* deep-link into the resources table below, pre-filtered */}
+                          <Link
+                            href={`/azure?month=${month}&q=${encodeURIComponent(c.category)}`}
+                            className="hover:underline"
+                          >
+                            {c.category}
+                          </Link>
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">{fmtInt(c.resources)}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtMoney(c.cost)}</TableCell>
                         <TableCell className="text-right">
@@ -285,6 +293,11 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                       total_cost: t.total_cost,
                     }))}
                     specials={AZURE_DOMAIN_SPECIALS}
+                    hrefFor={(desk, m) =>
+                      desk === "UNALLOCATED"
+                        ? undefined
+                        : `/desks/${encodeURIComponent(desk)}?month=${m}`
+                    }
                   />
                 )}
               </CardContent>
@@ -346,7 +359,16 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                     {deskRows.map((d) => (
                       <TableRow key={d.desk}>
                         <TableCell className="font-medium">
-                          {d.desk === "UNALLOCATED" ? <UnallocatedLabel expected /> : d.desk}
+                          {d.desk === "UNALLOCATED" ? (
+                            <UnallocatedLabel expected />
+                          ) : (
+                            <Link
+                              href={`/desks/${encodeURIComponent(d.desk)}?month=${month}`}
+                              className="hover:underline"
+                            >
+                              {d.desk}
+                            </Link>
+                          )}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{fmtMoney(d.cost)}</TableCell>
                         <TableCell className="text-right">
@@ -418,17 +440,32 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                             <p className="text-xs text-muted-foreground">{r.meter_category ?? "—"}</p>
                           </TableCell>
                           <TableCell className="text-xs">
+                            {/* pivot: re-filter this table to everything in the same RG / subscription */}
                             <p
                               className="max-w-32 truncate font-mono"
                               title={r.resource_group ?? undefined}
                             >
-                              {r.resource_group ?? "—"}
+                              {r.resource_group ? (
+                                <Link
+                                  href={`/azure?month=${month}&q=${encodeURIComponent(r.resource_group)}`}
+                                  className="hover:underline"
+                                >
+                                  {r.resource_group}
+                                </Link>
+                              ) : (
+                                "—"
+                              )}
                             </p>
                             <p
                               className="max-w-32 truncate font-mono text-muted-foreground"
                               title={r.subscription_id}
                             >
-                              {r.subscription_id}
+                              <Link
+                                href={`/azure?month=${month}&q=${encodeURIComponent(r.subscription_id)}`}
+                                className="hover:underline"
+                              >
+                                {r.subscription_id}
+                              </Link>
                             </p>
                           </TableCell>
                           <TableCell>
@@ -438,11 +475,25 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                             {r.data_product === "UNALLOCATED" ? (
                               <UnallocatedLabel expected />
                             ) : (
-                              r.data_product
+                              <Link
+                                href={`/drill?month=${month}&mode=live&product=${encodeURIComponent(r.data_product)}`}
+                                className="hover:underline"
+                              >
+                                {r.data_product}
+                              </Link>
                             )}
                           </TableCell>
                           <TableCell className="text-sm">
-                            {r.desk === "UNALLOCATED" ? <UnallocatedLabel expected /> : r.desk}
+                            {r.desk === "UNALLOCATED" ? (
+                              <UnallocatedLabel expected />
+                            ) : (
+                              <Link
+                                href={`/desks/${encodeURIComponent(r.desk)}?month=${month}`}
+                                className="hover:underline"
+                              >
+                                {r.desk}
+                              </Link>
+                            )}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">{fmtMoney(r.cost)}</TableCell>
                           <TableCell className="text-right tabular-nums">

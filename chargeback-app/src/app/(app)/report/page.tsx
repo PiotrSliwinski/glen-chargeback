@@ -6,6 +6,8 @@ import { getDeskScorecard } from "@/dal/desks";
 import { fmtDbu, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi } from "@/lib/format";
 import { resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { KPI_HELP, PAGE_HELP, REPORT_SECTION_HELP } from "@/lib/kpi-help";
+import { getSession } from "@/lib/auth";
+import { atLeast } from "@/lib/rbac";
 import { EmptyState, InfoTip, KpiTile, PageTitle } from "@/components/ui";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,13 +41,15 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
   const { month, mode, months, publishedMonths } = await resolveReportParams(searchParams);
   const notPublished = mode === "published" && !publishedMonths.includes(month);
 
-  const [dashboard, rows, deskMovement, productMovement, scorecard] = await Promise.all([
+  const [dashboard, rows, deskMovement, productMovement, scorecard, session] = await Promise.all([
     getDashboard(month, mode),
     getMonthlyRows(month, mode),
     getDeskMovement(month, mode),
     getProductMovement(month, mode),
     getDeskScorecard(month),
+    getSession(),
   ]);
+  const isSteward = atLeast(session?.user.role ?? null, "steward");
   const commentary = buildCommentary(deskMovement, productMovement, fmtMoney);
 
   // domain → product → desk aggregation for the breakdown section
@@ -126,14 +130,27 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
                 tone={dashboard.tagCoveragePct >= 0.7 ? "good" : "warn"}
                 info={KPI_HELP.tagCoverage}
               />
-              <KpiTile
-                label="Unallocated cost"
-                value={fmtMoney(dashboard.unallocatedCost)}
-                tone={dashboard.unallocatedCost > 0 ? "bad" : "good"}
-                hint="unclaimed spend — a real line item"
-                info={KPI_HELP.unallocatedCost}
-                infoAlign="end"
-              />
+              {isSteward ? (
+                <Link href="/queue" className="block">
+                  <KpiTile
+                    label="Unallocated cost"
+                    value={fmtMoney(dashboard.unallocatedCost)}
+                    tone={dashboard.unallocatedCost > 0 ? "bad" : "good"}
+                    hint="unclaimed spend — click to open the work queue"
+                    info={KPI_HELP.unallocatedCost}
+                    infoAlign="end"
+                  />
+                </Link>
+              ) : (
+                <KpiTile
+                  label="Unallocated cost"
+                  value={fmtMoney(dashboard.unallocatedCost)}
+                  tone={dashboard.unallocatedCost > 0 ? "bad" : "good"}
+                  hint="unclaimed spend — a real line item"
+                  info={KPI_HELP.unallocatedCost}
+                  infoAlign="end"
+                />
+              )}
             </div>
           </section>
 
@@ -158,7 +175,14 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
                   <TableBody>
                     {deskMovement.map((d) => (
                       <TableRow key={d.desk}>
-                        <TableCell className="font-medium">{d.desk}</TableCell>
+                        <TableCell className="font-medium">
+                          <Link
+                            href={`/desks/${encodeURIComponent(d.desk)}?month=${month}&mode=${mode}`}
+                            className="hover:underline"
+                          >
+                            {d.desk}
+                          </Link>
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {d.prev_cost == null ? "—" : fmtMoney(d.prev_cost)}
                         </TableCell>
@@ -290,7 +314,14 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
                     {scorecard.map((s, i) => (
                       <TableRow key={s.desk}>
                         <TableCell className="text-muted-foreground/70">{i + 1}</TableCell>
-                        <TableCell className="font-medium">{s.desk}</TableCell>
+                        <TableCell className="font-medium">
+                          <Link
+                            href={`/desks/${encodeURIComponent(s.desk)}?month=${month}&mode=${mode}`}
+                            className="hover:underline"
+                          >
+                            {s.desk}
+                          </Link>
+                        </TableCell>
                         <TableCell className="text-right tabular-nums">{fmtMoney(s.total_cost)}</TableCell>
                         <TableCell
                           className={`text-right tabular-nums ${
@@ -384,8 +415,22 @@ function DomainGroup({
       </TableRow>
       {group.items.map((e) => (
         <TableRow key={`${e.data_product}|${e.desk}`}>
-          <TableCell className="pl-8">{e.data_product}</TableCell>
-          <TableCell>{e.desk}</TableCell>
+          <TableCell className="pl-8">
+            <Link
+              className="hover:underline"
+              href={`/drill?month=${month}&mode=${mode}&domain=${encodeURIComponent(group.domain)}&product=${encodeURIComponent(e.data_product)}`}
+            >
+              {e.data_product}
+            </Link>
+          </TableCell>
+          <TableCell>
+            <Link
+              className="hover:underline"
+              href={`/desks/${encodeURIComponent(e.desk)}?month=${month}&mode=${mode}`}
+            >
+              {e.desk}
+            </Link>
+          </TableCell>
           <TableCell className="text-right tabular-nums">{fmtDbu(e.dbus)}</TableCell>
           <TableCell className="text-right tabular-nums">{fmtMoney(e.cost)}</TableCell>
           <TableCell className="text-right tabular-nums">

@@ -190,6 +190,7 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
       return {
         key: k,
         label: sample.endpoint_name ?? `(no endpoint — ${sample.usage_category})`,
+        endpoint_name: sample.endpoint_name,
         serving_type: sample.serving_type,
         delta: (cur?.cost ?? 0) - (prev?.cost ?? 0),
         note: prev == null ? "new" : cur == null ? "gone" : null,
@@ -400,7 +401,17 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                               r.label === r.key && r.key !== "(no identity)" && "text-amber-700",
                             )}
                           >
-                            {r.label}
+                            {r.key === "(no identity)" ? (
+                              r.label
+                            ) : (
+                              /* pivot: the endpoint table below, filtered to this identity */
+                              <Link
+                                href={`/ai?month=${month}&mode=${mode}&q=${encodeURIComponent(r.key)}`}
+                                className="hover:underline"
+                              >
+                                {r.label}
+                              </Link>
+                            )}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">{r.endpointCount}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtMoney(r.cost)}</TableCell>
@@ -431,7 +442,17 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                     {movers.map((m) => (
                       <li key={m.key} className="flex items-center justify-between gap-3 text-sm">
                         <span className="flex min-w-0 items-center gap-2">
-                          <span className="truncate font-mono text-xs">{m.label}</span>
+                          {m.endpoint_name ? (
+                            /* pivot: the endpoint table below, filtered to this endpoint */
+                            <Link
+                              href={`/ai?month=${month}&mode=${mode}&q=${encodeURIComponent(m.endpoint_name)}`}
+                              className="truncate font-mono text-xs hover:underline"
+                            >
+                              {m.label}
+                            </Link>
+                          ) : (
+                            <span className="truncate font-mono text-xs">{m.label}</span>
+                          )}
                           {m.serving_type === "BATCH_INFERENCE" && (
                             <Badge variant="secondary" className="bg-violet-100 text-violet-800">
                               BATCH
@@ -642,7 +663,18 @@ function EndpointTable({
                 </Link>
               )}
             </TableCell>
-            <TableCell className="text-muted-foreground">{e.desk}</TableCell>
+            <TableCell className="text-muted-foreground">
+              {e.desk === "UNALLOCATED" ? (
+                e.desk
+              ) : (
+                <Link
+                  href={`/desks/${encodeURIComponent(e.desk)}?month=${month}&mode=${mode}`}
+                  className="hover:underline"
+                >
+                  {e.desk}
+                </Link>
+              )}
+            </TableCell>
             <TableCell>
               <MethodBadge method={e.attribution_method} />
             </TableCell>

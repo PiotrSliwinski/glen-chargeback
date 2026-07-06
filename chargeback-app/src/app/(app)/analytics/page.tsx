@@ -195,7 +195,14 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
                 <EmptyState message="No cost this month." />
               ) : (
                 <>
-                  <ShareBar items={shareBarItems(products.map((p) => ({ label: p.data_product, value: p.cost })))} />
+                  <ShareBar
+                    items={shareBarItems(products.map((p) => ({ label: p.data_product, value: p.cost })))}
+                    hrefFor={(label) =>
+                      products.some((p) => p.data_product === label)
+                        ? `/drill?month=${month}&mode=${mode}&product=${encodeURIComponent(label)}`
+                        : undefined
+                    }
+                  />
                   <div className="mt-4">
                     <ProductDriversTable products={products} month={month} mode={mode} />
                   </div>
@@ -216,7 +223,14 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
                 <EmptyState message="No cost this month." />
               ) : (
                 <>
-                  <ShareBar items={shareBarItems(desks.map((d) => ({ label: d.desk, value: d.cost })))} />
+                  <ShareBar
+                    items={shareBarItems(desks.map((d) => ({ label: d.desk, value: d.cost })))}
+                    hrefFor={(label) =>
+                      desks.some((d) => d.desk === label)
+                        ? `/desks/${encodeURIComponent(label)}?month=${month}&mode=${mode}`
+                        : undefined
+                    }
+                  />
                   <div className="mt-4">
                     <DeskDriversTable desks={desks} month={month} mode={mode} />
                   </div>
@@ -291,11 +305,15 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
                       title="Increases"
                       movers={movers.filter((p) => p.delta_abs > 0).slice(0, 5)}
                       empty="No product grew month-over-month."
+                      month={month}
+                      mode={mode}
                     />
                     <MoversTable
                       title="Decreases"
                       movers={movers.filter((p) => p.delta_abs < 0).slice(0, 5)}
                       empty="No product shrank month-over-month."
+                      month={month}
+                      mode={mode}
                     />
                   </div>
                 )}
@@ -395,7 +413,14 @@ function ProductDriversTable({
                 {p.data_product}
               </Link>
             </TableCell>
-            <TableCell className="text-muted-foreground">{p.data_domain}</TableCell>
+            <TableCell className="text-muted-foreground">
+              <Link
+                href={`/drill?month=${month}&mode=${mode}&domain=${encodeURIComponent(p.data_domain)}`}
+                className="hover:underline"
+              >
+                {p.data_domain}
+              </Link>
+            </TableCell>
             <TableCell className="text-right tabular-nums">{p.desk_count}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtMoney(p.cost)}</TableCell>
             <DeltaCell delta_abs={p.delta_abs} delta_pct={p.delta_pct} />
@@ -483,7 +508,12 @@ function DeskDriversTable({
                 <span className="text-muted-foreground">—</span>
               ) : (
                 <>
-                  {d.top_product}
+                  <Link
+                    href={`/drill?month=${month}&mode=${mode}&product=${encodeURIComponent(d.top_product)}`}
+                    className="hover:underline"
+                  >
+                    {d.top_product}
+                  </Link>
                   {d.top_product_share != null && (
                     <span className="ml-1 text-xs text-muted-foreground">
                       ({fmtPct(d.top_product_share)} of desk)
@@ -571,10 +601,14 @@ function MoversTable({
   title,
   movers,
   empty,
+  month,
+  mode,
 }: {
   title: string;
   movers: ProductMovementRow[];
   empty: string;
+  month: string;
+  mode: ReportMode;
 }) {
   return (
     <div>
@@ -596,8 +630,22 @@ function MoversTable({
           <TableBody>
             {movers.map((p) => (
               <TableRow key={`${p.data_product}|${p.desk}`}>
-                <TableCell className="font-medium">{p.data_product}</TableCell>
-                <TableCell className="text-muted-foreground">{p.desk}</TableCell>
+                <TableCell className="font-medium">
+                  <Link
+                    href={`/drill?month=${month}&mode=${mode}&product=${encodeURIComponent(p.data_product)}`}
+                    className="hover:underline"
+                  >
+                    {p.data_product}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  <Link
+                    href={`/desks/${encodeURIComponent(p.desk)}?month=${month}&mode=${mode}`}
+                    className="hover:underline"
+                  >
+                    {p.desk}
+                  </Link>
+                </TableCell>
                 <TableCell
                   className={cn(
                     "text-right tabular-nums",

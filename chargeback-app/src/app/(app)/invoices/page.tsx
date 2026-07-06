@@ -87,7 +87,15 @@ async function Invoices({ searchParams }: { searchParams: SearchParams }) {
             <TableBody>
               {desks.map((d) => (
                 <TableRow key={d.desk}>
-                  <TableCell className="font-medium">{d.desk}</TableCell>
+                  <TableCell className="font-medium">
+                    {/* live analytical view; the statement link is the published one */}
+                    <Link
+                      href={`/desks/${encodeURIComponent(d.desk)}?month=${month}`}
+                      className="hover:underline"
+                    >
+                      {d.desk}
+                    </Link>
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{fmtMoney(d.total_cost)}</TableCell>
                   <TableCell className="text-right">
                     <Link
