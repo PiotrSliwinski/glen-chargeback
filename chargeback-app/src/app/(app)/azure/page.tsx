@@ -205,8 +205,11 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
       <p className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
         Freshness: Azure cost exports land in{" "}
         <code>azure_cleaned.amortized_costs</code> on a daily cadence, typically a day behind
-        real usage — the current month is always partial. This screen is monitoring only: Azure
-        cost never enters the Databricks chargeback report, its published snapshots, or desk
+        real usage — the current month is always partial. Azure Databricks meters lag a little
+        further: the Databricks billing pipeline emits hourly aggregates roughly 1–2 hours
+        behind usage (no official SLA) before Microsoft even picks them up, so the most recent
+        day&apos;s Databricks charges settle last. This screen is monitoring only: Azure cost
+        never enters the Databricks chargeback report, its published snapshots, or desk
         invoices.
       </p>
 

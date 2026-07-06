@@ -370,7 +370,9 @@ Databricks chargeback (the two never mix), fed by `azure_monthly_chargeback` /
   `/admin/azure` for stewards.
 - Month picker only (no Live/Published toggle); months come from the Azure data itself
   (`getAzureMonths`). Freshness note: exports land in `azure_cleaned.amortized_costs` daily,
-  so the current month is always partial. Renders an Azure-specific limitations footer
+  so the current month is always partial; Azure Databricks meters trail further because the
+  Databricks billing pipeline emits hourly aggregates ~1–2 h behind usage (no official SLA)
+  before Microsoft picks them up. Renders an Azure-specific limitations footer
   (`<ReportFooter scope="azure" />`).
 
 ### 7.4 Desk self-service — `/desks`, `/desks/[desk]`
