@@ -173,21 +173,23 @@ export async function retireProduct(
   if (valid_to <= windowStart) {
     throw new DomainError("VALIDATION", `retirement date must be after ${windowStart}`);
   }
-  const [jobs, warehouses, tagRules, runnerRules] = await Promise.all([
+  const [jobs, warehouses, endpoints, tagRules, runnerRules] = await Promise.all([
     mappings.listJobMappings(),
     mappings.listWarehouseMappings(),
+    mappings.listEndpointMappings(),
     mappings.listTagRules(),
     mappings.listRunnerRules(),
   ]);
   const jobRefs = jobs.filter((j) => j.data_product === data_product).length;
   const whRefs = warehouses.filter((w) => w.data_product === data_product).length;
+  const epRefs = endpoints.filter((e) => e.data_product === data_product).length;
   const ruleRefs =
     tagRules.filter((r) => r.data_product === data_product).length +
     runnerRules.filter((r) => r.data_product === data_product).length;
-  if (jobRefs + whRefs + ruleRefs > 0) {
+  if (jobRefs + whRefs + epRefs + ruleRefs > 0) {
     throw new DomainError(
       "REFERENCED",
-      `product is still referenced by ${jobRefs} job mapping(s), ${whRefs} warehouse mapping(s) and ${ruleRefs} attribution rule(s) — remove or remap those first`,
+      `product is still referenced by ${jobRefs} job mapping(s), ${whRefs} warehouse mapping(s), ${epRefs} endpoint mapping(s) and ${ruleRefs} attribution rule(s) — remove or remap those first`,
     );
   }
   await mappings.retireProduct(data_product, valid_to, actor);

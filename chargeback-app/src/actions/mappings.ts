@@ -149,6 +149,55 @@ export async function deleteRunnerRuleAction(
   });
 }
 
+const MapEndpoint = z.object({
+  workspace_id: z.string().min(1),
+  endpoint_name: z.string().min(1),
+  data_product: z.string().min(1),
+  note: optionalText,
+});
+
+export async function mapEndpointAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const input = parseForm(formData, MapEndpoint);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listEndpointMappings();
+    if (
+      existing.some(
+        (e) =>
+          e.workspace_id === input.workspace_id && e.endpoint_name === input.endpoint_name,
+      )
+    ) {
+      throw new DomainError(
+        "DUPLICATE_KEY",
+        `endpoint '${input.endpoint_name}' in workspace ${input.workspace_id} is already mapped — remove it first`,
+      );
+    }
+    await dal.insertEndpointMapping(input, actor);
+    invalidateMappings();
+    return `Endpoint '${input.endpoint_name}' mapped to '${input.data_product}' — all its serving spend, batch inference included. Reminder: the durable fix is tagging the endpoint at source.`;
+  });
+}
+
+const DeleteEndpointMapping = z.object({
+  workspace_id: z.string().min(1),
+  endpoint_name: z.string().min(1),
+});
+
+export async function deleteEndpointMappingAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const input = parseForm(formData, DeleteEndpointMapping);
+    await dal.deleteEndpointMapping(input.workspace_id, input.endpoint_name);
+    invalidateMappings();
+    return `Mapping removed for endpoint '${input.endpoint_name}'. Its future spend attributes via tags — or falls to UNALLOCATED.`;
+  });
+}
+
 const AddUser = z.object({
   user_id: z.string().min(1),
   user_name: z.string().min(1),

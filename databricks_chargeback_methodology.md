@@ -103,6 +103,7 @@ Jobs, DLT pipelines, serverless workloads and model serving carry `identity_meta
 | 2 | `(workspace_id, job_id)` found in `job_product_mapping` | `JOB_MAPPING` | Manual bridge for not-yet-tagged jobs |
 | 3 | Any custom tag key=value found in `tag_product_mapping` | `TAG_RULE` | Rule-based: workloads tagged with team/project/etc. tags (but no `data_product` tag) route to a product |
 | 4 | Dedicated warehouse in `warehouse_product_mapping` (`is_shared = false`) | `WAREHOUSE_MAPPING` | Whole warehouse belongs to one product (incl. its idle cost) |
+| 4b | `(workspace_id, endpoint_name)` found in `endpoint_product_mapping` | `ENDPOINT_MAPPING` | Dedicated AI/model-serving endpoint — the serving analogue of a dedicated warehouse; all its spend (realtime and `ai_query` batch inference alike) belongs to one product. Mutually exclusive with rule 4: a billing row has a warehouse OR an endpoint, never both |
 | 5 | Runner found in `runner_product_mapping` | `RUNNER_RULE` | Explicit opt-in: everything this identity runs (jobs, DLT, serverless) belongs to one product |
 | 6 | **Ad-hoc spend only** (`job_id IS NULL`): runner found in `user_mapping` | `USER` | Ad-hoc work → product `AD_HOC`, desk = runner's desk |
 | 7 | Nothing matched | `NONE` | Product/desk = `UNALLOCATED`; visible line item, pressure to fix |
@@ -253,6 +254,21 @@ Semantics: **everything** this identity runs — jobs, DLT, serverless — attri
 
 Contrast with `user_mapping` (§4.1): `user_mapping` names a runner and gives ad-hoc spend a home desk (rule 6, never applied to jobs); `runner_product_mapping` assigns a runner's entire workload to a product (rule 5, applies to everything including jobs).
 
+### 4.7b `endpoint_product_mapping` — dedicated AI/serving endpoints
+
+```sql
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.endpoint_product_mapping (
+  workspace_id   STRING NOT NULL,
+  endpoint_name  STRING NOT NULL,     -- composite key with workspace_id, exactly as in usage_metadata.endpoint_name
+  data_product   STRING NOT NULL,
+  note           STRING,              -- optional: why mapped manually
+  mapped_by      STRING,              -- audit: who created the mapping
+  mapped_at      TIMESTAMP            -- audit: when
+);
+```
+
+Semantics: **all** spend of the endpoint — realtime inference and `ai_query` batch inference alike — attributes to `data_product` (waterfall rule 4b, the serving analogue of a dedicated warehouse). `endpoint_name` must match `usage_metadata.endpoint_name` byte-for-byte; endpoint names are only unique per workspace, hence the composite key. A `data_product` tag on the endpoint itself (rule 1) always wins — this bridge exists for endpoints not yet tagged at source, and the goal state is to empty it. One row per `(workspace_id, endpoint_name)`; duplicates are integrity violations (§7.4).
+
 ### 4.8 (Optional, deferred) `data_product_split`
 
 Only create if a product genuinely must be split across desks. Start without it — splits invite negotiation overhead.
@@ -298,6 +314,8 @@ months keep the figures they were published with.
 ## 5. Core Allocation Views
 
 > **Change note vs v0.9:** both views now expose the columns the semantic layer needs — `usage_view` adds `job_id` and `tag_data_product` (from `custom_tags.data_product`); `query_view` adds `workspace_id`. Everything else is unchanged.
+>
+> **Change note (AI cost tracking):** `usage_view` and `cost_fact` additionally expose `endpoint_name` (`usage_metadata.endpoint_name`) and `serving_type` (`product_features.model_serving.offering_type`, e.g. `BATCH_INFERENCE` for `ai_query` batch jobs); `cost_fact` gains waterfall rule 4b (`ENDPOINT_MAPPING`, §4.7b). Freshness caveat for AI spend: `system.billing.usage` lags real usage by roughly 1–2 hours (no official SLA) and the billing pipeline emits hourly aggregates before DBUs appear in the system tables — the current day's model-serving cost is always incomplete; closed months are unaffected. Existing deployments must drop and recreate `usage_fact_tbl` (rebuildable cache) so its shape matches the extended view — see the migration note in `databricks/setup.sql` §9.
 
 ### 5.1 `query_view` — per-query SQL warehouse allocation
 
@@ -1030,7 +1048,7 @@ The waterfall exists because each compute type has a different native tagging me
 | Jobs (classic compute) | `data_product` custom tag on the job cluster — flows into `custom_tags` on billing rows automatically | **Cluster policies** making the tag mandatory: new jobs cannot launch untagged | 1 (TAG) |
 | Serverless jobs / notebooks / DLT | **Serverless budget policies** — a policy carries tags stamped onto serverless billing records | One policy per data product (or per domain to start); grant teams permission only on their own policies | 1 (TAG) |
 | DLT pipelines (classic) | Pipeline cluster custom tags | Cluster policy on pipeline clusters | 1 (TAG) |
-| Model serving | Endpoint tags / budget policy (serverless) | Same as serverless | 1 (TAG) |
+| Model serving (realtime + `ai_query` batch inference) | Endpoint tags / budget policy (serverless) | Same as serverless; endpoints not yet tagged can be bridged per endpoint in `endpoint_product_mapping` | 1 (TAG) / 4b (ENDPOINT_MAPPING) |
 | Dedicated SQL warehouse | Row in `warehouse_product_mapping` (`is_shared = false`) — whole warehouse incl. idle cost goes to the product | Interface admin screen | 4 |
 | Shared SQL warehouse | No product tag possible — per-query allocation, then runner's desk | — | 6 (USER → `AD_HOC`) |
 | Untagged legacy jobs | Row in `job_product_mapping` as a **temporary bridge**, or a `tag_product_mapping` rule when the job already carries a team/project tag, or a `runner_product_mapping` rule when its service principal serves one product | Work queue (§7.2) drives cleanup; target is tags at source | 2 / 3 / 5 |

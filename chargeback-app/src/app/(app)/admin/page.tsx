@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requirePageRole } from "@/lib/guards";
 import {
   listCatalogue,
+  listEndpointMappings,
   listJobMappings,
   listRunnerRules,
   listTagRules,
@@ -38,6 +39,7 @@ async function AdminIndex() {
     catalogue,
     jobs,
     warehouses,
+    endpoints,
     users,
     workspaces,
     tagRules,
@@ -51,6 +53,7 @@ async function AdminIndex() {
     listCatalogue(),
     listJobMappings(),
     listWarehouseMappings(),
+    listEndpointMappings(),
     listUsers(),
     listWorkspaces(),
     listTagRules(),
@@ -97,6 +100,12 @@ async function AdminIndex() {
       title: "Warehouses",
       desc: "warehouse_product_mapping — dedicated vs shared SQL warehouses.",
       stat: `${warehouses.length} classified`,
+    },
+    {
+      href: "/admin/endpoints",
+      title: "AI endpoints",
+      desc: "endpoint_product_mapping — dedicated model-serving endpoints (realtime + ai_query batch inference) routed to one product. Rule 4b, the serving analogue of a dedicated warehouse.",
+      stat: `${endpoints.length} mapped`,
     },
     {
       href: "/admin/users",

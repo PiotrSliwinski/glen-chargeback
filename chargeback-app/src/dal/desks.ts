@@ -72,11 +72,12 @@ export async function getDeskDetail(month: string, desk: string): Promise<DeskDe
 
   return query(
     `SELECT usage_category, is_serverless, data_product, job_name, warehouse_id,
-            runner_name, attribution_method, SUM(dbus) AS dbus, SUM(cost) AS cost
+            endpoint_name, runner_name, attribution_method,
+            SUM(dbus) AS dbus, SUM(cost) AS cost
      FROM ${T("cost_fact")}
      WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
        AND desk = :desk
-     GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY cost DESC LIMIT 500`,
+     GROUP BY 1, 2, 3, 4, 5, 6, 7, 8 ORDER BY cost DESC LIMIT 500`,
     { month: monthStart(month), desk },
     z.object({
       usage_category: zStr,
@@ -84,6 +85,7 @@ export async function getDeskDetail(month: string, desk: string): Promise<DeskDe
       data_product: zStr,
       job_name: zStrOrNull,
       warehouse_id: zStrOrNull,
+      endpoint_name: zStrOrNull,
       runner_name: zStrOrNull,
       attribution_method: zStr,
       dbus: zNum,

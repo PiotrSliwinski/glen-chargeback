@@ -351,7 +351,7 @@ async function Desk({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Product</TableHead>
-                    <TableHead>Job / warehouse</TableHead>
+                    <TableHead>Job / warehouse / endpoint</TableHead>
                     <TableHead>Runner</TableHead>
                     <TableHead>Compute</TableHead>
                     <TableHead>Attribution</TableHead>
@@ -393,7 +393,7 @@ async function Desk({
                                 r.data_product
                               )}
                             </TableCell>
-                            <TableCell>{r.job_name ?? r.warehouse_id ?? "—"}</TableCell>
+                            <TableCell>{r.job_name ?? r.warehouse_id ?? r.endpoint_name ?? "—"}</TableCell>
                             <TableCell>{r.runner_name ?? "—"}</TableCell>
                             <TableCell>
                               <ComputeChip isServerless={r.is_serverless} />

@@ -117,6 +117,7 @@ export const METHOD_STYLE: Record<AttributionMethod, { color: string; chip: stri
   JOB_MAPPING: { color: "#d97706", chip: "bg-amber-100 text-amber-800" },
   TAG_RULE: { color: "#0d9488", chip: "bg-teal-100 text-teal-800" },
   WAREHOUSE_MAPPING: { color: "#0284c7", chip: "bg-sky-100 text-sky-800" },
+  ENDPOINT_MAPPING: { color: "#c026d3", chip: "bg-fuchsia-100 text-fuchsia-800" },
   RUNNER_RULE: { color: "#9333ea", chip: "bg-purple-100 text-purple-800" },
   USER: { color: "#4f46e5", chip: "bg-indigo-100 text-indigo-800" },
   NONE: { color: "#dc2626", chip: "bg-red-100 text-red-800" },

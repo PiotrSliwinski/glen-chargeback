@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { requirePageRole } from "@/lib/guards";
-import { listCatalogue, listJobMappings, listWarehouseMappings } from "@/dal/mappings";
+import { listCatalogue, listEndpointMappings, listJobMappings, listWarehouseMappings } from "@/dal/mappings";
 import {
   createProductAction,
   moveProductAction,
@@ -39,10 +39,11 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   const q = (param(sp.q) ?? "").toLowerCase();
 
-  const [catalogue, jobs, warehouses] = await Promise.all([
+  const [catalogue, jobs, warehouses, endpoints] = await Promise.all([
     listCatalogue(),
     listJobMappings(),
     listWarehouseMappings(),
+    listEndpointMappings(),
   ]);
 
   const byProduct = new Map<string, DataProductRow[]>();
@@ -51,7 +52,8 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
   }
   const refCount = (p: string) =>
     jobs.filter((j) => j.data_product === p).length +
-    warehouses.filter((w) => w.data_product === p).length;
+    warehouses.filter((w) => w.data_product === p).length +
+    endpoints.filter((e) => e.data_product === p).length;
 
   const activeRows = catalogue.filter((r) => r.valid_to == null);
   const retiredCount = [...byProduct.values()].filter(
@@ -146,7 +148,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
                     )}
                     {refs > 0 && (
                       <Badge variant="secondary" className="bg-muted text-muted-foreground">
-                        referenced by {refs} job/warehouse {plural(refs, "mapping")}
+                        referenced by {refs} job/warehouse/endpoint {plural(refs, "mapping")}
                       </Badge>
                     )}
                   </div>

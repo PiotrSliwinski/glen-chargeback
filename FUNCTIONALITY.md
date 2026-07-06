@@ -34,10 +34,10 @@ rule, and known gap.
 
 | Area | What you can do |
 |---|---|
-| **Reference data** | Full CRUD (within the methodology's rules) on all seven Databricks mapping tables — product catalogue (versioned), job bridge, tag rules, warehouse classification, runner rules, users, workspaces — plus the four Azure attribution rule tables (resource bridge, Azure tag rules, resource-group rules, subscription rules) and DBU reservation-discount windows (`dbu_discount_plan`) |
+| **Reference data** | Full CRUD (within the methodology's rules) on all eight Databricks mapping tables — product catalogue (versioned), job bridge, tag rules, warehouse classification, AI endpoint bridge, runner rules, users, workspaces — plus the four Azure attribution rule tables (resource bridge, Azure tag rules, resource-group rules, subscription rules) and DBU reservation-discount windows (`dbu_discount_plan`) |
 | **Azure attribution** | Route Azure spend (`azure_cleaned.amortized_costs`) to the same product catalogue via an allowlist waterfall (TAG → resource bridge → tag rule → RG rule → subscription rule), with a 30-day coverage audit and per-desk rollup — only matched cost reaches a desk |
 | **Work queue** | Five actionable queues of unattributed/unmapped cost with inline, pre-filled fix forms |
-| **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, printable desk invoices, per-desk self-service pages, tagging scorecard |
+| **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, an AI-costs page (model serving incl. `ai_query` batch inference, per-endpoint spend), printable desk invoices, per-desk self-service pages, tagging scorecard |
 | **Exports** | 12 CSV reports + a 6-sheet XLSX report workbook |
 | **Governance** | One-click health checks (reconciliation + integrity), publication diff, gated monthly publication with typed confirmation |
 | **Access control** | Entra ID SSO, three hierarchical roles (viewer / steward / publisher) enforced at proxy, page, and action level |
@@ -86,7 +86,7 @@ rule, and known gap.
 |---|---|---|---|
 | Dashboard, report pack, drill-down, desks, invoices, CSV/XLSX report exports | ✅ | ✅ | ✅ |
 | Work queue + all inline fixes | — | ✅ | ✅ |
-| Reference-data admin (all seven tables) | — | ✅ | ✅ |
+| Reference-data admin (all eight tables) | — | ✅ | ✅ |
 | Health page, re-run checks, queue/catalogue exports | — | ✅ | ✅ |
 | Publish a month | — | — | ✅ |
 
@@ -105,10 +105,11 @@ rule, and known gap.
 | `/` | viewer | Chargeback dashboard (landing) |
 | `/report` | viewer | Monthly report pack |
 | `/drill` | viewer | Domain → product → desk → detail drill-down |
+| `/ai` | viewer | AI cost tracking (model serving, batch inference, vector search) |
 | `/desks`, `/desks/[desk]` | viewer | Desk self-service views |
 | `/invoices`, `/invoices/[desk]` | viewer | Published desk invoices |
 | `/queue` | steward | Work queue (5 tabs) |
-| `/admin` (+ 6 sub-pages) | steward | Reference-data management (incl. `/admin/azure`) |
+| `/admin` (+ 7 sub-pages) | steward | Reference-data management (incl. `/admin/azure`, `/admin/endpoints`) |
 | `/health` | steward (publish: publisher) | Checks, diff, publication |
 | `/login` | public | Sign-in |
 
@@ -183,6 +184,20 @@ platform team (the `USER` rule applies to ad-hoc spend only).
 - Classify/reclassify each warehouse **Shared** (per-query allocation) or **Dedicated** (whole
   warehouse incl. idle cost → one product). The form makes §7.4(d)-invalid combinations
   (dedicated without product, shared with product) unrepresentable, and the server re-validates.
+
+### 5.3b AI endpoints — `/admin/endpoints` (`endpoint_product_mapping`)
+
+- Waterfall **rule 4b**: one AI/model-serving endpoint → one product — the serving analogue of a
+  dedicated warehouse. ALL of the endpoint's spend, realtime inference and `ai_query` batch
+  inference alike, bills to that product. Composite key `(workspace_id, endpoint_name)` because
+  endpoint names are only unique per workspace; `endpoint_name` must match
+  `usage_metadata.endpoint_name` byte-for-byte.
+- **Unmapped-endpoints panel**: endpoints whose trailing-30-day spend fell to `UNALLOCATED`
+  (`attribution_method = NONE` in live `cost_fact`), with cost and an inline pre-filled
+  "Map to product" form — the endpoint analogue of the work-queue flow.
+- Add mapping (duplicate key rejected; product must exist — §7.4(b) checked before commit) and
+  remove mapping (with a "falls back to UNALLOCATED" warning). Every form reminds stewards the
+  durable fix is a `data_product` tag on the endpoint at source.
 
 ### 5.4 Users — `/admin/users` (`user_mapping`)
 
@@ -303,10 +318,30 @@ Plus a downloads strip (XLSX workbook + 5 CSVs) and the limitations footer.
 Three linked, URL-driven panels: domains → products in domain (with desk links) → product detail
 (top 200 `cost_fact` lines: category, job/warehouse, runner, DBUs, cost). Every detail line shows
 its **attribution-method badge** (TAG green / JOB_MAPPING amber / TAG_RULE teal /
-WAREHOUSE_MAPPING blue / RUNNER_RULE purple / USER indigo / NONE red) — the "why did this land
+WAREHOUSE_MAPPING blue / ENDPOINT_MAPPING fuchsia / RUNNER_RULE purple / USER indigo / NONE red) — the "why did this land
 here" transparency — plus a **compute chip**
 (SERVERLESS violet / CLASSIC slate, from `cost_fact.is_serverless`; per-query warehouse rows
 show "—").
+
+### 7.3b AI costs — `/ai`
+
+Dedicated lens on AI-native spend, fed by the **same** `monthly_chargeback` / `cost_fact` reads
+as every other report (so AI figures always reconcile with the monthly chargeback):
+
+- **Scope** = the AI billing categories: `MODEL_SERVING` (realtime endpoints and `ai_query`
+  batch inference alike), `VECTOR_SEARCH`, `FOUNDATION_MODEL_TRAINING`, `AGENT_EVALUATION`
+  (`AI_CATEGORIES` in `src/dal/ai.ts`).
+- KPI tiles: AI cost (+ share of the month's bill), MoM Δ, **batch-inference share**
+  (`product_features.model_serving.offering_type = 'BATCH_INFERENCE'`), unallocated AI cost.
+- AI cost by category with blended $/DBU; 12-month stacked AI trend (live history).
+- **Serving-endpoints table** from live `cost_fact`: endpoint × offering type × product × desk
+  with attribution badge, DBUs, cost and share of AI spend; rows without an endpoint dimension
+  (vector search, training) group under "(no endpoint)"; CSV download and a pointer to
+  `/admin/endpoints` for unallocated endpoints.
+- A visible **freshness note**: `system.billing.usage` lags real usage by ~1–2 h (no official
+  SLA) and the billing pipeline emits hourly aggregates before DBUs appear in the system
+  tables — the current day's AI spend is always incomplete. Month/mode picker as everywhere;
+  endpoint detail always reads live `cost_fact` (never snapshotted).
 
 ### 7.4 Desk self-service — `/desks`, `/desks/[desk]`
 
@@ -341,6 +376,7 @@ show "—").
 | `movement` | viewer | Desk MoM deltas |
 | `movement-products` | viewer | Product-level MoM deltas |
 | `scorecard` | viewer | Per-desk TAG%/NONE leaderboard |
+| `ai-endpoints` | viewer | AI spend per endpoint × offering type × product × desk (live `cost_fact`) |
 | `desk-invoice` (`&desk=`) | viewer | One desk's published statement |
 | `catalogue` | steward | Full product catalogue incl. history |
 | `queue-jobs` / `queue-runners` / `queue-workspaces` / `queue-tags` / `queue-warehouses` | steward | The five work queues |
@@ -381,7 +417,7 @@ is published). Currency/percent number formats, bold frozen headers, auto-width 
 
 ## 10. Business Rules & Invariants Enforced in Code
 
-1. **Single write surface** — the app writes only the seven mapping tables and the publication
+1. **Single write surface** — the app writes only the eight mapping tables and the publication
    snapshot; all reporting is derived reads.
 2. **History never restates** — desk/domain changes are atomic close-and-insert (single `MERGE`,
    because Databricks has single-statement atomicity only); no catalogue deletes; published
@@ -406,8 +442,8 @@ whenever fixtures are live. Every DAL module branches to a shared in-memory stor
 mutations: mapping a job removes it from the queue, publishing adds the month, the janitor row
 disappears when removed.
 
-Fixture world: 7 months (2026-01…07) with growth trend, 3 domains, 6 catalogue products (one
-with a desk-move history: `pricing-curves`, fx → rates at 2026-05-01), 3 desks, 5 users,
+Fixture world: 7 months (2026-01…07) with growth trend, 3 domains, 7 catalogue products (one
+with a desk-move history: `pricing-curves`, fx → rates at 2026-05-01), 3 desks, 6 users,
 3 workspaces, populated queues (4 untagged jobs, 3 unknown runners, 1 unknown workspace,
 2 rogue tags, 2 warehouse candidates), reconciliation rows with sub-dollar gaps, 5 published
 months, and one janitor-eligible bridge row. Azure fixtures: 2 subscriptions, 10 resources with
@@ -416,6 +452,13 @@ bridge and 3 unmatched resources), 2 resource bridges, 1 tag rule, 1 RG rule, 1 
 rule — writes re-attribute the fixture rows so the coverage tab reacts like the real views.
 One DBU reservation-discount window (27%, 2025-12-08 → 2026-06-12) exercises the discounts
 screen; the mock's static monthly figures do **not** re-price when windows change.
+AI fixtures: the `outage-extraction` product (ai_query batch extraction of outage alerts), six
+endpoint-usage rows (batch + realtime, one `ENDPOINT_MAPPING`-attributed embedding endpoint,
+one unmapped `ml-experiments-llm` endpoint feeding the admin panel, one endpoint-less vector
+search row), and one endpoint bridge row. Mapping/unmapping an endpoint re-attributes the
+endpoint-usage fixtures live (map → `ENDPOINT_MAPPING`, remove → back to `NONE`); the static
+monthly matrix — and therefore the AI KPI tiles — does **not** recompute, same caveat as
+discounts.
 
 ---
 

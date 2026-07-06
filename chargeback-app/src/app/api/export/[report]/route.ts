@@ -10,6 +10,7 @@ import {
   getPublishedMonths,
 } from "@/dal/reports";
 import { listCatalogue } from "@/dal/mappings";
+import { getAiEndpointUsage } from "@/dal/ai";
 import {
   getRogueTags,
   getUnassignedWarehouses,
@@ -50,6 +51,11 @@ const REPORTS: Record<string, { role: Role; fetch: Fetcher }> = {
   scorecard: {
     role: "viewer",
     fetch: ({ month }) => getDeskScorecard(month),
+  },
+  "ai-endpoints": {
+    role: "viewer",
+    // endpoint detail is live-only — cost_fact is never snapshotted
+    fetch: ({ month }) => getAiEndpointUsage(month),
   },
   "desk-invoice": {
     role: "viewer",

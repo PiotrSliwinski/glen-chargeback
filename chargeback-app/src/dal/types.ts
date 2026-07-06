@@ -10,6 +10,7 @@ export type AttributionMethod =
   | "JOB_MAPPING"
   | "TAG_RULE"
   | "WAREHOUSE_MAPPING"
+  | "ENDPOINT_MAPPING" // rule 4b — dedicated AI/serving endpoint
   | "RUNNER_RULE"
   | "USER" // ad-hoc spend only — job cost never defaults to the runner
   | "NONE";
@@ -62,6 +63,8 @@ export interface DetailRow {
   is_serverless: boolean | null;
   job_name: string | null;
   warehouse_id: string | null;
+  /** AI/serving endpoint (cost_fact.endpoint_name); null outside model serving / vector search */
+  endpoint_name: string | null;
   runner_name: string | null;
   attribution_method: AttributionMethod;
   dbus: number;
@@ -213,6 +216,21 @@ export interface WarehouseMappingRow {
   is_shared: boolean;
 }
 
+/**
+ * Endpoint bridge (waterfall rule 4b): one AI/model-serving endpoint →
+ * product — the serving analogue of a dedicated warehouse. endpoint_name
+ * must match usage_metadata.endpoint_name exactly; names are only unique
+ * per workspace, so the key is composite.
+ */
+export interface EndpointMappingRow {
+  workspace_id: string;
+  endpoint_name: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
 export interface UserMappingRow {
   user_id: string;
   user_name: string;
@@ -299,6 +317,42 @@ export interface AzureResourceAttributionRow {
 /** Trailing-30-day Azure cost per desk (UNALLOCATED = not yet claimed). */
 export interface AzureDeskTotalRow {
   desk: string;
+  cost_30d: number;
+}
+
+// ---------- AI cost tracking ----------
+
+/**
+ * One month's AI spend per endpoint × offering type × product × desk, from
+ * live cost_fact filtered to the AI usage categories. endpoint_name is null
+ * for AI spend that carries no endpoint dimension (e.g. vector search
+ * ingest, foundation-model training).
+ */
+export interface AiEndpointUsageRow {
+  endpoint_name: string | null;
+  /** product_features.model_serving.offering_type, e.g. BATCH_INFERENCE (ai_query batch); null when absent */
+  serving_type: string | null;
+  usage_category: string;
+  workspace_id: string;
+  data_product: string;
+  desk: string;
+  attribution_method: AttributionMethod;
+  dbus: number;
+  cost: number;
+}
+
+/** Trailing-12-month AI cost per month × usage category — the AI trend feed. */
+export interface AiTrendPoint {
+  billing_month: string;
+  usage_category: string;
+  total_cost: number;
+}
+
+/** Endpoint whose trailing-30-day spend fell to UNALLOCATED — endpoint-bridge candidate. */
+export interface UnmappedEndpointRow {
+  workspace_id: string;
+  endpoint_name: string;
+  serving_type: string | null;
   cost_30d: number;
 }
 

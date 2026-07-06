@@ -228,7 +228,7 @@ async function DetailPanel({
             <TableHeader>
               <TableRow>
                 <TableHead>Category</TableHead>
-                <TableHead>Job / warehouse</TableHead>
+                <TableHead>Job / warehouse / endpoint</TableHead>
                 <TableHead>Runner</TableHead>
                 <TableHead>Compute</TableHead>
                 <TableHead>Attribution</TableHead>
@@ -240,7 +240,7 @@ async function DetailPanel({
               {pageRows.map((d, i) => (
                 <TableRow key={i}>
                   <TableCell>{d.usage_category}</TableCell>
-                  <TableCell>{d.job_name ?? d.warehouse_id ?? "—"}</TableCell>
+                  <TableCell>{d.job_name ?? d.warehouse_id ?? d.endpoint_name ?? "—"}</TableCell>
                   <TableCell>{d.runner_name ?? "—"}</TableCell>
                   <TableCell>
                     <ComputeChip isServerless={d.is_serverless} />

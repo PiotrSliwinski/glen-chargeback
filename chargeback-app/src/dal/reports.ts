@@ -247,18 +247,19 @@ export async function getProductDetail(month: string, product: string): Promise<
   if (env.DAL_MOCK) return mockStore.detail[product] ?? [];
 
   return query(
-    `SELECT usage_category, is_serverless, job_name, warehouse_id, runner_name,
-            attribution_method, SUM(dbus) AS dbus, SUM(cost) AS cost
+    `SELECT usage_category, is_serverless, job_name, warehouse_id, endpoint_name,
+            runner_name, attribution_method, SUM(dbus) AS dbus, SUM(cost) AS cost
      FROM ${T("cost_fact")}
      WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
        AND data_product = :product
-     GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY cost DESC LIMIT 200`,
+     GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY cost DESC LIMIT 200`,
     { month: monthStart(month), product },
     z.object({
       usage_category: zStr,
       is_serverless: zBoolOrNull,
       job_name: zStrOrNull,
       warehouse_id: zStrOrNull,
+      endpoint_name: zStrOrNull,
       runner_name: zStrOrNull,
       attribution_method: zStr,
       dbus: zNum,

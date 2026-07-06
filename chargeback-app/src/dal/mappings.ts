@@ -6,6 +6,7 @@ import { mockStore } from "@/dal/mock";
 import { zDate, zDateOrNull, zId, zNum, zStr, zStrOrNull } from "@/dal/parse";
 import type {
   DataProductRow,
+  EndpointMappingRow,
   JobMappingRow,
   RunnerRuleRow,
   TagRuleRow,
@@ -134,6 +135,26 @@ export async function listWarehouseMappings(): Promise<WarehouseMappingRow[]> {
       data_product: zStrOrNull,
       is_shared: z.boolean(),
     }) as z.ZodType<WarehouseMappingRow>,
+  );
+}
+
+export async function listEndpointMappings(): Promise<EndpointMappingRow[]> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("mappings");
+  if (env.DAL_MOCK) return [...mockStore.endpointMappings];
+  return query(
+    `SELECT workspace_id, endpoint_name, data_product, note, mapped_by, mapped_at
+     FROM ${T("endpoint_product_mapping")} ORDER BY workspace_id, endpoint_name`,
+    {},
+    z.object({
+      workspace_id: zId,
+      endpoint_name: zStr,
+      data_product: zStr,
+      note: zStrOrNull,
+      mapped_by: zStrOrNull,
+      mapped_at: zStrOrNull,
+    }) as z.ZodType<EndpointMappingRow>,
   );
 }
 
@@ -607,6 +628,64 @@ export async function upsertWarehouseMapping(row: WarehouseMappingRow): Promise<
        INSERT (warehouse_id, data_product, is_shared)
        VALUES (:warehouse_id, :data_product, :is_shared)`,
     { ...row },
+  );
+}
+
+export async function insertEndpointMapping(
+  row: { workspace_id: string; endpoint_name: string; data_product: string; note: string | null },
+  actor: string,
+): Promise<void> {
+  if (env.DAL_MOCK) {
+    mockStore.endpointMappings.push({ ...row, mapped_by: actor, mapped_at: now() });
+    // cost_fact is a view — the endpoint's NONE rows re-attribute via the new bridge row
+    const desk = mockActiveDesk(row.data_product);
+    for (const a of mockStore.aiEndpointUsage) {
+      if (
+        a.workspace_id === row.workspace_id &&
+        a.endpoint_name === row.endpoint_name &&
+        a.attribution_method === "NONE"
+      ) {
+        a.attribution_method = "ENDPOINT_MAPPING";
+        a.data_product = row.data_product;
+        a.desk = desk;
+      }
+    }
+    return;
+  }
+  await exec(
+    `INSERT INTO ${T("endpoint_product_mapping")}
+       (workspace_id, endpoint_name, data_product, note, mapped_by, mapped_at)
+     VALUES (:workspace_id, :endpoint_name, :data_product, :note, :actor, current_timestamp())`,
+    { ...row, actor },
+  );
+}
+
+export async function deleteEndpointMapping(
+  workspace_id: string,
+  endpoint_name: string,
+): Promise<void> {
+  if (env.DAL_MOCK) {
+    mockStore.endpointMappings = mockStore.endpointMappings.filter(
+      (e) => !(e.workspace_id === workspace_id && e.endpoint_name === endpoint_name),
+    );
+    // without the bridge row, the endpoint's ENDPOINT_MAPPING rows recompute to NONE
+    for (const a of mockStore.aiEndpointUsage) {
+      if (
+        a.workspace_id === workspace_id &&
+        a.endpoint_name === endpoint_name &&
+        a.attribution_method === "ENDPOINT_MAPPING"
+      ) {
+        a.attribution_method = "NONE";
+        a.data_product = "UNALLOCATED";
+        a.desk = "UNALLOCATED";
+      }
+    }
+    return;
+  }
+  await exec(
+    `DELETE FROM ${T("endpoint_product_mapping")}
+     WHERE workspace_id = :workspace_id AND endpoint_name = :endpoint_name`,
+    { workspace_id, endpoint_name },
   );
 }
 

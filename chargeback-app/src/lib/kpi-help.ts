@@ -13,6 +13,8 @@ export const PAGE_HELP = {
     "The distribution-ready monthly pack: executive summary, month-over-month movement by desk with auto-generated commentary, domain → product → desk breakdown, attribution coverage, and the per-desk tagging scorecard. Same figures as the dashboard for the selected month and mode. Print it, or download the XLSX workbook / CSVs at the bottom.",
   analytics:
     "Decision-support layer over the same monthly_chargeback figures, centred on who drives the bill: per-product and per-desk cost-driver tables (share, movement, $/DBU, concentration, 12-month sparklines), spend trajectory and run rate, unit economics ($/DBU) by usage category, month-over-month movers and the 12-month attribution-mix trend — with auto-generated plain-language findings. Trends always read live history; the selected month follows the Live/Published toggle.",
+  ai:
+    "AI spend carved out of the same figures as every other report: the billing categories Databricks marks as AI-native (MODEL_SERVING — realtime endpoints and ai_query batch inference alike — VECTOR_SEARCH, FOUNDATION_MODEL_TRAINING, AGENT_EVALUATION), rolled up per serving endpoint, offering type, product and desk from live cost_fact. Because it is the same cost_fact, AI figures always reconcile with the monthly chargeback — this page is a lens, not a second source of truth. Note the freshness caveat: system.billing.usage lags real usage by roughly 1–2 hours (no official SLA), so the current day's AI spend is always incomplete.",
   drill:
     "Transparency drill-down: domain → products in that domain → the actual cost lines behind one product (top 200 slices of live cost_fact). Every line shows the attribution method that routed it here and whether it ran on serverless or classic compute — the answer to “why did this cost land where it did?”.",
   desks:
@@ -41,6 +43,8 @@ export const PAGE_HELP = {
     "Audit of every Azure resource that emitted cost in the trailing 30 days: the tags it actually carries and the attribution method(s) that carried that cost — tag at source, bridge row, tag rule, resource-group rule, subscription rule, or nothing. Use it to see which mappings are still doing work, which resources to chase for tagging, and which tags could power a tag rule.",
   warehouses:
     "Waterfall rule 4 configuration: a Shared warehouse spreads its cost across products per query; a Dedicated warehouse charges the whole warehouse — idle time included — to one product. Invalid combinations (dedicated without a product, shared with one) are rejected by the form and re-checked on the server.",
+  endpoints:
+    "Waterfall rule 4b configuration: one AI/model-serving endpoint → one product, the serving analogue of a dedicated warehouse. ALL of the endpoint's spend — realtime inference and ai_query batch inference alike — bills to that product. endpoint_name must match usage_metadata.endpoint_name exactly and is only unique per workspace, hence the composite key. A data_product tag on the endpoint itself (rule 1) always wins; this bridge exists for endpoints not yet tagged at source, and the goal state is to empty it.",
   users:
     "Waterfall rule 6 input: maps a runner identity to a display name and home desk, so AD-HOC spend (queries, notebooks — never jobs) follows the person who ran it. user_id must match executed_by / identity_metadata.run_as byte-for-byte — which is why it is read-only in edit forms and pre-filled from system tables in the work queue.",
   workspaces:
@@ -112,6 +116,31 @@ export const KPI_HELP = {
     "Sum of 30-day Azure cost with attribution_method = NONE. Unlike Databricks spend this is not necessarily a problem: Azure attribution is an allowlist, and shared platform cost is expected to stay unmatched. It never reaches a desk.",
   azureAttributedCost:
     "Sum of 30-day Azure cost the waterfall attributed to a product (any method except NONE) — the slice that reaches desks via the shared catalogue's splits.",
+
+  aiMonthCost:
+    "SUM(total_cost) over the month's monthly_chargeback rows whose usage category is AI-native (MODEL_SERVING, VECTOR_SEARCH, FOUNDATION_MODEL_TRAINING, AGENT_EVALUATION). Same pricing as everything else: DBUs × time-effective list price less any reservation-plan discount. The hint shows this as a share of the whole bill.",
+  aiMomChange:
+    "This month's AI cost minus the previous month's, over the same AI categories. The previous month is always read from live figures — in Published mode this compares snapshot vs live.",
+  aiBatchShare:
+    "Cost with product_features.model_serving.offering_type = BATCH_INFERENCE (ai_query batch jobs) ÷ the month's AI cost, from live cost_fact. Distinguishes scheduled batch extraction from realtime endpoint traffic.",
+  aiUnallocatedCost:
+    "AI-category cost that landed on data_product = 'UNALLOCATED' — endpoints and AI workloads nothing in the waterfall could attribute. Tag the endpoint at source with data_product, or bridge it under Reference data → Endpoints.",
+
+  endpointsMapped:
+    "Rows in endpoint_product_mapping — endpoints explicitly routed to a product by waterfall rule 4b. Goal state: 0, with every endpoint tagged at source instead.",
+  endpointsUnmapped30d:
+    "Endpoints whose trailing-30-day spend fell to UNALLOCATED (attribution_method = NONE in live cost_fact) — candidates for a tag at source or a bridge row.",
+  endpointsUnmappedCost30d:
+    "Sum of that unattributed 30-day endpoint spend — the dollars a mapping would route to a desk.",
+} as const;
+
+export const AI_SECTION_HELP = {
+  categories:
+    "The month's AI cost per billing category with blended $/DBU: MODEL_SERVING covers realtime endpoints and ai_query batch inference; VECTOR_SEARCH, FOUNDATION_MODEL_TRAINING and AGENT_EVALUATION are the other AI-native billing origins. Same rows as the analytics unit-economics table, filtered to AI.",
+  trend:
+    "AI cost per month over the trailing 12 months, stacked by category, always from live history — the adoption curve of AI workloads in the bill.",
+  endpoints:
+    "The month's AI spend per serving endpoint × offering type from live cost_fact: which product and desk each endpoint bills to, the attribution rule that routed it, DBUs and cost. BATCH_INFERENCE marks ai_query batch jobs. Rows without an endpoint (vector search, training) group under “(no endpoint)”. Endpoint detail is never snapshotted, so this table reads live data in both modes.",
 } as const;
 
 export const ANALYTICS_SECTION_HELP = {
@@ -137,7 +166,7 @@ export const REPORT_SECTION_HELP = {
   breakdown:
     "Domain subtotals with product × desk rows beneath. Share = cost ÷ the month's grand total. Domains link into the drill-down.",
   coverage:
-    "Cost per attribution method for the month, exact dollars and share of total. TAG = tagged at source · JOB_MAPPING = manual job bridge · TAG_RULE = matched a tag rule (any custom tag → product) · WAREHOUSE_MAPPING = dedicated warehouse · RUNNER_RULE = runner's workload assigned to a product · USER = runner's home desk (ad-hoc only — job spend never defaults to the runner) · NONE = unattributed, lands in UNALLOCATED.",
+    "Cost per attribution method for the month, exact dollars and share of total. TAG = tagged at source · JOB_MAPPING = manual job bridge · TAG_RULE = matched a tag rule (any custom tag → product) · WAREHOUSE_MAPPING = dedicated warehouse · ENDPOINT_MAPPING = dedicated AI/serving endpoint · RUNNER_RULE = runner's workload assigned to a product · USER = runner's home desk (ad-hoc only — job spend never defaults to the runner) · NONE = unattributed, lands in UNALLOCATED.",
   scorecard:
     "Per desk, always from live cost_fact regardless of mode: TAG % = TAG-attributed cost ÷ desk total; the last column is the desk's unattributed (NONE) cost. Ranked by TAG % — the tagging-adoption leaderboard.",
 } as const;

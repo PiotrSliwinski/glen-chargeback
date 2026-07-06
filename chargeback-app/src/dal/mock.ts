@@ -1,4 +1,5 @@
 import type {
+  AiEndpointUsageRow,
   AzureResourceAttributionRow,
   AzureResourceMappingRow,
   AzureRgRuleRow,
@@ -8,6 +9,7 @@ import type {
   DataProductRow,
   DbuDiscountRow,
   DetailRow,
+  EndpointMappingRow,
   JobAttributionRow,
   JobMappingRow,
   MonthlyChargebackRow,
@@ -33,6 +35,8 @@ import type {
 
 export interface MockStore {
   months: string[]; // closed + current months present in "billing"
+  /** per-month scale factor for the static base matrices (growth trend) */
+  monthFactor: Record<string, number>;
   publishedMonths: string[];
   catalogue: DataProductRow[];
   users: UserMappingRow[];
@@ -41,6 +45,8 @@ export interface MockStore {
   tagRules: TagRuleRow[];
   runnerRules: RunnerRuleRow[];
   warehouseMappings: WarehouseMappingRow[];
+  endpointMappings: EndpointMappingRow[];
+  aiEndpointUsage: AiEndpointUsageRow[]; // base (unscaled) values — DAL scales by monthFactor
   dbuDiscounts: DbuDiscountRow[];
   monthly: MonthlyChargebackRow[];
   coverage: CoverageRow[];
@@ -73,6 +79,8 @@ function createStore(): MockStore {
     { data_product: "stress-testing", data_domain: "risk", desk: "risk", product_owner: "maria.wisniewska@example.com", cost_split_pct: 0.7, valid_from: "2026-01-01", valid_to: null, mapped_by: null, mapped_at: null },
     { data_product: "stress-testing", data_domain: "risk", desk: "credit", product_owner: "maria.wisniewska@example.com", cost_split_pct: 0.3, valid_from: "2026-01-01", valid_to: null, mapped_by: null, mapped_at: null },
     { data_product: "trade-pnl", data_domain: "pnl", desk: "credit", product_owner: "piotr.zielinski@example.com", cost_split_pct: 1, valid_from: "2025-10-01", valid_to: null, mapped_by: null, mapped_at: null },
+    // AI product: ai_query batch extraction of structured data from outage alert texts
+    { data_product: "outage-extraction", data_domain: "market-data", desk: "risk", product_owner: "sara.subramaniam@example.com", cost_split_pct: 1, valid_from: "2025-10-01", valid_to: null, mapped_by: "steward@example.com", mapped_at: "2025-12-02T09:00:00Z" },
   ];
 
   const users: UserMappingRow[] = [
@@ -80,6 +88,7 @@ function createStore(): MockStore {
     { user_id: "jan.nowak@example.com", user_name: "Jan Nowak", desk: "rates" },
     { user_id: "maria.wisniewska@example.com", user_name: "Maria Wiśniewska", desk: "risk" },
     { user_id: "piotr.zielinski@example.com", user_name: "Piotr Zieliński", desk: "credit" },
+    { user_id: "sara.subramaniam@example.com", user_name: "Sara Subramaniam", desk: "risk" },
     { user_id: "9a1b2c3d-svc-etl", user_name: "SP: etl-runner", desk: "rates" },
   ];
 
@@ -113,6 +122,25 @@ function createStore(): MockStore {
     { warehouse_id: "wh-shared-adhoc", data_product: null, is_shared: true },
   ];
 
+  // Endpoint bridge (waterfall rule 4b): dedicated AI/serving endpoint → product.
+  const endpointMappings: EndpointMappingRow[] = [
+    { workspace_id: "1111111111111111", endpoint_name: "curves-embedding-api", data_product: "pricing-curves", note: "embedding endpoint feeding curve search, tagging ticket DATA-3110", mapped_by: "steward@example.com", mapped_at: "2026-06-15T10:00:00Z" },
+  ];
+
+  // AI/model-serving cost per endpoint × offering type (cost_fact filtered to
+  // the AI usage categories). Base values — the DAL scales by monthFactor so
+  // the endpoint table stays consistent with the monthly matrix above.
+  // endpoint_name null = AI spend with no endpoint dimension (vector search).
+  const aiEndpointUsage: AiEndpointUsageRow[] = [
+    { endpoint_name: "outage-alerts-extract-sonnet4", serving_type: "BATCH_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", data_product: "outage-extraction", desk: "risk", attribution_method: "TAG", dbus: 4400, cost: 4100 },
+    { endpoint_name: "outage-alerts-extract-sonnet4", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", data_product: "outage-extraction", desk: "risk", attribution_method: "TAG", dbus: 800, cost: 800 },
+    { endpoint_name: "pnl-anomaly-endpoint", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", data_product: "trade-pnl", desk: "credit", attribution_method: "TAG", dbus: 4100, cost: 2300 },
+    { endpoint_name: "curves-embedding-api", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", data_product: "pricing-curves", desk: "rates", attribution_method: "ENDPOINT_MAPPING", dbus: 850, cost: 800 },
+    { endpoint_name: null, serving_type: null, usage_category: "VECTOR_SEARCH", workspace_id: "1111111111111111", data_product: "var-engine", desk: "risk", attribution_method: "TAG", dbus: 900, cost: 610 },
+    // experimental endpoint nobody claimed — surfaces on the endpoint admin screen
+    { endpoint_name: "ml-experiments-llm", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "3333333333333333", data_product: "UNALLOCATED", desk: "UNALLOCATED", attribution_method: "NONE", dbus: 700, cost: 520 },
+  ];
+
   // DBU reservation plans: date windows discounting the DBU list price.
   // The mock's monthly figures are static and do NOT re-price when these
   // change — the fixtures only exercise the admin CRUD screens.
@@ -134,12 +162,20 @@ function createStore(): MockStore {
     ["risk", "stress-testing", "credit", "JOBS", 1, 3570, 1620],
     ["pnl", "trade-pnl", "credit", "JOBS", 3, 33400, 15200],
     ["pnl", "trade-pnl", "credit", "MODEL_SERVING", 1, 4100, 2300],
+    // AI spend: ai_query batch extraction endpoint + realtime slice (outage-extraction),
+    // an embedding endpoint routed by the endpoint bridge (pricing-curves),
+    // vector search on var-engine, and one unmapped experimental endpoint
+    ["market-data", "outage-extraction", "risk", "MODEL_SERVING", 2, 5200, 4900],
+    ["market-data", "pricing-curves", "rates", "MODEL_SERVING", 1, 850, 800],
+    ["risk", "var-engine", "risk", "VECTOR_SEARCH", 1, 900, 610],
+    ["UNALLOCATED", "UNALLOCATED", "UNALLOCATED", "MODEL_SERVING", 1, 700, 520],
     ["UNALLOCATED", "AD_HOC", "rates", "SQL_WAREHOUSE", 9, 8900, 3900],
     ["UNALLOCATED", "AD_HOC", "risk", "SQL_WAREHOUSE", 5, 5200, 2400],
     ["UNALLOCATED", "AD_HOC", "credit", "SQL_WAREHOUSE", 4, 3800, 1700],
     ["UNALLOCATED", "UNALLOCATED", "UNALLOCATED", "JOBS", 2, 7400, 3300],
     ["UNALLOCATED", "UNALLOCATED", "UNALLOCATED", "SQL_WAREHOUSE", 0, 4900, 2200],
   ];
+  // exported as monthFactor: the AI DAL scales endpoint fixtures by it too
   const factor: Record<string, number> = {
     "2026-01": 0.78, "2026-02": 0.84, "2026-03": 0.9,
     "2026-04": 0.92, "2026-05": 1.0, "2026-06": 1.08, "2026-07": 0.07,
@@ -168,7 +204,8 @@ function createStore(): MockStore {
       TAG: 0.6 + drift,
       JOB_MAPPING: 0.12 - drift / 2,
       TAG_RULE: 0.04,
-      WAREHOUSE_MAPPING: 0.08,
+      WAREHOUSE_MAPPING: 0.06,
+      ENDPOINT_MAPPING: 0.02, // dedicated AI/serving endpoints (rule 4b)
       RUNNER_RULE: 0.03,
       USER: 0.06, // ad-hoc only — job spend never lands here
       NONE: 0.07 - drift / 2,
@@ -183,46 +220,54 @@ function createStore(): MockStore {
 
   const detail: Record<string, DetailRow[]> = {
     "pricing-curves": [
-      { usage_category: "JOBS", is_serverless: false, job_name: "curves-build-eod", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 22100, cost: 9800 },
-      { usage_category: "JOBS", is_serverless: true, job_name: "curves-intraday-refresh", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 12800, cost: 6100 },
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Anna Kowalska", attribution_method: "TAG", dbus: 7500, cost: 3200 },
-      { usage_category: "JOBS", is_serverless: false, job_name: "curves-backfill", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 5200, cost: 2300 },
-      { usage_category: "JOBS", is_serverless: true, job_name: "curves-cache-warm", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "RUNNER_RULE", dbus: 3400, cost: 1500 },
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 4900, cost: 2100 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "curves-build-eod", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 22100, cost: 9800 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "curves-intraday-refresh", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 12800, cost: 6100 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", endpoint_name: null, runner_name: "Anna Kowalska", attribution_method: "TAG", dbus: 7500, cost: 3200 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "curves-backfill", warehouse_id: null, endpoint_name: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 5200, cost: 2300 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "curves-cache-warm", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "RUNNER_RULE", dbus: 3400, cost: 1500 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", endpoint_name: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 4900, cost: 2100 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "curves-embedding-api", runner_name: "SP: etl-runner", attribution_method: "ENDPOINT_MAPPING", dbus: 850, cost: 800 },
     ],
     "ref-data-ingest": [
-      { usage_category: "JOBS", is_serverless: false, job_name: "refdata-loader (job 845)", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "JOB_MAPPING", dbus: 20200, cost: 8900 },
-      { usage_category: "DLT", is_serverless: true, job_name: "refdata-dlt-pipeline", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 9800, cost: 4600 },
-      { usage_category: "JOBS", is_serverless: true, job_name: "refdata-validation", warehouse_id: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 8600, cost: 3800 },
-      { usage_category: "JOBS", is_serverless: true, job_name: "refdata-quality-scan", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG_RULE", dbus: 4300, cost: 1900 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "refdata-loader (job 845)", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "JOB_MAPPING", dbus: 20200, cost: 8900 },
+      { usage_category: "DLT", is_serverless: true, job_name: "refdata-dlt-pipeline", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 9800, cost: 4600 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "refdata-validation", warehouse_id: null, endpoint_name: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 8600, cost: 3800 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "refdata-quality-scan", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "TAG_RULE", dbus: 4300, cost: 1900 },
     ],
     "var-engine": [
-      { usage_category: "JOBS", is_serverless: false, job_name: "nightly-var (job 310)", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "JOB_MAPPING", dbus: 33900, cost: 15600 },
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", runner_name: "Maria Wiśniewska", attribution_method: "WAREHOUSE_MAPPING", dbus: 11900, cost: 5400 },
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", runner_name: "UNALLOCATED_IDLE", attribution_method: "WAREHOUSE_MAPPING", dbus: 3700, cost: 1700 },
-      { usage_category: "JOBS", is_serverless: true, job_name: "var-scenario-expansion", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 18400, cost: 8500 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "nightly-var (job 310)", warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "JOB_MAPPING", dbus: 33900, cost: 15600 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "WAREHOUSE_MAPPING", dbus: 11900, cost: 5400 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", endpoint_name: null, runner_name: "UNALLOCATED_IDLE", attribution_method: "WAREHOUSE_MAPPING", dbus: 3700, cost: 1700 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "var-scenario-expansion", warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 18400, cost: 8500 },
+      { usage_category: "VECTOR_SEARCH", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 900, cost: 610 },
     ],
     "stress-testing": [
-      { usage_category: "JOBS", is_serverless: false, job_name: "stress-quarterly", warehouse_id: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 11900, cost: 5400 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "stress-quarterly", warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 11900, cost: 5400 },
+    ],
+    "outage-extraction": [
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "outage-alerts-extract-sonnet4", runner_name: "Sara Subramaniam", attribution_method: "TAG", dbus: 4400, cost: 4100 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "outage-alerts-extract-sonnet4", runner_name: "Sara Subramaniam", attribution_method: "TAG", dbus: 800, cost: 800 },
     ],
     "trade-pnl": [
-      { usage_category: "JOBS", is_serverless: false, job_name: "pnl-explain (job 1022)", warehouse_id: null, runner_name: "Piotr Zieliński", attribution_method: "JOB_MAPPING", dbus: 20300, cost: 9200 },
-      { usage_category: "JOBS", is_serverless: true, job_name: "pnl-eod-close", warehouse_id: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 13100, cost: 6000 },
-      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: "pnl-anomaly-endpoint", warehouse_id: null, runner_name: "Piotr Zieliński", attribution_method: "TAG", dbus: 4100, cost: 2300 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "pnl-explain (job 1022)", warehouse_id: null, endpoint_name: null, runner_name: "Piotr Zieliński", attribution_method: "JOB_MAPPING", dbus: 20300, cost: 9200 },
+      { usage_category: "JOBS", is_serverless: true, job_name: "pnl-eod-close", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 13100, cost: 6000 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "pnl-anomaly-endpoint", runner_name: "Piotr Zieliński", attribution_method: "TAG", dbus: 4100, cost: 2300 },
     ],
     AD_HOC: [
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", runner_name: "Anna Kowalska", attribution_method: "USER", dbus: 5900, cost: 2600 },
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "Maria Wiśniewska", attribution_method: "USER", dbus: 5200, cost: 2400 },
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", runner_name: "Piotr Zieliński", attribution_method: "USER", dbus: 3800, cost: 1700 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", endpoint_name: null, runner_name: "Anna Kowalska", attribution_method: "USER", dbus: 5900, cost: 2600 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "USER", dbus: 5200, cost: 2400 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", endpoint_name: null, runner_name: "Piotr Zieliński", attribution_method: "USER", dbus: 3800, cost: 1700 },
     ],
     UNALLOCATED: [
-      { usage_category: "JOBS", is_serverless: false, job_name: "unknown-batch-77", warehouse_id: null, runner_name: null, attribution_method: "NONE", dbus: 7400, cost: 3300 },
-      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", runner_name: "UNALLOCATED_IDLE", attribution_method: "NONE", dbus: 4900, cost: 2200 },
+      { usage_category: "JOBS", is_serverless: false, job_name: "unknown-batch-77", warehouse_id: null, endpoint_name: null, runner_name: null, attribution_method: "NONE", dbus: 7400, cost: 3300 },
+      { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", endpoint_name: null, runner_name: "UNALLOCATED_IDLE", attribution_method: "NONE", dbus: 4900, cost: 2200 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "ml-experiments-llm", runner_name: null, attribution_method: "NONE", dbus: 700, cost: 520 },
     ],
   };
 
   return {
     months,
+    monthFactor: factor,
     publishedMonths: ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"],
     catalogue,
     users,
@@ -231,6 +276,8 @@ function createStore(): MockStore {
     tagRules,
     runnerRules,
     warehouseMappings,
+    endpointMappings,
+    aiEndpointUsage,
     dbuDiscounts,
     monthly,
     coverage,
@@ -333,13 +380,15 @@ function createStore(): MockStore {
       { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-shared-platform", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-shared-platform/providers/microsoft.operationalinsights/workspaces/log-shared-prod", resource_name: "log-shared-prod", meter_category: "Log Analytics", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: null, cost_30d: 1900 },
       { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-dev", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-dev/providers/microsoft.databricks/workspaces/dbw-mktdata-dev", resource_name: "dbw-mktdata-dev", meter_category: "Azure Databricks", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: "{\"Environment\":\"dev\"}", cost_30d: 830 },
     ],
+    // billing/fact/report totals mirror the monthly matrix above (sum of base
+    // × monthFactor) with deliberate sub-dollar gaps — recompute when base changes
     recon: [
-      { billing_month: "2026-01", billing_cost: 79512.4, fact_cost: 79512.4, report_cost: 79512.4, fact_gap: 0, report_gap: 0 },
-      { billing_month: "2026-02", billing_cost: 85628.61, fact_cost: 85628.61, report_cost: 85628.61, fact_gap: 0, report_gap: 0 },
-      { billing_month: "2026-03", billing_cost: 91744.55, fact_cost: 91744.43, report_cost: 91744.43, fact_gap: 0.12, report_gap: 0.12 },
-      { billing_month: "2026-04", billing_cost: 93783.29, fact_cost: 93783.29, report_cost: 93783.29, fact_gap: 0, report_gap: 0 },
-      { billing_month: "2026-05", billing_cost: 101938.9, fact_cost: 101939.24, report_cost: 101939.24, fact_gap: -0.34, report_gap: -0.34 },
-      { billing_month: "2026-06", billing_cost: 110094.5, fact_cost: 110093.99, report_cost: 110093.99, fact_gap: 0.51, report_gap: 0.51 },
+      { billing_month: "2026-01", billing_cost: 89879.4, fact_cost: 89879.4, report_cost: 89879.4, fact_gap: 0, report_gap: 0 },
+      { billing_month: "2026-02", billing_cost: 96793.2, fact_cost: 96793.2, report_cost: 96793.2, fact_gap: 0, report_gap: 0 },
+      { billing_month: "2026-03", billing_cost: 103707.12, fact_cost: 103707, report_cost: 103707, fact_gap: 0.12, report_gap: 0.12 },
+      { billing_month: "2026-04", billing_cost: 106011.6, fact_cost: 106011.6, report_cost: 106011.6, fact_gap: 0, report_gap: 0 },
+      { billing_month: "2026-05", billing_cost: 115229.66, fact_cost: 115230, report_cost: 115230, fact_gap: -0.34, report_gap: -0.34 },
+      { billing_month: "2026-06", billing_cost: 124448.91, fact_cost: 124448.4, report_cost: 124448.4, fact_gap: 0.51, report_gap: 0.51 },
     ],
   };
 }

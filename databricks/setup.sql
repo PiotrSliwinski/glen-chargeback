@@ -88,6 +88,17 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.runner_product_mapping (
 )
 COMMENT 'Runner rule: EVERYTHING this identity runs (jobs, DLT, serverless) -> data product. Rule 5 of the attribution waterfall. The explicit opt-in replacement for defaulting job cost to the runner: platform service principals whose output serves one product belong here. One row per user_id - duplicates are flagged on the health page.';
 
+-- §4.8 Dedicated model-serving endpoints (waterfall rule 4b)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.endpoint_product_mapping (
+  workspace_id   STRING NOT NULL,
+  endpoint_name  STRING NOT NULL,     -- composite key with workspace_id, exactly as in usage_metadata.endpoint_name
+  data_product   STRING NOT NULL,
+  note           STRING,              -- optional: why mapped manually
+  mapped_by      STRING,              -- audit: who created the mapping
+  mapped_at      TIMESTAMP            -- audit: when
+)
+COMMENT 'Dedicated AI/model-serving endpoint -> data product. Rule 4b of the attribution waterfall (the serving analogue of a dedicated warehouse): ALL spend of the endpoint - realtime and ai_query batch inference alike - bills to that product. endpoint_name must match usage_metadata.endpoint_name exactly; names are only unique per workspace. Prefer tagging the endpoint at source with data_product (rule 1) - this bridge is for endpoints not yet tagged.';
+
 -- §4.9 DBU reservation-plan discounts (pricing reference data, not attribution)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.dbu_discount_plan (
   valid_from     DATE   NOT NULL,   -- first day the plan covers (inclusive)
@@ -325,6 +336,12 @@ LEFT JOIN main_dev.cost_reporting.user_mapping um
 --     (dbu_discount_plan, §4.9) - DBU-metered rows only.
 --   * Job names from usage_metadata.job_name, else latest name in
 --     system.workflow.jobs (deduplicated per workspace + job).
+--   * AI dimensions: endpoint_name (usage_metadata.endpoint_name, model
+--     serving / vector search endpoints) and serving_type
+--     (product_features.model_serving.offering_type, e.g. BATCH_INFERENCE
+--     for ai_query batch jobs) - NULL for non-AI rows. NOTE: billing for
+--     model serving lands with a 1-2h delay (no official SLA); the current
+--     day's AI spend is always incomplete.
 --   * tags_json carries ALL custom tags as a key-sorted JSON object -
 --     the input for tag rules (waterfall rule 3) and the coverage UI.
 --
@@ -335,7 +352,7 @@ LEFT JOIN main_dev.cost_reporting.user_mapping um
 --     keep their raw run_as identity.
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.usage_view
-COMMENT 'Daily chargeback of all non-SQL-warehouse spend (jobs, DLT, serverless, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred) less any reservation-plan discount from dbu_discount_plan (DBU-metered rows only). SQL warehouse usage excluded - allocated per-query in query_view. Unmapped workspaces surface as UNMAPPED rows so totals reconcile with billing. Exposes job_id, tag_data_product and tags_json (all custom tags, key-sorted JSON) for the attribution waterfall in cost_fact.'
+COMMENT 'Daily chargeback of all non-SQL-warehouse spend (jobs, DLT, serverless, model serving, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred) less any reservation-plan discount from dbu_discount_plan (DBU-metered rows only). SQL warehouse usage excluded - allocated per-query in query_view. Unmapped workspaces surface as UNMAPPED rows so totals reconcile with billing. Exposes job_id, endpoint_name + serving_type (AI/model-serving dimensions), tag_data_product and tags_json (all custom tags, key-sorted JSON) for the attribution waterfall in cost_fact.'
 AS
 WITH latest_jobs AS (
   -- Latest known name per job. job_id is only unique within a
@@ -371,6 +388,9 @@ SELECT
   u.billing_origin_product,
   u.product_features.is_serverless                            AS is_serverless,
   u.usage_unit,
+  -- AI/model-serving dimensions (NULL outside MODEL_SERVING / VECTOR_SEARCH)
+  u.usage_metadata.endpoint_name                              AS endpoint_name,
+  u.product_features.model_serving.offering_type              AS serving_type,
   u.custom_tags.data_product                                  AS tag_data_product,
   u.custom_tags.provider                                      AS provider,
   u.custom_tags.domain                                        AS domain,
@@ -424,6 +444,8 @@ GROUP BY
   u.billing_origin_product,
   u.product_features.is_serverless,
   u.usage_unit,
+  endpoint_name,
+  serving_type,
   u.custom_tags.data_product,
   u.custom_tags.provider,
   u.custom_tags.domain,
@@ -449,6 +471,8 @@ SELECT
   b.billing_origin_product,
   b.is_serverless,
   b.usage_unit,
+  b.endpoint_name,
+  b.serving_type,
   b.tag_data_product,
   b.provider,
   b.domain,
@@ -467,6 +491,7 @@ LEFT JOIN main_dev.cost_reporting.dbu_discount_plan d
 GROUP BY b.usage_date, b.user_name, b.desk, b.workspace_name, b.job_runner,
          b.job_id, b.job_name, b.workspace_id, b.sku_name,
          b.billing_origin_product, b.is_serverless, b.usage_unit,
+         b.endpoint_name, b.serving_type,
          b.tag_data_product, b.provider, b.domain, b.tag_desk, b.environment,
          b.tags_json, b.total_dbus, b.total_list_cost;
 
@@ -499,6 +524,11 @@ GROUP BY 1, 2, 3;
 --       2 JOB_MAPPING        (workspace_id, job_id) in job_product_mapping
 --       3 TAG_RULE           any custom tag matches tag_product_mapping
 --       4 WAREHOUSE_MAPPING  dedicated warehouse (is_shared = false)
+--       4b ENDPOINT_MAPPING  dedicated AI/serving endpoint in
+--                            endpoint_product_mapping (the serving analogue
+--                            of a dedicated warehouse; mutually exclusive
+--                            with rule 4 - a row has a warehouse OR an
+--                            endpoint, never both)
 --       5 RUNNER_RULE        runner in runner_product_mapping
 --       6 USER               ad-hoc spend ONLY (job_id IS NULL): known
 --                            runner -> AD_HOC, desk = runner's desk.
@@ -521,7 +551,7 @@ GROUP BY 1, 2, 3;
 -- page checks (§7.4).
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.cost_fact
-COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Source of truth for monthly chargeback.'
+COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > ENDPOINT_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Exposes endpoint_name + serving_type for AI/model-serving cost tracking. Source of truth for monthly chargeback.'
 AS
 WITH unified AS (
 
@@ -535,6 +565,8 @@ WITH unified AS (
     CAST(NULL AS STRING)               AS job_name,
     user_id                            AS runner,
     CAST(NULL AS BOOLEAN)              AS is_serverless,  -- not tracked per-query
+    CAST(NULL AS STRING)               AS endpoint_name,  -- warehouse rows have no endpoint
+    CAST(NULL AS STRING)               AS serving_type,
     CAST(NULL AS STRING)               AS tag_data_product,
     CAST(NULL AS STRING)               AS tags_json,      -- no custom tags per query
     statement_id,
@@ -554,6 +586,8 @@ WITH unified AS (
     job_name,
     job_runner                         AS runner,
     is_serverless,
+    endpoint_name,
+    serving_type,
     tag_data_product,
     tags_json,
     CAST(NULL AS STRING)               AS statement_id,
@@ -585,6 +619,14 @@ runner_rules AS (
   GROUP BY user_id
 ),
 
+-- One product per (workspace, endpoint) even if the table holds duplicate
+-- rows (deterministic MIN — duplicate keys can never fan out cost).
+endpoint_rules AS (
+  SELECT workspace_id, endpoint_name, MIN(data_product) AS data_product
+  FROM main_dev.cost_reporting.endpoint_product_mapping
+  GROUP BY workspace_id, endpoint_name
+),
+
 attributed AS (
   SELECT
     u.*,
@@ -593,6 +635,7 @@ attributed AS (
       jm.data_product,                                        -- rule 2: JOB_MAPPING
       tr.data_product,                                        -- rule 3: TAG_RULE
       whm.data_product,                                       -- rule 4: WAREHOUSE_MAPPING
+      em.data_product,                                        -- rule 4b: ENDPOINT_MAPPING
       rr.data_product,                                        -- rule 5: RUNNER_RULE
       CASE WHEN u.job_id IS NULL                              -- rule 6: USER (ad-hoc only,
             AND um.user_id IS NOT NULL THEN 'AD_HOC' END,     --   never job spend)
@@ -603,6 +646,7 @@ attributed AS (
       WHEN jm.data_product    IS NOT NULL THEN 'JOB_MAPPING'
       WHEN tr.data_product    IS NOT NULL THEN 'TAG_RULE'
       WHEN whm.data_product   IS NOT NULL THEN 'WAREHOUSE_MAPPING'
+      WHEN em.data_product    IS NOT NULL THEN 'ENDPOINT_MAPPING'
       WHEN rr.data_product    IS NOT NULL THEN 'RUNNER_RULE'
       WHEN u.job_id IS NULL
        AND um.user_id         IS NOT NULL THEN 'USER'
@@ -620,6 +664,9 @@ attributed AS (
     ON  u.compute_key = whm.warehouse_id
     AND whm.is_shared = false
     AND whm.data_product IS NOT NULL
+  LEFT JOIN endpoint_rules em
+    ON  u.workspace_id  = em.workspace_id
+    AND u.endpoint_name = em.endpoint_name
   LEFT JOIN runner_rules rr
     ON u.runner = rr.user_id
   LEFT JOIN main_dev.cost_reporting.user_mapping um
@@ -647,6 +694,8 @@ SELECT
   a.is_serverless,                              -- serverless vs classic compute (NULL for per-query warehouse rows)
   a.workspace_id,
   a.compute_key                                 AS warehouse_id,
+  a.endpoint_name,                              -- AI/serving endpoint (NULL outside model serving / vector search)
+  a.serving_type,                               -- e.g. BATCH_INFERENCE for ai_query batch jobs
   a.job_id,
   a.job_name,
   a.runner,
@@ -906,6 +955,13 @@ GROUP BY 1, 2, 3, 4, 5;
 -- =====================================================================
 -- §9 Materialization targets (empty on creation; filled by the daily
 --    refresh job and the monthly publication step — see methodology §9)
+--
+-- MIGRATION NOTE (AI cost tracking): usage_view gained endpoint_name and
+-- serving_type columns. usage_fact_tbl created before that change has the
+-- old shape and any INSERT … SELECT refresh will fail until it is aligned.
+-- The fact tables are rebuildable caches — on existing deployments simply
+--   DROP TABLE main_dev.cost_reporting.usage_fact_tbl;
+-- and rerun this script; the next refresh run refills it.
 -- =====================================================================
 
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.query_fact_tbl
