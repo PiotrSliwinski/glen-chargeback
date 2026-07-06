@@ -37,7 +37,7 @@ const arm = (s: string) => s.trim().toLowerCase();
 
 export async function listAzureResourceMappings(): Promise<AzureResourceMappingRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) return [...mockStore.azureResourceMappings];
   return query(
@@ -56,7 +56,7 @@ export async function listAzureResourceMappings(): Promise<AzureResourceMappingR
 
 export async function listAzureTagRules(): Promise<AzureTagRuleRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) return [...mockStore.azureTagRules];
   return query(
@@ -76,7 +76,7 @@ export async function listAzureTagRules(): Promise<AzureTagRuleRow[]> {
 
 export async function listAzureRgRules(): Promise<AzureRgRuleRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) return [...mockStore.azureRgRules];
   return query(
@@ -96,7 +96,7 @@ export async function listAzureRgRules(): Promise<AzureRgRuleRow[]> {
 
 export async function listAzureSubscriptionRules(): Promise<AzureSubscriptionRuleRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) return [...mockStore.azureSubscriptionRules];
   return query(
@@ -120,7 +120,7 @@ export async function listAzureSubscriptionRules(): Promise<AzureSubscriptionRul
  */
 export async function getAzureResourceAttributions(): Promise<AzureResourceAttributionRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) return [...mockStore.azureAttributions];
   return query(
@@ -156,7 +156,7 @@ export async function getAzureResourceAttributions(): Promise<AzureResourceAttri
 /** Trailing-30-day Azure cost per desk — UNALLOCATED = not yet claimed. */
 export async function getAzureDeskTotals(): Promise<AzureDeskTotalRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) {
     const map = new Map<string, number>();
@@ -189,7 +189,7 @@ const azureMockScale = (month: string) => mockStore.monthFactor[month] ?? 0;
 /** Months with any Azure cost, newest first — feeds the /azure month picker. */
 export async function getAzureMonths(): Promise<string[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) return [...mockStore.months].reverse();
   const rows = await query(
@@ -203,7 +203,7 @@ export async function getAzureMonths(): Promise<string[]> {
 /** One month of Azure cost at product × desk × meter-category grain. */
 export async function getAzureMonthlyRows(month: string): Promise<AzureMonthlyRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) {
     const f = azureMockScale(month);
@@ -250,7 +250,7 @@ export async function getAzureMonthlyRows(month: string): Promise<AzureMonthlyRo
 /** Azure cost per month × desk, trailing 12 months — the Azure trend feed. */
 export async function getAzureTrend(month: string): Promise<AzureTrendPoint[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) {
     const window = mockStore.months.filter((m) => m <= month).slice(-12);
@@ -282,7 +282,7 @@ export async function getAzureTrend(month: string): Promise<AzureTrendPoint[]> {
 /** The month's Azure cost per attribution method — is TAG growing, NONE shrinking? */
 export async function getAzureMethodMix(month: string): Promise<AzureMethodMixRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) {
     const f = azureMockScale(month);
@@ -315,7 +315,7 @@ export async function getAzureMethodMix(month: string): Promise<AzureMethodMixRo
  */
 export async function getAzureMonthResources(month: string): Promise<AzureMonthResourceRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) {
     const f = azureMockScale(month);
@@ -373,7 +373,7 @@ export interface TaggedAzureBridgeResource {
  */
 export async function getTaggedAzureBridgeResources(): Promise<TaggedAzureBridgeResource[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("azure");
   if (env.DAL_MOCK) {
     const tagged = new Map<string, number>();

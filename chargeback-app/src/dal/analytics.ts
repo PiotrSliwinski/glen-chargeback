@@ -26,7 +26,7 @@ export interface MonthTotals {
 /** Total cost and DBUs per month, trailing 12 months up to the selected one. */
 export async function getMonthlyTotals(month: string): Promise<MonthTotals[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
   if (env.DAL_MOCK) {
     return mockStore.months
@@ -58,7 +58,7 @@ export async function getMonthlyTotals(month: string): Promise<MonthTotals[]> {
 /** Attribution mix per month, trailing 12 months — the TAG-vs-NONE trajectory. */
 export async function getCoverageTrend(month: string): Promise<CoverageRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
   if (env.DAL_MOCK) {
     const window = mockStore.months.filter((m) => m <= month).slice(-12);
@@ -91,7 +91,7 @@ export async function getCostHistory(
   dim: "data_product" | "desk",
 ): Promise<EntityCostPoint[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
   if (env.DAL_MOCK) {
     const window = mockStore.months.filter((m) => m <= month).slice(-12);

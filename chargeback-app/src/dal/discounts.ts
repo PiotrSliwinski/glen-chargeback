@@ -17,7 +17,7 @@ import type { DbuDiscountRow } from "@/dal/types";
 
 export async function listDbuDiscounts(): Promise<DbuDiscountRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) {
     return [...mockStore.dbuDiscounts].sort((a, b) => b.valid_from.localeCompare(a.valid_from));

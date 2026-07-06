@@ -56,34 +56,118 @@ async function getClient(): Promise<IDBSQLClient> {
   return clientPromise;
 }
 
-export async function query<T>(
-  sql: string,
-  namedParameters: Record<string, SqlParam> = {},
-  schema?: z.ZodType<T>,
-): Promise<T[]> {
+type Session = Awaited<ReturnType<IDBSQLClient["openSession"]>>;
+
+/**
+ * Small idle-session pool: opening a session costs an extra warehouse round
+ * trip, and a page cache-miss fires several queries at once. Recently used
+ * sessions are kept for reuse within a burst; anything idle past the TTL is
+ * closed on next touch rather than trusted (warehouse auto-stop kills them).
+ */
+const idlePool: { session: Session; idleSince: number }[] = [];
+const MAX_IDLE_SESSIONS = 4;
+const IDLE_TTL_MS = 4 * 60_000;
+
+function takePooledSession(): Session | null {
+  let entry;
+  while ((entry = idlePool.pop())) {
+    if (Date.now() - entry.idleSince < IDLE_TTL_MS) return entry.session;
+    entry.session.close().catch(() => {});
+  }
+  return null;
+}
+
+function releaseSession(session: Session): void {
+  if (idlePool.length < MAX_IDLE_SESSIONS) {
+    idlePool.push({ session, idleSince: Date.now() });
+  } else {
+    session.close().catch(() => {});
+  }
+}
+
+function assertNotMock(): void {
   if (env.DAL_MOCK) {
     throw new Error(
       "query() reached in mock mode — the calling DAL module must branch to fixtures first",
     );
   }
+}
+
+async function runStatement<T>(
+  session: Session,
+  sql: string,
+  namedParameters: Record<string, SqlParam>,
+  schema?: z.ZodType<T>,
+): Promise<T[]> {
+  const op = await session.executeStatement(sql, { namedParameters });
+  const rows = (await op.fetchAll()) as unknown[];
+  await op.close();
+  return schema ? rows.map((r) => schema.parse(r)) : (rows as T[]);
+}
+
+export async function query<T>(
+  sql: string,
+  namedParameters: Record<string, SqlParam> = {},
+  schema?: z.ZodType<T>,
+): Promise<T[]> {
+  assertNotMock();
+  const client = await getClient();
+
+  // A pooled session may have been expired server-side; SELECTs are safe to
+  // retry once on a fresh session, so a dead pooled session costs one attempt.
+  const pooled = takePooledSession();
+  if (pooled) {
+    try {
+      const rows = await runStatement(pooled, sql, namedParameters, schema);
+      releaseSession(pooled);
+      return rows;
+    } catch {
+      await pooled.close().catch(() => {});
+    }
+  }
+
+  const session = await client.openSession();
+  try {
+    const rows = await runStatement(session, sql, namedParameters, schema);
+    releaseSession(session);
+    return rows;
+  } catch (e) {
+    await session.close().catch(() => {});
+    throw e;
+  }
+}
+
+/**
+ * Execute DML (INSERT/UPDATE/MERGE/DELETE). Always a fresh session and never
+ * retried — a statement that may have already executed must not run twice.
+ */
+export async function exec(
+  sql: string,
+  namedParameters: Record<string, SqlParam> = {},
+): Promise<void> {
+  assertNotMock();
   const client = await getClient();
   const session = await client.openSession();
   try {
-    const op = await session.executeStatement(sql, { namedParameters });
-    const rows = (await op.fetchAll()) as unknown[];
-    await op.close();
-    return schema ? rows.map((r) => schema.parse(r)) : (rows as T[]);
+    await runStatement(session, sql, namedParameters);
   } finally {
     await session.close().catch(() => {});
   }
 }
 
-/** Execute DML (INSERT/UPDATE/MERGE/DELETE). */
-export async function exec(
-  sql: string,
-  namedParameters: Record<string, SqlParam> = {},
-): Promise<void> {
-  await query(sql, namedParameters);
+/**
+ * Fire-and-forget connection warm-up (instrumentation.ts): pays the driver
+ * import + auth + connect + warehouse wake-up at boot instead of on the
+ * first visitor's request. Never throws — a failure just means the first
+ * request connects lazily as before.
+ */
+export function warmup(): void {
+  if (env.DAL_MOCK) return;
+  void query("SELECT 1")
+    .then(() => console.log("[dal] warehouse connection warmed"))
+    .catch((e) =>
+      console.warn("[dal] warm-up failed (will connect lazily):", e?.message ?? e),
+    );
 }
 
 /** Fully-qualified table/view reference. */

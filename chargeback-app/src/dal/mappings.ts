@@ -26,7 +26,7 @@ import type {
 
 export async function listCatalogue(): Promise<DataProductRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("catalogue");
   if (env.DAL_MOCK) {
     return [...mockStore.catalogue].sort(
@@ -64,7 +64,7 @@ export async function listActiveProducts(): Promise<DataProductRow[]> {
 
 export async function listJobMappings(): Promise<JobMappingRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.jobMappings];
   return query(
@@ -84,7 +84,7 @@ export async function listJobMappings(): Promise<JobMappingRow[]> {
 
 export async function listTagRules(): Promise<TagRuleRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.tagRules];
   return query(
@@ -104,7 +104,7 @@ export async function listTagRules(): Promise<TagRuleRow[]> {
 
 export async function listRunnerRules(): Promise<RunnerRuleRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.runnerRules];
   return query(
@@ -123,7 +123,7 @@ export async function listRunnerRules(): Promise<RunnerRuleRow[]> {
 
 export async function listWarehouseMappings(): Promise<WarehouseMappingRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.warehouseMappings];
   return query(
@@ -140,7 +140,7 @@ export async function listWarehouseMappings(): Promise<WarehouseMappingRow[]> {
 
 export async function listEndpointMappings(): Promise<EndpointMappingRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.endpointMappings];
   return query(
@@ -160,7 +160,7 @@ export async function listEndpointMappings(): Promise<EndpointMappingRow[]> {
 
 export async function listUsers(): Promise<UserMappingRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.users];
   return query(
@@ -172,7 +172,7 @@ export async function listUsers(): Promise<UserMappingRow[]> {
 
 export async function listWorkspaces(): Promise<WorkspaceMappingRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.workspaces];
   return query(

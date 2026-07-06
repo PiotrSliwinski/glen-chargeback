@@ -43,7 +43,7 @@ const mockScale = (month: string) => mockStore.monthFactor[month] ?? 0;
  */
 export async function getAiEndpointUsage(month: string): Promise<AiEndpointUsageRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
 
   if (env.DAL_MOCK) {
@@ -85,7 +85,7 @@ export async function getAiEndpointUsage(month: string): Promise<AiEndpointUsage
 /** AI cost per month × usage category, trailing 12 months — the AI trend feed. */
 export async function getAiTrend(month: string): Promise<AiTrendPoint[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
 
   if (env.DAL_MOCK) {
@@ -126,7 +126,7 @@ export async function getAiTrend(month: string): Promise<AiTrendPoint[]> {
  */
 export async function getUnmappedEndpoints(): Promise<UnmappedEndpointRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
 
   if (env.DAL_MOCK) {

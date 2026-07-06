@@ -37,7 +37,7 @@ const CoverageSchema = z.object({
 
 export async function getAvailableMonths(): Promise<string[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
   if (env.DAL_MOCK) return [...mockStore.months].reverse();
   const rows = await query(
@@ -50,7 +50,7 @@ export async function getAvailableMonths(): Promise<string[]> {
 
 export async function getPublishedMonths(): Promise<string[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-published");
   if (env.DAL_MOCK) return [...mockStore.publishedMonths].sort().reverse();
   const rows = await query(
@@ -63,7 +63,7 @@ export async function getPublishedMonths(): Promise<string[]> {
 
 export async function getDashboard(month: string, mode: ReportMode): Promise<DashboardData> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag(mode === "published" ? "reports-published" : "reports-live");
 
   if (env.DAL_MOCK) {
@@ -112,17 +112,12 @@ export async function getDashboard(month: string, mode: ReportMode): Promise<Das
   const m = monthStart(month);
   const prevM = monthStart(shiftMonth(month, -1));
 
-  const [byDomain, totals, prev, unalloc, coverage, trend] = await Promise.all([
+  const [byDomain, prev, unalloc, coverage, trend] = await Promise.all([
     query(
       `SELECT data_domain, SUM(total_cost) AS total_cost, SUM(total_dbus) AS total_dbus
        FROM ${src.table} WHERE ${src.monthCol} = :month GROUP BY 1 ORDER BY 2 DESC`,
       { month: m },
       z.object({ data_domain: zStr, total_cost: zNum, total_dbus: zNum }) as z.ZodType<DomainRollup>,
-    ),
-    query(
-      `SELECT SUM(total_cost) AS c FROM ${src.table} WHERE ${src.monthCol} = :month`,
-      { month: m },
-      z.object({ c: zNum }),
     ),
     query(
       // MoM always compares against live figures for the prior month
@@ -155,7 +150,7 @@ export async function getDashboard(month: string, mode: ReportMode): Promise<Das
   return {
     month,
     mode,
-    totalCost: totals[0]?.c ?? 0,
+    totalCost: byDomain.reduce((s, d) => s + d.total_cost, 0),
     prevMonthCost: prev[0]?.c ?? null,
     tagCoveragePct: coverage.find((c) => c.attribution_method === "TAG")?.pct_of_month ?? 0,
     unallocatedCost: unalloc[0]?.c ?? 0,
@@ -171,7 +166,7 @@ export async function getMonthlyRows(
   mode: ReportMode,
 ): Promise<MonthlyChargebackRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag(mode === "published" ? "reports-published" : "reports-live");
 
   if (env.DAL_MOCK) {
@@ -206,7 +201,7 @@ export async function getDomainProducts(
   mode: ReportMode,
 ): Promise<ProductRollup[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag(mode === "published" ? "reports-published" : "reports-live");
 
   if (env.DAL_MOCK) {
@@ -241,7 +236,7 @@ export async function getDomainProducts(
 /** Level 2 → detail: what makes up a product's cost. Live cost_fact only. */
 export async function getProductDetail(month: string, product: string): Promise<DetailRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
 
   if (env.DAL_MOCK) return mockStore.detail[product] ?? [];
@@ -325,7 +320,7 @@ export async function getDesks(
   mode: ReportMode,
 ): Promise<{ desk: string; total_cost: number }[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag(mode === "published" ? "reports-published" : "reports-live");
 
   if (env.DAL_MOCK) {

@@ -22,7 +22,7 @@ import type { JobAttributionRow, UnmappedRunnerRow } from "@/dal/types";
  */
 export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.unmappedRunners];
@@ -62,7 +62,7 @@ export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
  */
 export async function getJobAttributions(): Promise<JobAttributionRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.jobAttributions];

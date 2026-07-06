@@ -19,7 +19,7 @@ export interface DeskTrendPoint {
 
 export async function getDeskTrend(desk: string): Promise<DeskTrendPoint[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
 
   if (env.DAL_MOCK) {
@@ -50,7 +50,7 @@ export async function getDeskTrend(desk: string): Promise<DeskTrendPoint[]> {
  */
 export async function getDeskDetail(month: string, desk: string): Promise<DeskDetailRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
 
   if (env.DAL_MOCK) {
@@ -111,7 +111,7 @@ export interface DeskScorecardRow {
 /** Cost per desk × attribution method for a month (live cost_fact). */
 export async function getDeskCoverage(month: string): Promise<DeskCoverageRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("reports-live");
 
   if (env.DAL_MOCK) {
