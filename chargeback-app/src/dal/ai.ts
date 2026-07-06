@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
 import { monthStart } from "@/lib/format";
 import { query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
-import { zId, zMonth, zNum, zStr, zStrOrNull } from "@/dal/parse";
+import { zDate, zId, zMonth, zNum, zStr, zStrOrNull } from "@/dal/parse";
 import type { AiEndpointUsageRow, AiTrendPoint, UnmappedEndpointRow } from "@/dal/types";
 
 /**
@@ -37,9 +37,14 @@ const AI_CATEGORY_LIST = AI_CATEGORIES.map((c) => `'${c}'`).join(", ");
 const mockScale = (month: string) => mockStore.monthFactor[month] ?? 0;
 
 /**
- * One month's AI spend per endpoint × offering type × product × desk, from
- * live cost_fact (endpoint detail is never snapshotted — published mode shows
- * the same live rows, which the page states).
+ * One month's AI spend per endpoint × offering type × runner × product ×
+ * desk, from live cost_fact (endpoint detail is never snapshotted — published
+ * mode shows the same live rows, which the page states). runner is
+ * identity_metadata.run_as carried through usage_view; first/last_seen are
+ * the first/last usage_date with spend — day precision, because cost_fact is
+ * daily. Per-call counts/timestamps are NOT derivable from billing data:
+ * system.billing.usage emits pre-aggregated records, not one row per
+ * inference call.
  */
 export async function getAiEndpointUsage(month: string): Promise<AiEndpointUsageRow[]> {
   "use cache";
@@ -48,9 +53,18 @@ export async function getAiEndpointUsage(month: string): Promise<AiEndpointUsage
 
   if (env.DAL_MOCK) {
     const f = mockScale(month);
+    // fixtures carry base-month dates; re-month them so first/last seen
+    // always fall inside the requested month
+    const remonth = (d: string) => `${month}-${d.slice(8)}`;
+    // workspace name resolved at read time so admin edits reflect immediately
+    const wsName = (id: string) =>
+      mockStore.workspaces.find((w) => w.workspace_id === id)?.workspace_name ?? `UNMAPPED: ${id}`;
     return mockStore.aiEndpointUsage
       .map((r) => ({
         ...r,
+        workspace_name: wsName(r.workspace_id),
+        first_seen: remonth(r.first_seen),
+        last_seen: remonth(r.last_seen),
         dbus: Math.round(r.dbus * f),
         cost: Math.round(r.cost * f * 100) / 100,
       }))
@@ -59,13 +73,20 @@ export async function getAiEndpointUsage(month: string): Promise<AiEndpointUsage
   }
 
   return query(
-    `SELECT endpoint_name, serving_type, usage_category, workspace_id,
-            data_product, desk, attribution_method,
-            SUM(dbus) AS dbus, SUM(cost) AS cost
-     FROM ${T("cost_fact")}
-     WHERE usage_date >= :month AND usage_date < add_months(:month, 1)
-       AND usage_category IN (${AI_CATEGORY_LIST})
-     GROUP BY 1, 2, 3, 4, 5, 6, 7
+    `SELECT cf.endpoint_name, cf.serving_type, cf.usage_category, cf.workspace_id,
+            COALESCE(MAX(wm.workspace_name),
+                     CONCAT('UNMAPPED: ', cf.workspace_id)) AS workspace_name,
+            cf.runner, MAX(cf.runner_name) AS runner_name,
+            cf.data_product, cf.desk, cf.attribution_method,
+            MIN(cf.usage_date) AS first_seen, MAX(cf.usage_date) AS last_seen,
+            SUM(cf.dbus) AS dbus, SUM(cf.cost) AS cost
+     FROM ${T("cost_fact")} cf
+     LEFT JOIN ${T("workspace_mapping")} wm
+       ON cf.workspace_id = wm.workspace_id
+     WHERE cf.usage_date >= :month AND cf.usage_date < add_months(:month, 1)
+       AND cf.usage_category IN (${AI_CATEGORY_LIST})
+     GROUP BY cf.endpoint_name, cf.serving_type, cf.usage_category, cf.workspace_id,
+              cf.runner, cf.data_product, cf.desk, cf.attribution_method
      ORDER BY cost DESC LIMIT 500`,
     { month: monthStart(month) },
     z.object({
@@ -73,9 +94,14 @@ export async function getAiEndpointUsage(month: string): Promise<AiEndpointUsage
       serving_type: zStrOrNull,
       usage_category: zStr,
       workspace_id: zId,
+      workspace_name: zStr,
+      runner: zStrOrNull,
+      runner_name: zStrOrNull,
       data_product: zStr,
       desk: zStr,
       attribution_method: zStr,
+      first_seen: zDate,
+      last_seen: zDate,
       dbus: zNum,
       cost: zNum,
     }) as z.ZodType<AiEndpointUsageRow>,

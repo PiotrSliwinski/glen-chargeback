@@ -375,10 +375,10 @@ export interface AzureMonthResourceRow {
 // ---------- AI cost tracking ----------
 
 /**
- * One month's AI spend per endpoint × offering type × product × desk, from
- * live cost_fact filtered to the AI usage categories. endpoint_name is null
- * for AI spend that carries no endpoint dimension (e.g. vector search
- * ingest, foundation-model training).
+ * One month's AI spend per endpoint × offering type × runner × product ×
+ * desk, from live cost_fact filtered to the AI usage categories.
+ * endpoint_name is null for AI spend that carries no endpoint dimension
+ * (e.g. vector search ingest, foundation-model training).
  */
 export interface AiEndpointUsageRow {
   endpoint_name: string | null;
@@ -386,9 +386,18 @@ export interface AiEndpointUsageRow {
   serving_type: string | null;
   usage_category: string;
   workspace_id: string;
+  /** friendly name from workspace_mapping; 'UNMAPPED: <id>' when the workspace has no row */
+  workspace_name: string;
+  /** identity_metadata.run_as — who the workload executed as (null on rows without an identity) */
+  runner: string | null;
+  /** display name from user_mapping; null = unmapped runner (show the raw runner id) */
+  runner_name: string | null;
   data_product: string;
   desk: string;
   attribution_method: AttributionMethod;
+  /** first/last usage_date with spend in the month — day precision, from cost_fact */
+  first_seen: string;
+  last_seen: string;
   dbus: number;
   cost: number;
 }

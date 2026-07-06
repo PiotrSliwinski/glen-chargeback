@@ -3,10 +3,11 @@ import { getAiEndpointUsage, getAiTrend, isAiCategory } from "@/dal/ai";
 import { categoryEconomics } from "@/dal/analytics";
 import { getMonthlyRows } from "@/dal/reports";
 import { fmtDbu, fmtDelta, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi, shiftMonth } from "@/lib/format";
-import { resolveReportParams, type SearchParams } from "@/lib/report-params";
+import { param, resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { AI_SECTION_HELP, KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
+import { paginate } from "@/lib/paginate";
 import { cn } from "@/lib/utils";
-import { EmptyState, InfoTip, KpiTile, MethodBadge, PageTitle } from "@/components/ui";
+import { EmptyState, FilteredCount, InfoTip, KpiTile, MethodBadge, PageTitle } from "@/components/ui";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -23,6 +24,8 @@ import { ModeBanner } from "@/components/mode-banner";
 import { ReportFooter } from "@/components/report-footer";
 import { ReportSkeleton } from "@/components/loading-skeletons";
 import { SearchParamsSuspense } from "@/components/keyed-suspense";
+import { TableFilter } from "@/components/table-filter";
+import { TablePagination } from "@/components/table-pagination";
 import type { AiEndpointUsageRow } from "@/dal/types";
 
 export const metadata = { title: "AI costs" };
@@ -40,6 +43,8 @@ export default function AiPage({ searchParams }: { searchParams: SearchParams })
 
 async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
   const { month, mode, months, publishedMonths } = await resolveReportParams(searchParams);
+  const sp = await searchParams;
+  const q = (param(sp.q) ?? "").toLowerCase();
   const notPublished = mode === "published" && !publishedMonths.includes(month);
   const prevMonth = shiftMonth(month, -1);
 
@@ -116,6 +121,29 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
       isNew: !ambiguous && prev == null,
     };
   });
+  // Every endpoint slice of the month, filterable — "used this month" means it
+  // emitted billing usage. Filter first, then paginate what remains.
+  const shownEndpoints = endpointRows.filter(
+    (e) =>
+      !q ||
+      [
+        e.endpoint_name ?? "(no endpoint)",
+        e.serving_type ?? "",
+        e.usage_category,
+        e.runner ?? "",
+        e.runner_name ?? "",
+        e.workspace_name,
+        e.data_product,
+        e.desk,
+        e.attribution_method,
+        e.workspace_id,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+  );
+  const { rows: pageEndpoints, ...endpointsPaged } = paginate(shownEndpoints, param(sp.page));
+
   const movers = [...new Set([...curById.keys(), ...prevById.keys()])]
     .map((k) => {
       const cur = curById.get(k);
@@ -344,7 +372,37 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
               {endpointRows.length === 0 ? (
                 <EmptyState message="No AI usage recorded for this month." />
               ) : (
-                <EndpointTable endpoints={endpointRows} month={month} mode={mode} aiCost={endpointCost} />
+                <>
+                  <div className="no-print mb-3 flex justify-end">
+                    <TableFilter placeholder="Filter by endpoint, run-as, type, category, product, desk…" />
+                  </div>
+                  {shownEndpoints.length === 0 ? (
+                    <EmptyState message="No endpoints match the current filter." />
+                  ) : (
+                    <>
+                      {q && (
+                        <FilteredCount
+                          shown={shownEndpoints.length}
+                          total={endpointRows.length}
+                          noun="row"
+                        />
+                      )}
+                      <EndpointTable
+                        endpoints={pageEndpoints}
+                        month={month}
+                        mode={mode}
+                        aiCost={endpointCost}
+                      />
+                      <TablePagination {...endpointsPaged} noun="row" />
+                    </>
+                  )}
+                  {endpointRows.length >= 500 && (
+                    <p className="mt-2 text-xs text-amber-700">
+                      Showing the month&apos;s top 500 cost slices — smaller endpoints may be
+                      missing. The CSV export below carries the same cap.
+                    </p>
+                  )}
+                </>
               )}
               <p className="no-print mt-3 text-xs text-muted-foreground">
                 Endpoint spend landing in UNALLOCATED? Tag the endpoint at source with{" "}
@@ -388,6 +446,18 @@ function DeltaText({ delta, note }: { delta: number | null; note?: string | null
 }
 
 /**
+ * Day-of-month span the slice was active: "2–28" (single-day slices show one
+ * number). Full dates on hover via the cell's title. Day precision is all
+ * cost_fact has — billing usage is pre-aggregated, so there are no per-call
+ * timestamps.
+ */
+function ActiveDays({ first, last }: { first: string; last: string }) {
+  const f = Number(first.slice(8));
+  const l = Number(last.slice(8));
+  return <>{f === l ? f : `${f}–${l}`}</>;
+}
+
+/**
  * Offering-type chip: batch ai_query jobs get their own hue. The two known
  * offering types drop the _INFERENCE suffix to keep the table narrow (full
  * value on hover); anything else renders verbatim.
@@ -422,12 +492,14 @@ function EndpointTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Endpoint</TableHead>
+          <TableHead>Endpoint / run as</TableHead>
           <TableHead>Type</TableHead>
           <TableHead>Category</TableHead>
+          <TableHead>Workspace</TableHead>
           <TableHead>Product</TableHead>
           <TableHead>Desk</TableHead>
           <TableHead>Attribution</TableHead>
+          <TableHead className="text-right">Active</TableHead>
           <TableHead className="text-right">DBUs</TableHead>
           <TableHead className="text-right">Cost</TableHead>
           <TableHead className="text-right">MoM Δ</TableHead>
@@ -437,19 +509,41 @@ function EndpointTable({
       <TableBody>
         {endpoints.map((e, i) => (
           <TableRow key={i}>
-            <TableCell
-              title={e.endpoint_name ?? undefined}
-              className={cn(
-                "max-w-[200px] truncate font-mono text-xs",
-                e.endpoint_name == null && "text-muted-foreground",
-              )}
-            >
-              {e.endpoint_name ?? "(no endpoint)"}
+            <TableCell className="max-w-[200px]">
+              <p
+                title={e.endpoint_name ?? undefined}
+                className={cn(
+                  "truncate font-mono text-xs",
+                  e.endpoint_name == null && "text-muted-foreground",
+                )}
+              >
+                {e.endpoint_name ?? "(no endpoint)"}
+              </p>
+              {/* run_as: mapped name, else the raw identity — unmapped runners
+                  are exactly the ones worth chasing (map them and their
+                  job-less serving spend bills to their desk via the USER rule) */}
+              <p
+                title={e.runner ?? undefined}
+                className="truncate text-xs text-muted-foreground"
+              >
+                {e.runner_name ?? e.runner ?? "—"}
+              </p>
             </TableCell>
             <TableCell>
               <ServingTypeChip type={e.serving_type} />
             </TableCell>
             <TableCell className="text-muted-foreground">{e.usage_category}</TableCell>
+            <TableCell
+              title={e.workspace_id}
+              className={cn(
+                "max-w-32 truncate text-sm",
+                e.workspace_name.startsWith("UNMAPPED:")
+                  ? "text-amber-700"
+                  : "text-muted-foreground",
+              )}
+            >
+              {e.workspace_name}
+            </TableCell>
             <TableCell>
               {e.data_product === "UNALLOCATED" ? (
                 <span className="text-red-700">UNALLOCATED</span>
@@ -465,6 +559,12 @@ function EndpointTable({
             <TableCell className="text-muted-foreground">{e.desk}</TableCell>
             <TableCell>
               <MethodBadge method={e.attribution_method} />
+            </TableCell>
+            <TableCell
+              className="text-right tabular-nums text-xs text-muted-foreground"
+              title={`first ${e.first_seen}, last ${e.last_seen}`}
+            >
+              <ActiveDays first={e.first_seen} last={e.last_seen} />
             </TableCell>
             <TableCell className="text-right tabular-nums">{fmtDbu(e.dbus)}</TableCell>
             <TableCell className="text-right tabular-nums">{fmtMoney(e.cost)}</TableCell>
