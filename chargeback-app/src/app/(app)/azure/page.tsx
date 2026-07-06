@@ -138,6 +138,17 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
     }))
     .sort((a, b) => b.cost - a.cost);
 
+  const byDomain = sumBy(curRows, (r) => r.data_domain);
+  const prevByDomain = sumBy(prevRows, (r) => r.data_domain);
+  const domainRows = [...byDomain.entries()]
+    .map(([domain, cost]) => ({
+      domain,
+      cost,
+      delta: prevTotal == null ? null : cost - (prevByDomain.get(domain) ?? 0),
+      share: total > 0 ? cost / total : 0,
+    }))
+    .sort((a, b) => b.cost - a.cost);
+
   const mixItems = METHOD_ORDER.map((m) => ({
     label: m,
     value: methodMix.find((r) => r.attribution_method === m)?.cost ?? 0,
@@ -209,8 +220,9 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
         further: the Databricks billing pipeline emits hourly aggregates roughly 1–2 hours
         behind usage (no official SLA) before Microsoft even picks them up, so the most recent
         day&apos;s Databricks charges settle last. This screen is monitoring only: Azure cost
-        never enters the Databricks chargeback report, its published snapshots, or desk
-        invoices.
+        never enters the Databricks chargeback report or its published snapshots — desk
+        statements show attributed Azure cost as a separate informational section, outside
+        the invoiced total.
       </p>
 
       {total === 0 ? (
@@ -267,11 +279,51 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                   <StackedTrend
                     points={trend.map((t) => ({
                       billing_month: t.billing_month,
-                      data_domain: t.desk,
+                      series: t.desk,
                       total_cost: t.total_cost,
                     }))}
                   />
                 )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  Azure cost by data domain
+                  <InfoTip>{AZURE_SECTION_HELP.domains}</InfoTip>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Data domain</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead className="text-right">MoM Δ</TableHead>
+                      <TableHead className="text-right">Share</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {domainRows.map((d) => (
+                      <TableRow key={d.domain}>
+                        <TableCell
+                          className={cn(
+                            "font-medium",
+                            d.domain === "UNALLOCATED" && "text-muted-foreground",
+                          )}
+                        >
+                          {d.domain}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtMoney(d.cost)}</TableCell>
+                        <TableCell className="text-right">
+                          <DeltaText delta={d.delta} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtPct(d.share)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
 

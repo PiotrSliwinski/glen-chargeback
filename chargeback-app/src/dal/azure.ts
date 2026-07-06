@@ -7,6 +7,7 @@ import { mockStore } from "@/dal/mock";
 import { zMonth, zNum, zStr, zStrOrNull } from "@/dal/parse";
 import type {
   AzureDeskTotalRow,
+  AzureInvoiceRow,
   AzureMethodMixRow,
   AzureMonthResourceRow,
   AzureMonthlyRow,
@@ -186,6 +187,13 @@ export async function getAzureDeskTotals(): Promise<AzureDeskTotalRow[]> {
 /** Scale the (≈ one month) Azure fixtures by the shared mock month factor. */
 const azureMockScale = (month: string) => mockStore.monthFactor[month] ?? 0;
 
+/**
+ * Domain of a product per the shared catalogue — mock counterpart of the
+ * data_product_mapping join in azure_cost_fact (UNALLOCATED when unmapped).
+ */
+const mockDomainOf = (data_product: string): string =>
+  mockStore.catalogue.find((c) => c.data_product === data_product)?.data_domain ?? "UNALLOCATED";
+
 /** Months with any Azure cost, newest first — feeds the /azure month picker. */
 export async function getAzureMonths(): Promise<string[]> {
   "use cache";
@@ -200,7 +208,7 @@ export async function getAzureMonths(): Promise<string[]> {
   return rows.map((r) => r.billing_month);
 }
 
-/** One month of Azure cost at product × desk × meter-category grain. */
+/** One month of Azure cost at domain × product × desk × meter-category grain. */
 export async function getAzureMonthlyRows(month: string): Promise<AzureMonthlyRow[]> {
   "use cache";
   cacheLife("warehouse");
@@ -212,6 +220,7 @@ export async function getAzureMonthlyRows(month: string): Promise<AzureMonthlyRo
       const category = a.meter_category ?? "Other";
       const key = `${a.data_product}|${a.desk}|${category}`;
       const e = map.get(key) ?? {
+        data_domain: mockDomainOf(a.data_product),
         data_product: a.data_product,
         desk: a.desk,
         usage_category: category,
@@ -229,21 +238,63 @@ export async function getAzureMonthlyRows(month: string): Promise<AzureMonthlyRo
       .sort((a, b) => b.total_cost - a.total_cost);
   }
   return query(
-    `SELECT data_product, desk,
+    `SELECT data_domain, data_product, desk,
             COALESCE(usage_category, 'Other') AS usage_category,
             SUM(distinct_resources) AS distinct_resources,
             SUM(total_cost) AS total_cost
      FROM ${T("azure_monthly_chargeback")}
      WHERE billing_month = :month
-     GROUP BY 1, 2, 3 ORDER BY total_cost DESC`,
+     GROUP BY 1, 2, 3, 4 ORDER BY total_cost DESC`,
     { month: monthStart(month) },
     z.object({
+      data_domain: zStr,
       data_product: zStr,
       desk: zStr,
       usage_category: zStr,
       distinct_resources: zNum,
       total_cost: zNum,
     }) as z.ZodType<AzureMonthlyRow>,
+  );
+}
+
+/**
+ * One desk's Azure lines for a month, domain × product — the informational
+ * companion section of the desk invoice. Live only: Azure never enters the
+ * published snapshot, so these figures sit NEXT TO the invoice total and are
+ * never part of it.
+ */
+export async function getAzureDeskInvoice(month: string, desk: string): Promise<AzureInvoiceRow[]> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("azure");
+  if (env.DAL_MOCK) {
+    const f = azureMockScale(month);
+    const map = new Map<string, AzureInvoiceRow>();
+    for (const a of mockStore.azureAttributions) {
+      if (a.desk !== desk) continue;
+      const e = map.get(a.data_product) ?? {
+        data_domain: mockDomainOf(a.data_product),
+        data_product: a.data_product,
+        total_cost: 0,
+      };
+      e.total_cost += Math.round(a.cost_30d * f * 100) / 100;
+      map.set(a.data_product, e);
+    }
+    return [...map.values()]
+      .filter((r) => r.total_cost > 0)
+      .sort((a, b) => b.total_cost - a.total_cost);
+  }
+  return query(
+    `SELECT data_domain, data_product, SUM(total_cost) AS total_cost
+     FROM ${T("azure_monthly_chargeback")}
+     WHERE billing_month = :month AND desk = :desk
+     GROUP BY 1, 2 ORDER BY total_cost DESC`,
+    { month: monthStart(month), desk },
+    z.object({
+      data_domain: zStr,
+      data_product: zStr,
+      total_cost: zNum,
+    }) as z.ZodType<AzureInvoiceRow>,
   );
 }
 

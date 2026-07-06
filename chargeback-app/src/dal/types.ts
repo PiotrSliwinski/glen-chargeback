@@ -323,13 +323,24 @@ export interface AzureDeskTotalRow {
 
 // ---------- Azure cost monitoring (/azure) ----------
 
-/** One month of azure_monthly_chargeback at product × desk × meter-category grain. */
+/** One month of azure_monthly_chargeback at domain × product × desk × meter-category grain. */
 export interface AzureMonthlyRow {
+  data_domain: string;
   data_product: string;
   desk: string;
   /** Azure meter_category ('Virtual Machines', 'Storage', …); 'Other' when the export omits it */
   usage_category: string;
   distinct_resources: number;
+  total_cost: number;
+}
+
+/**
+ * The Azure lines of one desk's month — the informational companion to the
+ * Databricks invoice. Always live: Azure never enters the published snapshot.
+ */
+export interface AzureInvoiceRow {
+  data_domain: string;
+  data_product: string;
   total_cost: number;
 }
 
@@ -423,6 +434,12 @@ export interface IntegrityViolation {
 
 export interface HealthReport {
   recon: ReconRow[];
+  /**
+   * Azure counterpart of recon: azure_usage_view (= the raw Azure bill) vs
+   * azure_cost_fact vs azure_monthly_chargeback. Informational — Azure is
+   * never published, so gaps here do not block publication.
+   */
+  azureRecon: ReconRow[];
   violations: IntegrityViolation[];
   ranAt: string;
 }

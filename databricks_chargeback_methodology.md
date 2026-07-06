@@ -73,7 +73,7 @@ cost = usage_quantity × price effective at usage_start_time
   `usage_start_time >= price_start_time AND (price_end_time IS NULL OR usage_start_time < price_end_time)`.
   Matching on the start time only guarantees every usage row matches exactly one price row, even when a usage slice spans a price change.
 - The join always filters `currency_code = 'USD'`. `list_prices` holds one row per SKU **per currency**; omitting the filter fans out every usage row and multiplies both DBUs and cost. **If the account is billed in another currency, the literal must be changed in `query_view` and `usage_view` together.**
-- `usage_view` prefers `pricing.effective_list.default` (reflects negotiated rates where populated) with fallback to `pricing.default`. `query_view` uses `pricing.default`; align the two if `effective_list` is populated for your account.
+- Both `query_view` and `usage_view` prefer `pricing.effective_list.default` (reflects negotiated rates where populated) with fallback to `pricing.default` — the same basis, so warehouse and non-warehouse spend are always priced alike. Both use a LEFT price join: usage whose SKU has no matching USD price row keeps its DBUs and surfaces with NULL cost (visible as a reconciliation gap, §7.1) instead of silently disappearing.
 - Purchased DBU reservation plans recorded in `dbu_discount_plan` (§4.9) **are** applied at pricing time: DBU-metered rows in the covered window bill at list price × (1 − discount). Other discounts not reflected in `effective_list` are excluded. For classic (non-serverless) compute, the Azure VM / infrastructure cost billed directly by Microsoft is **out of scope** — this system charges back the Databricks (DBU) component only.
 
 ### 2.2 Two allocation models
@@ -343,13 +343,17 @@ months keep the figures they were published with.
 --     statement_id when the text is needed.
 --   * Currency is hardcoded to USD - change if billed in another currency
 --     (must match the literal used in usage_view).
---   * Cost = list price less any DBU reservation-plan discount effective on
+--   * Price = effective_list.default preferred, falling back to default -
+--     the SAME basis as usage_view. LEFT price join, also like usage_view:
+--     unpriced SKUs keep their DBUs with NULL cost (a visible §7.1 gap)
+--     instead of silently disappearing.
+--   * Cost = price less any DBU reservation-plan discount effective on
 --     the usage date (dbu_discount_plan, §4.9); classic warehouses also
 --     exclude the Azure VM/infra cost billed separately by Microsoft.
 -- =====================================================================
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.query_view
-COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at time-effective USD list price) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing. statement_text excluded for performance - join to system.query.history on statement_id.'
+COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at the time-effective USD price - effective_list preferred, same basis as usage_view) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing; usage without a matching price row keeps its DBUs with NULL cost rather than being dropped. statement_text excluded for performance - join to system.query.history on statement_id.'
 AS
 WITH usage_data AS (
   -- Hourly DBU consumption and cost per warehouse,
@@ -360,9 +364,11 @@ WITH usage_data AS (
     u.workspace_id,
     u.usage_metadata.warehouse_id               AS warehouse_id,
     SUM(u.usage_quantity)                       AS total_dbu_per_hour,
-    SUM(u.usage_quantity * p.pricing.default)   AS cost_per_hour
+    SUM(u.usage_quantity
+        * COALESCE(p.pricing.effective_list.default,
+                   p.pricing.default))          AS cost_per_hour
   FROM system.billing.usage u
-  JOIN system.billing.list_prices p
+  LEFT JOIN system.billing.list_prices p
     ON  u.sku_name = p.sku_name
     AND u.cloud = p.cloud
     AND p.currency_code = 'USD'                 -- adjust if billed in EUR etc.
@@ -911,7 +917,7 @@ LEFT JOIN report_total r USING (billing_month)
 ORDER BY 1 DESC;
 ```
 
-Note: `query_view` prices with `pricing.default` while `usage_view` and this check use `effective_list` fallback. If `effective_list` is populated for warehouse SKUs in your account, a small `fact_gap` on warehouse months signals the two should be aligned.
+Note: `query_view`, `usage_view` and this check all price with the `effective_list`-preferred fallback, so a `fact_gap` can no longer come from a pricing-basis mismatch. A residual gap points at dropped or double-counted usage — or at SKUs with no matching USD price row, whose DBUs survive with NULL cost in both views.
 
 ### 7.2 Unmapped work queue — feeds the interface's "fix it" screens
 

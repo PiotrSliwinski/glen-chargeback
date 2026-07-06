@@ -28,7 +28,7 @@ export const PAGE_HELP = {
   queue:
     "The operational to-do list: cost drivers from the trailing 30 days that the attribution waterfall could not (fully) place, split into five queues. Every row carries a pre-filled inline fix that writes to the mapping tables. Fixes change live views immediately and never touch published months.",
   health:
-    "Pre-publication control room. Reconciliation proves billing truth = cost_fact = report for every month within the configured tolerance; integrity checks catch catalogue overlaps, desk splits that don't sum to 100%, orphan bridge rows, duplicate keys and inconsistent warehouse flags; the diff shows exactly what the snapshot will freeze. Publication unlocks only when everything is green — and the gate re-checks server-side at submit.",
+    "Pre-publication control room. Reconciliation proves billing truth = cost_fact = report for every month within the configured tolerance; the Azure counterpart proves the same for the Azure bill = azure_cost_fact = Azure rollup (informational — Azure is never published); integrity checks catch catalogue overlaps, desk splits that don't sum to 100%, orphan bridge rows, duplicate keys and inconsistent warehouse flags; the diff shows exactly what the snapshot will freeze. Publication unlocks only when the Databricks checks are green — and the gate re-checks server-side at submit.",
   admin:
     "The write surface of the chargeback system: the mapping tables that steer the Databricks attribution waterfall, the four Azure rule tables, and the DBU reservation-discount windows that set the effective DBU price. Everything else in the app is derived, read-only reporting. Edits here change live views immediately and never restate published months.",
   products:
@@ -57,7 +57,7 @@ export const PAGE_HELP = {
 
 export const KPI_HELP = {
   totalCost:
-    "SUM(total_cost) over every monthly_chargeback row for the selected month (the published snapshot when in Published mode). Cost = DBUs × list price from Databricks system billing tables, less any DBU reservation-plan discount effective on the usage date, in USD. Includes UNALLOCATED, so this is the whole bill for the month.",
+    "SUM(total_cost) over every monthly_chargeback row for the selected month (the published snapshot when in Published mode). Cost = DBUs × time-effective price from Databricks system billing tables, less any DBU reservation-plan discount effective on the usage date, in USD. Includes UNALLOCATED, so this is the whole Databricks bill for the month — Azure spend is separate money, reported on the Azure costs screen.",
   momChange:
     "This month's total cost minus the previous month's; the percentage is current ÷ previous − 1. The previous month is always read from live figures — so in Published mode this compares snapshot vs live.",
   tagCoverage:
@@ -161,6 +161,8 @@ export const AI_SECTION_HELP = {
 export const AZURE_SECTION_HELP = {
   categories:
     "The month's Azure cost per meter category (Virtual Machines, Storage, Azure Databricks…), with the number of distinct resources behind each and the category's share of the Azure bill. MoM Δ compares against last month's rollup.",
+  domains:
+    "The month's attributed Azure cost per data domain — level 1 of the same domain → product → desk hierarchy every Databricks report uses, derived from the shared product catalogue. UNALLOCATED is the unmatched remainder. Same rows as the KPI tiles, so domains + UNALLOCATED sum to the Azure cost tile.",
   trend:
     "Azure cost per month over the trailing 12 months, stacked by desk. UNALLOCATED (grey) is the unmatched remainder of the bill — watch whether the attributed slice grows as tagging and rules improve.",
   desks:

@@ -113,7 +113,13 @@ async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
                 <CardTitle>Monthly trend by domain</CardTitle>
               </CardHeader>
               <CardContent>
-                <StackedTrend points={data.trend} />
+                <StackedTrend
+                  points={data.trend.map((t) => ({
+                    billing_month: t.billing_month,
+                    series: t.data_domain,
+                    total_cost: t.total_cost,
+                  }))}
+                />
                 <TrendHint month={month} />
               </CardContent>
             </Card>

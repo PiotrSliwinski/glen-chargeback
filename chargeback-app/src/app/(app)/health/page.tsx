@@ -112,6 +112,56 @@ async function Health() {
 
       <Card className="mb-4">
         <CardHeader>
+          <CardTitle>Azure reconciliation — bill vs azure_cost_fact vs Azure rollup</CardTitle>
+          <CardDescription>
+            The Azure counterpart of the check above: the raw Azure bill (azure_usage_view) vs the
+            attribution waterfall (azure_cost_fact) vs the monthly rollup. A gap means the waterfall
+            or a multi-desk split is minting or losing Azure money. Informational — Azure is never
+            published, so gaps here do not block publication.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {report.azureRecon.length === 0 ? (
+            <EmptyState message="No Azure cost data yet — nothing to reconcile." />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Month</TableHead>
+                  <TableHead className="text-right">Azure bill</TableHead>
+                  <TableHead className="text-right">azure_cost_fact</TableHead>
+                  <TableHead className="text-right">Rollup</TableHead>
+                  <TableHead className="text-right">Gap</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.azureRecon.map((r) => {
+                  const pass =
+                    Math.abs(r.fact_gap) < tolerance && Math.abs(r.report_gap) < tolerance;
+                  return (
+                    <TableRow key={r.billing_month}>
+                      <TableCell>{fmtMonth(r.billing_month)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.billing_cost)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.fact_cost)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtMoneyExact(r.report_cost)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {r.report_gap === 0 ? "0.00" : r.report_gap.toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        <StatusChip ok={pass} label={pass ? "reconciled" : "GAP"} />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="mb-4">
+        <CardHeader>
           <CardTitle>Mapping-table integrity (§7.4)</CardTitle>
         </CardHeader>
         <CardContent>

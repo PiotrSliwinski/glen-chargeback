@@ -81,6 +81,56 @@ export async function getReconciliation(): Promise<ReconRow[]> {
   );
 }
 
+/**
+ * Azure counterpart of getReconciliation: the raw Azure bill (azure_usage_view
+ * is a plain GROUP BY over azure_cleaned.amortized_costs, so its SUM equals the
+ * source's) vs azure_cost_fact (attribution waterfall + split fan-out) vs
+ * azure_monthly_chargeback (the rollup). A gap means the waterfall or a
+ * multi-desk split is minting or losing Azure money. Informational — Azure is
+ * never published, so gaps here do not block publication.
+ */
+export async function getAzureReconciliation(): Promise<ReconRow[]> {
+  "use cache";
+  cacheLife("hours");
+  cacheTag("health");
+
+  if (env.DAL_MOCK) {
+    return [...mockStore.azureRecon].sort((a, b) => b.billing_month.localeCompare(a.billing_month));
+  }
+
+  return query(
+    `WITH billing_truth AS (
+       SELECT DATE_TRUNC('month', usage_date) AS billing_month,
+              SUM(total_cost) AS billing_cost
+       FROM ${T("azure_usage_view")} GROUP BY 1
+     ),
+     fact_total AS (
+       SELECT DATE_TRUNC('month', usage_date) AS billing_month, SUM(cost) AS fact_cost
+       FROM ${T("azure_cost_fact")} GROUP BY 1
+     ),
+     report_total AS (
+       SELECT billing_month, SUM(total_cost) AS report_cost
+       FROM ${T("azure_monthly_chargeback")} GROUP BY 1
+     )
+     SELECT b.billing_month, b.billing_cost, f.fact_cost, r.report_cost,
+            b.billing_cost - f.fact_cost   AS fact_gap,
+            b.billing_cost - r.report_cost AS report_gap
+     FROM billing_truth b
+     LEFT JOIN fact_total  f USING (billing_month)
+     LEFT JOIN report_total r USING (billing_month)
+     ORDER BY 1 DESC`,
+    {},
+    z.object({
+      billing_month: zMonth,
+      billing_cost: zNum,
+      fact_cost: zNum,
+      report_cost: zNum,
+      fact_gap: zNum,
+      report_gap: zNum,
+    }) as z.ZodType<ReconRow>,
+  );
+}
+
 /** §7.4 integrity checks; optionally scoped to one product (post-condition use). */
 export async function getIntegrityViolations(product?: string): Promise<IntegrityViolation[]> {
   if (env.DAL_MOCK) return mockIntegrity(product);
@@ -412,11 +462,12 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
 }
 
 export async function getHealthReport(): Promise<HealthReport> {
-  const [recon, violations] = await Promise.all([
+  const [recon, azureRecon, violations] = await Promise.all([
     getReconciliation(),
+    getAzureReconciliation(),
     getIntegrityViolations(),
   ]);
-  return { recon, violations, ranAt: new Date().toISOString() };
+  return { recon, azureRecon, violations, ranAt: new Date().toISOString() };
 }
 
 /** Publication gate (Methodology §10.6). */

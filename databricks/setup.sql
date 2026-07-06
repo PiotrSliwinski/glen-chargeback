@@ -190,12 +190,18 @@ COMMENT 'Subscription rule: everything in a subscription -> data product. Rule 5
 --     statement_id when the text is needed.
 --   * Currency is hardcoded to USD - change if billed in another currency
 --     (must match the literal used in usage_view).
---   * Cost = list price less any DBU reservation-plan discount effective on
+--   * Price = effective_list.default preferred, falling back to default -
+--     the SAME basis as usage_view, so warehouse and non-warehouse spend
+--     are always priced alike. The price join is a LEFT JOIN, also like
+--     usage_view: usage whose SKU has no matching USD price row keeps its
+--     DBUs and surfaces with NULL cost (a reconciliation gap on the health
+--     page) instead of silently disappearing.
+--   * Cost = price less any DBU reservation-plan discount effective on
 --     the usage date (dbu_discount_plan, §4.9); classic warehouses also
 --     exclude the Azure VM/infra cost billed separately by Microsoft.
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.query_view
-COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at time-effective USD list price less any reservation-plan discount from dbu_discount_plan) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing. statement_text excluded for performance - join to system.query.history on statement_id.'
+COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at the time-effective USD price - effective_list preferred, same basis as usage_view - less any reservation-plan discount from dbu_discount_plan) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing; usage without a matching price row keeps its DBUs with NULL cost rather than being dropped. statement_text excluded for performance - join to system.query.history on statement_id.'
 AS
 WITH usage_data AS (
   -- Hourly DBU consumption and cost per warehouse,
@@ -206,9 +212,13 @@ WITH usage_data AS (
     u.workspace_id,
     u.usage_metadata.warehouse_id               AS warehouse_id,
     SUM(u.usage_quantity)                       AS total_dbu_per_hour,
-    SUM(u.usage_quantity * p.pricing.default)   AS list_cost_per_hour
+    SUM(u.usage_quantity
+        * COALESCE(p.pricing.effective_list.default,
+                   p.pricing.default))          AS list_cost_per_hour
   FROM system.billing.usage u
-  JOIN system.billing.list_prices p
+  -- LEFT + effective_list-preferred, exactly like usage_view: unpriced SKUs
+  -- keep their DBUs (cost NULL) and both views price on the same basis
+  LEFT JOIN system.billing.list_prices p
     ON  u.sku_name = p.sku_name
     AND u.cloud = p.cloud
     AND p.currency_code = 'USD'                 -- adjust if billed in EUR etc.

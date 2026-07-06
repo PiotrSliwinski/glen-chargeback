@@ -47,13 +47,17 @@ export function BarList({
   );
 }
 
+/**
+ * Stacked monthly bars, one segment per `series` value — a domain on the
+ * dashboard, a desk on the Azure screen, a usage category on the AI screen.
+ */
 export function StackedTrend({
   points,
 }: {
-  points: { billing_month: string; data_domain: string; total_cost: number }[];
+  points: { billing_month: string; series: string; total_cost: number }[];
 }) {
   const months = [...new Set(points.map((p) => p.billing_month))].sort();
-  const domains = [...new Set(points.map((p) => p.data_domain))].sort();
+  const series = [...new Set(points.map((p) => p.series))].sort();
   const totals = months.map((m) =>
     points.filter((p) => p.billing_month === m).reduce((s, p) => s + p.total_cost, 0),
   );
@@ -68,9 +72,9 @@ export function StackedTrend({
               className="flex w-full flex-col-reverse overflow-hidden rounded-t"
               style={{ height: `${(totals[mi] / max) * 160}px` }}
             >
-              {domains.map((d) => {
+              {series.map((d) => {
                 const v =
-                  points.find((p) => p.billing_month === m && p.data_domain === d)?.total_cost ?? 0;
+                  points.find((p) => p.billing_month === m && p.series === d)?.total_cost ?? 0;
                 if (v <= 0 || totals[mi] <= 0) return null;
                 return (
                   <div
@@ -97,7 +101,7 @@ export function StackedTrend({
           </span>
         ))}
       </div>
-      <Legend items={domains.map((d) => ({ label: d, color: colorFor(d, DOMAIN_SPECIALS) }))} />
+      <Legend items={series.map((d) => ({ label: d, color: colorFor(d, DOMAIN_SPECIALS) }))} />
     </div>
   );
 }

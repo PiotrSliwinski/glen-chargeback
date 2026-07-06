@@ -535,7 +535,7 @@ Honest statement of what has and hasn't been exercised:
 
 | Item | Notes |
 |---|---|
-| Azure in invoices & report pack | The `/azure` screen now covers monthly Azure monitoring, but the dashboard/report pack/desk invoices remain Databricks-only. Needs a publish snapshot + recon story for Azure before invoicing from it |
+| Azure in invoiced totals & report pack | Desk statements now show a live, informational Azure section and the health page reconciles the Azure bill against `azure_cost_fact`, but the dashboard/report pack and the invoiced total remain Databricks-only. Billing Azure for real still needs a publish snapshot for Azure |
 | Azure work-queue tab | Unmatched Azure resources surface on the coverage tab (`method=NONE` filter); a queue tab with inline fixes would mirror the Databricks flow |
 | Azure health checks | Duplicate/conflicting Azure rules and orphan products are prevented at write time but not yet re-checked on the health page |
 | Budgets & burn rate | Needs a new `desk_budget` reference table + admin screen; then MTD vs budget with month-end projection |

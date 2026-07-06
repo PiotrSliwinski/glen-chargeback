@@ -14,7 +14,7 @@ const LIMITATIONS = {
   azure: [
     "Amortized Azure cost in USD as exported to azure_cleaned.amortized_costs; invoice-level adjustments, credits and refunds are not reflected.",
     "Attribution is an allowlist — unmatched cost stays UNALLOCATED and is never billed to a desk.",
-    "Live figures only: Azure cost is never snapshotted at publication and never enters the Databricks chargeback report, desk invoices, or the health reconciliation.",
+    "Live figures only: Azure cost is never snapshotted at publication and never enters the Databricks chargeback report or an invoiced total — desk statements and the health page show it in separate, informational sections.",
     "Multi-desk products split by the catalogue's cost_split_pct as of each usage date, same as Databricks spend.",
   ],
 } as const;

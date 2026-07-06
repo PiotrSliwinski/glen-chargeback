@@ -242,7 +242,7 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                   <StackedTrend
                     points={trend.map((t) => ({
                       billing_month: t.billing_month,
-                      data_domain: t.usage_category,
+                      series: t.usage_category,
                       total_cost: t.total_cost,
                     }))}
                   />

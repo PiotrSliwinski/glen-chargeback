@@ -64,6 +64,7 @@ export interface MockStore {
   azureSubscriptionRules: AzureSubscriptionRuleRow[];
   azureAttributions: AzureResourceAttributionRow[];
   recon: ReconRow[];
+  azureRecon: ReconRow[];
 }
 
 function createStore(): MockStore {
@@ -192,6 +193,43 @@ function createStore(): MockStore {
       total_cost: Math.round(cost * factor[m] * 100) / 100,
     })),
   );
+
+  // How every Azure resource with 30d cost attributed — one row per
+  // (resource, method, product). adf-pnl-prod shows two rows on purpose:
+  // bridge-mapped early in the window, tagged at source since (janitor).
+  const azureAttributions: AzureResourceAttributionRow[] = [
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-prod/providers/microsoft.databricks/workspaces/dbw-mktdata-prod", resource_name: "dbw-mktdata-prod", meter_category: "Azure Databricks", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", tags_json: "{\"Environment\":\"prod\",\"application\":\"curves\",\"data_product\":\"pricing-curves\"}", cost_30d: 6400 },
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-prod/providers/microsoft.storage/storageaccounts/stmktdatarefprod", resource_name: "stmktdatarefprod", meter_category: "Storage", attribution_method: "RESOURCE_MAPPING", data_product: "ref-data-ingest", desk: "rates", tags_json: "{\"Environment\":\"prod\"}", cost_30d: 2350 },
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-prod/providers/microsoft.compute/virtualmachines/vm-curves-calc-01", resource_name: "vm-curves-calc-01", meter_category: "Virtual Machines", attribution_method: "TAG_RULE", data_product: "pricing-curves", desk: "rates", tags_json: "{\"Environment\":\"prod\",\"application\":\"curves\"}", cost_30d: 3120 },
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-risk-var", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-risk-var/providers/microsoft.compute/virtualmachinescalesets/vmss-var-grid", resource_name: "vmss-var-grid", meter_category: "Virtual Machines", attribution_method: "RESOURCE_GROUP", data_product: "var-engine", desk: "risk", tags_json: "{\"Environment\":\"prod\",\"team\":\"risk-eng\"}", cost_30d: 9800 },
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-risk-var", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-risk-var/providers/microsoft.storage/storageaccounts/stvarresults", resource_name: "stvarresults", meter_category: "Storage", attribution_method: "RESOURCE_GROUP", data_product: "var-engine", desk: "risk", tags_json: null, cost_30d: 740 },
+    // stress-lab subscription rule fans 70/30 across risk and credit in the
+    // real view; the mock keeps the primary desk (largest share), like jobs
+    { subscription_id: "9e8d7c6b-bbbb-4ccc-8ddd-444455556666", resource_group: "rg-stress-lab", resource_id: "/subscriptions/9e8d7c6b-bbbb-4ccc-8ddd-444455556666/resourcegroups/rg-stress-lab/providers/microsoft.compute/virtualmachinescalesets/vmss-stress-workers", resource_name: "vmss-stress-workers", meter_category: "Virtual Machines", attribution_method: "SUBSCRIPTION", data_product: "stress-testing", desk: "risk", tags_json: "{\"Environment\":\"prod\"}", cost_30d: 4200 },
+    // tagged at source AND still bridge-attributed within the window
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-pnl-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-pnl-prod/providers/microsoft.datafactory/factories/adf-pnl-prod", resource_name: "adf-pnl-prod", meter_category: "Data Factory", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", tags_json: "{\"Environment\":\"prod\",\"data_product\":\"trade-pnl\"}", cost_30d: 1650 },
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-pnl-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-pnl-prod/providers/microsoft.datafactory/factories/adf-pnl-prod", resource_name: "adf-pnl-prod", meter_category: "Data Factory", attribution_method: "RESOURCE_MAPPING", data_product: "trade-pnl", desk: "credit", tags_json: null, cost_30d: 980 },
+    // unmatched remainder — visible in coverage, never billed to a desk
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-shared-platform", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-shared-platform/providers/microsoft.containerservice/managedclusters/aks-shared-01", resource_name: "aks-shared-01", meter_category: "Azure Kubernetes Service", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: "{\"Environment\":\"prod\",\"team\":\"platform\"}", cost_30d: 5600 },
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-shared-platform", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-shared-platform/providers/microsoft.operationalinsights/workspaces/log-shared-prod", resource_name: "log-shared-prod", meter_category: "Log Analytics", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: null, cost_30d: 1900 },
+    { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-dev", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-dev/providers/microsoft.databricks/workspaces/dbw-mktdata-dev", resource_name: "dbw-mktdata-dev", meter_category: "Azure Databricks", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: "{\"Environment\":\"dev\"}", cost_30d: 830 },
+  ];
+
+  // Azure bill = fact = report per month (attribution is lossless: splits sum
+  // to 1 and UNALLOCATED stays in the fact) — derived from the fixtures above
+  // so it always matches what the /azure screen shows for the same month.
+  const azureBase = azureAttributions.reduce((s, a) => s + a.cost_30d, 0);
+  const azureRecon: ReconRow[] = months.map((m) => {
+    const total = Math.round(azureBase * factor[m] * 100) / 100;
+    return {
+      billing_month: m,
+      billing_cost: total,
+      fact_cost: total,
+      report_cost: total,
+      fact_gap: 0,
+      report_gap: 0,
+    };
+  });
 
   // ---- attribution coverage: shares improving slightly over time ----
   const coverage: CoverageRow[] = months.flatMap((m, i) => {
@@ -360,26 +398,8 @@ function createStore(): MockStore {
     azureSubscriptionRules: [
       { subscription_id: "9e8d7c6b-bbbb-4ccc-8ddd-444455556666", data_product: "stress-testing", note: "dedicated stress-lab subscription", mapped_by: "steward@example.com", mapped_at: "2026-06-10T15:40:00Z" },
     ],
-    // How every Azure resource with 30d cost attributed — one row per
-    // (resource, method, product). adf-pnl-prod shows two rows on purpose:
-    // bridge-mapped early in the window, tagged at source since (janitor).
-    azureAttributions: [
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-prod/providers/microsoft.databricks/workspaces/dbw-mktdata-prod", resource_name: "dbw-mktdata-prod", meter_category: "Azure Databricks", attribution_method: "TAG", data_product: "pricing-curves", desk: "rates", tags_json: "{\"Environment\":\"prod\",\"application\":\"curves\",\"data_product\":\"pricing-curves\"}", cost_30d: 6400 },
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-prod/providers/microsoft.storage/storageaccounts/stmktdatarefprod", resource_name: "stmktdatarefprod", meter_category: "Storage", attribution_method: "RESOURCE_MAPPING", data_product: "ref-data-ingest", desk: "rates", tags_json: "{\"Environment\":\"prod\"}", cost_30d: 2350 },
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-prod/providers/microsoft.compute/virtualmachines/vm-curves-calc-01", resource_name: "vm-curves-calc-01", meter_category: "Virtual Machines", attribution_method: "TAG_RULE", data_product: "pricing-curves", desk: "rates", tags_json: "{\"Environment\":\"prod\",\"application\":\"curves\"}", cost_30d: 3120 },
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-risk-var", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-risk-var/providers/microsoft.compute/virtualmachinescalesets/vmss-var-grid", resource_name: "vmss-var-grid", meter_category: "Virtual Machines", attribution_method: "RESOURCE_GROUP", data_product: "var-engine", desk: "risk", tags_json: "{\"Environment\":\"prod\",\"team\":\"risk-eng\"}", cost_30d: 9800 },
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-risk-var", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-risk-var/providers/microsoft.storage/storageaccounts/stvarresults", resource_name: "stvarresults", meter_category: "Storage", attribution_method: "RESOURCE_GROUP", data_product: "var-engine", desk: "risk", tags_json: null, cost_30d: 740 },
-      // stress-lab subscription rule fans 70/30 across risk and credit in the
-      // real view; the mock keeps the primary desk (largest share), like jobs
-      { subscription_id: "9e8d7c6b-bbbb-4ccc-8ddd-444455556666", resource_group: "rg-stress-lab", resource_id: "/subscriptions/9e8d7c6b-bbbb-4ccc-8ddd-444455556666/resourcegroups/rg-stress-lab/providers/microsoft.compute/virtualmachinescalesets/vmss-stress-workers", resource_name: "vmss-stress-workers", meter_category: "Virtual Machines", attribution_method: "SUBSCRIPTION", data_product: "stress-testing", desk: "risk", tags_json: "{\"Environment\":\"prod\"}", cost_30d: 4200 },
-      // tagged at source AND still bridge-attributed within the window
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-pnl-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-pnl-prod/providers/microsoft.datafactory/factories/adf-pnl-prod", resource_name: "adf-pnl-prod", meter_category: "Data Factory", attribution_method: "TAG", data_product: "trade-pnl", desk: "credit", tags_json: "{\"Environment\":\"prod\",\"data_product\":\"trade-pnl\"}", cost_30d: 1650 },
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-pnl-prod", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-pnl-prod/providers/microsoft.datafactory/factories/adf-pnl-prod", resource_name: "adf-pnl-prod", meter_category: "Data Factory", attribution_method: "RESOURCE_MAPPING", data_product: "trade-pnl", desk: "credit", tags_json: null, cost_30d: 980 },
-      // unmatched remainder — visible in coverage, never billed to a desk
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-shared-platform", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-shared-platform/providers/microsoft.containerservice/managedclusters/aks-shared-01", resource_name: "aks-shared-01", meter_category: "Azure Kubernetes Service", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: "{\"Environment\":\"prod\",\"team\":\"platform\"}", cost_30d: 5600 },
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-shared-platform", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-shared-platform/providers/microsoft.operationalinsights/workspaces/log-shared-prod", resource_name: "log-shared-prod", meter_category: "Log Analytics", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: null, cost_30d: 1900 },
-      { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-mktdata-dev", resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-dev/providers/microsoft.databricks/workspaces/dbw-mktdata-dev", resource_name: "dbw-mktdata-dev", meter_category: "Azure Databricks", attribution_method: "NONE", data_product: "UNALLOCATED", desk: "UNALLOCATED", tags_json: "{\"Environment\":\"dev\"}", cost_30d: 830 },
-    ],
+    azureAttributions,
+    azureRecon,
     // billing/fact/report totals mirror the monthly matrix above (sum of base
     // × monthFactor) with deliberate sub-dollar gaps — recompute when base changes
     recon: [
