@@ -240,7 +240,8 @@ async function UntaggedJobsTab({
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
-              <TableRow key={`${r.workspace_id}|${r.job_id}`}>
+              // job_id is null for non-job work items, so it alone can't identify a row
+              <TableRow key={`${r.workspace_id}|${r.job_id}|${r.usage_category}|${r.work_item}|${r.runner}`}>
                 <TableCell>
                   <p className="text-sm font-medium">{r.work_item}</p>
                   {r.job_id && (
