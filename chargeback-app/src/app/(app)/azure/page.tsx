@@ -151,7 +151,7 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
         r.resource_name ?? "",
         r.resource_id,
         r.subscription_id,
-        r.resource_group,
+        r.resource_group ?? "",
         r.meter_category ?? "",
         r.attribution_method,
         r.data_product,
@@ -373,8 +373,11 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                             <p className="text-xs text-muted-foreground">{r.meter_category ?? "—"}</p>
                           </TableCell>
                           <TableCell className="text-xs">
-                            <p className="max-w-32 truncate font-mono" title={r.resource_group}>
-                              {r.resource_group}
+                            <p
+                              className="max-w-32 truncate font-mono"
+                              title={r.resource_group ?? undefined}
+                            >
+                              {r.resource_group ?? "—"}
                             </p>
                             <p
                               className="max-w-32 truncate font-mono text-muted-foreground"

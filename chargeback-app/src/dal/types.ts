@@ -301,7 +301,8 @@ export interface AzureSubscriptionRuleRow {
 /** How one Azure resource's cost attributed over the trailing 30 days — one row per (resource, method, product). */
 export interface AzureResourceAttributionRow {
   subscription_id: string;
-  resource_group: string;
+  /** null for subscription-scoped charges (marketplace, reservations, support) that have no RG */
+  resource_group: string | null;
   resource_id: string;
   /** last segment of the ARM ID — display name */
   resource_name: string | null;
@@ -348,7 +349,8 @@ export interface AzureMethodMixRow {
 /** One month's Azure cost per resource — one row per (resource, method, product, desk), like coverage. */
 export interface AzureMonthResourceRow {
   subscription_id: string;
-  resource_group: string;
+  /** null for subscription-scoped charges (marketplace, reservations, support) that have no RG */
+  resource_group: string | null;
   resource_id: string;
   /** last segment of the ARM ID — display name */
   resource_name: string | null;

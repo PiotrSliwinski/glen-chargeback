@@ -140,7 +140,7 @@ export async function getAzureResourceAttributions(): Promise<AzureResourceAttri
     {},
     z.object({
       subscription_id: zStr,
-      resource_group: zStr,
+      resource_group: zStrOrNull,
       resource_id: zStr,
       resource_name: zStrOrNull,
       meter_category: zStrOrNull,
@@ -349,7 +349,7 @@ export async function getAzureMonthResources(month: string): Promise<AzureMonthR
     { month: monthStart(month) },
     z.object({
       subscription_id: zStr,
-      resource_group: zStr,
+      resource_group: zStrOrNull,
       resource_id: zStr,
       resource_name: zStrOrNull,
       meter_category: zStrOrNull,

@@ -55,7 +55,7 @@ interface ResourceGroup {
   resource_id: string;
   resource_name: string | null;
   subscription_id: string;
-  resource_group: string;
+  resource_group: string | null;
   meter_category: string | null;
   rows: AzureResourceAttributionRow[];
   methods: Set<AzureAttributionMethod>;
@@ -129,7 +129,7 @@ export async function CoverageView({
       g.resource_name ?? "",
       g.resource_id,
       g.subscription_id,
-      g.resource_group,
+      g.resource_group ?? "",
       g.meter_category ?? "",
       ...g.rows.flatMap((r) => [r.data_product, r.desk]),
       ...Object.entries(resourceTags(g.rows)).map(([k, v]) => `${k}=${v}`),
@@ -256,8 +256,11 @@ export async function CoverageView({
                         </p>
                       </TableCell>
                       <TableCell className="text-xs">
-                        <p className="max-w-32 truncate font-mono" title={g.resource_group}>
-                          {g.resource_group}
+                        <p
+                          className="max-w-32 truncate font-mono"
+                          title={g.resource_group ?? undefined}
+                        >
+                          {g.resource_group ?? "—"}
                         </p>
                         <p
                           className="max-w-32 truncate font-mono text-muted-foreground"
