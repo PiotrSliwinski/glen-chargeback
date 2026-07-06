@@ -3,7 +3,7 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { exec, query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
-import { zDate, zNum, zStrOrNull } from "@/dal/parse";
+import { zDate, zNum, zStrOrNull, zTimestampOrNull } from "@/dal/parse";
 import type { DbuDiscountRow } from "@/dal/types";
 
 /**
@@ -32,7 +32,7 @@ export async function listDbuDiscounts(): Promise<DbuDiscountRow[]> {
       discount_pct: zNum,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<DbuDiscountRow>,
   );
 }

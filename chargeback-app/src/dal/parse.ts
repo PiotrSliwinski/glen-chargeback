@@ -26,6 +26,11 @@ export const zNum = z
   .union([z.number(), z.string(), z.null()])
   .transform((v) => (v == null ? 0 : typeof v === "string" ? Number(v) : v));
 
+/** TIMESTAMP/string → ISO-8601 string (driver returns TIMESTAMPs as Date) */
+export const zTimestampOrNull = z
+  .union([z.string(), z.date(), z.null()])
+  .transform((v) => (v == null ? null : typeof v === "string" ? v : v.toISOString()));
+
 export const zStr = z.string();
 export const zStrOrNull = z.string().nullable();
 

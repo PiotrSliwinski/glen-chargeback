@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
 import { monthStart } from "@/lib/format";
 import { exec, query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
-import { zMonth, zNum, zStr, zStrOrNull } from "@/dal/parse";
+import { zMonth, zNum, zStr, zStrOrNull, zTimestampOrNull } from "@/dal/parse";
 import type {
   AzureDeskTotalRow,
   AzureInvoiceRow,
@@ -50,7 +50,7 @@ export async function listAzureResourceMappings(): Promise<AzureResourceMappingR
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<AzureResourceMappingRow>,
   );
 }
@@ -70,7 +70,7 @@ export async function listAzureTagRules(): Promise<AzureTagRuleRow[]> {
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<AzureTagRuleRow>,
   );
 }
@@ -90,7 +90,7 @@ export async function listAzureRgRules(): Promise<AzureRgRuleRow[]> {
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<AzureRgRuleRow>,
   );
 }
@@ -109,7 +109,7 @@ export async function listAzureSubscriptionRules(): Promise<AzureSubscriptionRul
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<AzureSubscriptionRuleRow>,
   );
 }

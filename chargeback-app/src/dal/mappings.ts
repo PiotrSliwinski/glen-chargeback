@@ -3,7 +3,7 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import { exec, query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
-import { zDate, zDateOrNull, zId, zNum, zStr, zStrOrNull } from "@/dal/parse";
+import { zDate, zDateOrNull, zId, zNum, zStr, zStrOrNull, zTimestampOrNull } from "@/dal/parse";
 import type {
   DataProductRow,
   EndpointMappingRow,
@@ -50,7 +50,7 @@ export async function listCatalogue(): Promise<DataProductRow[]> {
       valid_from: zDate,
       valid_to: zDateOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<DataProductRow>,
   );
 }
@@ -77,7 +77,7 @@ export async function listJobMappings(): Promise<JobMappingRow[]> {
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<JobMappingRow>,
   );
 }
@@ -97,7 +97,7 @@ export async function listTagRules(): Promise<TagRuleRow[]> {
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<TagRuleRow>,
   );
 }
@@ -116,7 +116,7 @@ export async function listRunnerRules(): Promise<RunnerRuleRow[]> {
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<RunnerRuleRow>,
   );
 }
@@ -153,7 +153,7 @@ export async function listEndpointMappings(): Promise<EndpointMappingRow[]> {
       data_product: zStr,
       note: zStrOrNull,
       mapped_by: zStrOrNull,
-      mapped_at: zStrOrNull,
+      mapped_at: zTimestampOrNull,
     }) as z.ZodType<EndpointMappingRow>,
   );
 }
