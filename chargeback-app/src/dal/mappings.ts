@@ -394,6 +394,37 @@ export interface JobKey {
   job_id: string;
 }
 
+/** Bulk insert in one statement — Databricks guarantees per-statement atomicity only. */
+export async function insertJobMappings(
+  keys: JobKey[],
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  if (keys.length === 0) return;
+  if (env.DAL_MOCK) {
+    for (const k of keys) {
+      await insertJobMapping({ ...k, data_product, note }, actor);
+    }
+    return;
+  }
+  const values = keys
+    .map((_, i) => `(:w_${i}, :j_${i}, :data_product, :note, :actor, current_timestamp())`)
+    .join(", ");
+  const params = Object.fromEntries(
+    keys.flatMap((k, i) => [
+      [`w_${i}`, k.workspace_id],
+      [`j_${i}`, k.job_id],
+    ]),
+  );
+  await exec(
+    `INSERT INTO ${T("job_product_mapping")}
+       (workspace_id, job_id, data_product, note, mapped_by, mapped_at)
+     VALUES ${values}`,
+    { ...params, data_product, note, actor },
+  );
+}
+
 /** OR-chain over (workspace_id, job_id) pairs + its named params — bulk WHERE clause. */
 function jobKeyPredicate(keys: JobKey[]): { where: string; params: Record<string, string> } {
   return {

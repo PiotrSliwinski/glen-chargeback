@@ -17,13 +17,23 @@ import {
 import { listActiveProducts, listUsers, listWorkspaces } from "@/dal/mappings";
 import {
   assignWarehouseAction,
+  bulkAssignWarehousesAction,
+  bulkMapJobsAction,
   mapJobAction,
   upsertUserAction,
   upsertWorkspaceAction,
 } from "@/actions/mappings";
 import { createProductAction } from "@/actions/products";
-import { Download } from "lucide-react";
+import { ArrowRightLeft, Download, Tags } from "lucide-react";
 import { ActionForm, DatalistField, Field, SelectField } from "@/components/action-form";
+import {
+  BulkActionBar,
+  BulkAppliesTo,
+  BulkCheckbox,
+  BulkCheckboxAll,
+  BulkSelect,
+  BulkSelectedInputs,
+} from "@/components/bulk-select";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import { SpNameField } from "@/components/unmapped-runners-body";
 import { EmptyState, KpiTile, PageTitle } from "@/components/ui";
@@ -222,12 +232,23 @@ async function UntaggedJobsTab({
   const all = await getUntaggedJobs();
   if (all.length === 0) return <EmptyState message="No untagged jobs — queue clear." />;
   const { rows, ...paged } = paginate(all, page);
+  // Only rows with a job_id can take a bridge row; a job split across several
+  // queue rows (by category/runner) is one selectable key, not many.
+  const mappableKeys = [
+    ...new Set(
+      rows.filter((r) => r.job_id).map((r) => `${r.workspace_id}|${r.job_id}`),
+    ),
+  ];
   return (
+    <BulkSelect values={mappableKeys}>
     <Card>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <BulkCheckboxAll label="Select all mappable jobs on this page" />
+              </TableHead>
               <TableHead>Work item</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Workspace</TableHead>
@@ -242,6 +263,14 @@ async function UntaggedJobsTab({
             {rows.map((r) => (
               // job_id is null for non-job work items, so it alone can't identify a row
               <TableRow key={`${r.workspace_id}|${r.job_id}|${r.usage_category}|${r.work_item}|${r.runner}`}>
+                <TableCell>
+                  {r.job_id && (
+                    <BulkCheckbox
+                      value={`${r.workspace_id}|${r.job_id}`}
+                      label={`Select ${r.work_item}`}
+                    />
+                  )}
+                </TableCell>
                 <TableCell>
                   <p className="text-sm font-medium">{r.work_item}</p>
                   {r.job_id && (
@@ -287,6 +316,25 @@ async function UntaggedJobsTab({
         <TablePagination {...paged} noun="untagged job" />
       </CardContent>
     </Card>
+    <BulkActionBar noun="job">
+      <EditDialog
+        trigger={
+          <Button variant="outline" size="sm">
+            <ArrowRightLeft aria-hidden /> Map selected to product
+          </Button>
+        }
+        title="Map selected jobs to one product"
+        description="Creates one bridge row per selected job. Bridge only — the durable fix is tagging each job at source; remind the owning teams."
+      >
+        <ActionForm action={bulkMapJobsAction} submitLabel="Map to product">
+          <BulkSelectedInputs name="keys" />
+          <SelectField label="Data product" name="data_product" options={productOptions} />
+          <Field label="Note (why mapped manually)" name="note" required={false} />
+          <BulkAppliesTo noun="job" />
+        </ActionForm>
+      </EditDialog>
+    </BulkActionBar>
+    </BulkSelect>
   );
 }
 
@@ -486,6 +534,7 @@ async function UnassignedWarehousesTab({
   if (all.length === 0) return <EmptyState message="No dedicated-warehouse candidates." />;
   const { rows, ...paged } = paginate(all, page);
   return (
+    <BulkSelect values={rows.map((r) => r.warehouse_id)}>
     <Card>
       <CardContent>
         <p className="mb-3 text-xs text-muted-foreground">
@@ -496,6 +545,9 @@ async function UnassignedWarehousesTab({
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <BulkCheckboxAll label="Select all warehouses on this page" />
+              </TableHead>
               <TableHead>Warehouse</TableHead>
               <TableHead>Workspace</TableHead>
               <TableHead className="text-right">Cost 30d</TableHead>
@@ -508,6 +560,9 @@ async function UnassignedWarehousesTab({
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.warehouse_id}>
+                <TableCell>
+                  <BulkCheckbox value={r.warehouse_id} label={`Select warehouse ${r.warehouse_id}`} />
+                </TableCell>
                 <TableCell className="font-medium">{r.warehouse_id}</TableCell>
                 <TableCell>
                   <WorkspaceCell id={r.workspace_id} wsName={wsName} />
@@ -551,5 +606,37 @@ async function UnassignedWarehousesTab({
         <TablePagination {...paged} noun="warehouse" />
       </CardContent>
     </Card>
+    <BulkActionBar noun="warehouse">
+      <EditDialog
+        trigger={
+          <Button variant="outline" size="sm">
+            <Tags aria-hidden /> Classify selected
+          </Button>
+        }
+        title="Classify selected warehouses"
+        description="Applies one classification to every selected warehouse. Dedicated requires a product (idle cost included); shared allocates per query."
+      >
+        <ActionForm action={bulkAssignWarehousesAction} submitLabel="Apply to selected">
+          <BulkSelectedInputs name="warehouse_ids" />
+          <SelectField
+            label="Classification"
+            name="mode"
+            defaultValue="shared"
+            options={[
+              { value: "shared", label: "Shared — allocate per query" },
+              { value: "dedicated", label: "Dedicated — whole warehouse to one product" },
+            ]}
+          />
+          <SelectField
+            label="Data product (dedicated only)"
+            name="data_product"
+            required={false}
+            options={[{ value: "", label: "—" }, ...productOptions]}
+          />
+          <BulkAppliesTo noun="warehouse" />
+        </ActionForm>
+      </EditDialog>
+    </BulkActionBar>
+    </BulkSelect>
   );
 }

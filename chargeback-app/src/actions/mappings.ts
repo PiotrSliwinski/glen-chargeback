@@ -282,14 +282,45 @@ export async function deleteWorkspaceAction(
 // ONE statement (Databricks has single-statement atomicity only); the other
 // mapping tables still apply row by row.
 
-/** Bridge-row keys travel as 'workspace_id|job_id' — same shape as React keys. */
+/**
+ * Bridge-row keys travel as 'workspace_id|job_id' — same shape as React keys.
+ * Deduped: the work queue can show one job on several rows (split by category
+ * or runner), and a job must never yield two bridge rows.
+ */
 function parseJobKeys(formData: FormData): { workspace_id: string; job_id: string }[] {
-  return formList(formData, "keys").map((key) => {
+  return [...new Set(formList(formData, "keys"))].map((key) => {
     const [workspace_id, job_id, ...rest] = key.split("|");
     if (!workspace_id || !job_id || rest.length > 0) {
       throw new DomainError("VALIDATION", `malformed job key '${key}'`);
     }
     return { workspace_id, job_id };
+  });
+}
+
+const BulkMapJobs = z.object({ data_product: z.string().min(1), note: optionalText });
+
+/** Work-queue bulk fix: NEW bridge rows for untagged jobs (vs. re-mapping existing ones). */
+export async function bulkMapJobsAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const keys = parseJobKeys(formData);
+    const input = parseForm(formData, BulkMapJobs);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listJobMappings();
+    const dupes = keys.filter((k) =>
+      existing.some((j) => j.workspace_id === k.workspace_id && j.job_id === k.job_id),
+    );
+    if (dupes.length > 0) {
+      throw new DomainError(
+        "DUPLICATE_KEY",
+        `already mapped: job${dupes.length > 1 ? "s" : ""} ${dupes.map((k) => k.job_id).join(", ")}`,
+      );
+    }
+    await dal.insertJobMappings(keys, input.data_product, input.note, actor);
+    invalidateMappings();
+    return `${keys.length} job${keys.length > 1 ? "s" : ""} mapped to '${input.data_product}'. Reminder: the durable fix is tagging at source.`;
   });
 }
 
