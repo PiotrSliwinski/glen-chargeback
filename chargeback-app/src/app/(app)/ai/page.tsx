@@ -7,7 +7,7 @@ import { param, resolveReportParams, type SearchParams } from "@/lib/report-para
 import { AI_SECTION_HELP, KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { paginate } from "@/lib/paginate";
 import { cn } from "@/lib/utils";
-import { EmptyState, FilteredCount, InfoTip, KpiTile, MethodBadge, PageTitle } from "@/components/ui";
+import { EmptyState, FilteredCount, InfoTip, KpiTile, MethodBadge, PageTitle, UnallocatedLabel } from "@/components/ui";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -121,6 +121,44 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
       isNew: !ambiguous && prev == null,
     };
   });
+  // ---- who created the cost: AI spend per run-as identity, from the same
+  // endpoint slices. Keyed by the raw runner id (stable across mapping edits);
+  // labeled with the mapped name when there is one. MoM vs last month's live
+  // rollup, same convention as every other Δ on the page.
+  const byRunner = (rows: AiEndpointUsageRow[]) => {
+    const m = new Map<
+      string,
+      { label: string; cost: number; dbus: number; endpoints: Set<string> }
+    >();
+    for (const r of rows) {
+      const key = r.runner ?? "(no identity)";
+      const e = m.get(key) ?? {
+        label: r.runner_name ?? r.runner ?? "(no identity)",
+        cost: 0,
+        dbus: 0,
+        endpoints: new Set<string>(),
+      };
+      e.cost += r.cost;
+      e.dbus += r.dbus;
+      e.endpoints.add(r.endpoint_name ?? `(no endpoint — ${r.usage_category})`);
+      m.set(key, e);
+    }
+    return m;
+  };
+  const curByRunner = byRunner(endpoints);
+  const prevByRunner = byRunner(prevEndpoints);
+  const runnerRows = [...curByRunner.entries()]
+    .map(([key, r]) => ({
+      key,
+      label: r.label,
+      cost: r.cost,
+      dbus: r.dbus,
+      endpointCount: r.endpoints.size,
+      delta: prevEndpoints.length > 0 ? r.cost - (prevByRunner.get(key)?.cost ?? 0) : null,
+      share: endpointCost > 0 ? r.cost / endpointCost : 0,
+    }))
+    .sort((a, b) => b.cost - a.cost);
+
   // Every endpoint slice of the month, filterable — "used this month" means it
   // emitted billing usage. Filter first, then paginate what remains.
   const shownEndpoints = endpointRows.filter(
@@ -202,7 +240,7 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
               label="Unallocated AI cost"
               value={fmtMoney(unallocatedAiCost)}
               hint={unallocatedAiCost > 0 ? "endpoints nobody has claimed yet" : "every AI dollar reached a desk"}
-              tone={unallocatedAiCost > 0 ? "warn" : "good"}
+              tone={unallocatedAiCost > 0 ? "bad" : "good"}
               info={KPI_HELP.aiUnallocatedCost}
               infoAlign="end"
             />
@@ -304,7 +342,7 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                         <TableRow key={d.desk}>
                           <TableCell className="font-medium">
                             {d.desk === "UNALLOCATED" ? (
-                              <span className="text-red-700">UNALLOCATED</span>
+                              <UnallocatedLabel />
                             ) : (
                               <Link
                                 href={`/desks/${encodeURIComponent(d.desk)}?month=${month}&mode=${mode}`}
@@ -322,6 +360,54 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                           <TableCell className="text-right tabular-nums">
                             {d.billShare == null ? "—" : fmtPct(d.billShare)}
                           </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  AI cost by run-as identity
+                  <InfoTip>{AI_SECTION_HELP.runners}</InfoTip>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {runnerRows.length === 0 ? (
+                  <EmptyState message="No AI cost this month." />
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Run as</TableHead>
+                        <TableHead className="text-right">Endpoints</TableHead>
+                        <TableHead className="text-right">AI cost</TableHead>
+                        <TableHead className="text-right">MoM Δ</TableHead>
+                        <TableHead className="text-right">Share</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {runnerRows.map((r) => (
+                        <TableRow key={r.key}>
+                          <TableCell
+                            title={r.key}
+                            className={cn(
+                              "max-w-[180px] truncate text-sm font-medium",
+                              // raw identity shown = unmapped runner — the one to chase
+                              r.label === r.key && r.key !== "(no identity)" && "text-amber-700",
+                            )}
+                          >
+                            {r.label}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{r.endpointCount}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtMoney(r.cost)}</TableCell>
+                          <TableCell className="text-right">
+                            <DeltaText delta={r.delta} />
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtPct(r.share)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -546,7 +632,7 @@ function EndpointTable({
             </TableCell>
             <TableCell>
               {e.data_product === "UNALLOCATED" ? (
-                <span className="text-red-700">UNALLOCATED</span>
+                <UnallocatedLabel />
               ) : (
                 <Link
                   href={`/drill?month=${month}&mode=${mode}&product=${encodeURIComponent(e.data_product)}`}

@@ -319,10 +319,9 @@ Plus a downloads strip (XLSX workbook + 5 CSVs) and the limitations footer.
 Three linked, URL-driven panels: domains → products in domain (with desk links) → product detail
 (top 200 `cost_fact` lines: category, job/warehouse, runner, DBUs, cost). Every detail line shows
 its **attribution-method badge** (TAG green / JOB_MAPPING amber / TAG_RULE teal /
-WAREHOUSE_MAPPING blue / ENDPOINT_MAPPING fuchsia / RUNNER_RULE purple / USER indigo / NONE red) — the "why did this land
+WAREHOUSE_MAPPING sky / ENDPOINT_MAPPING fuchsia / PIPELINE_MAPPING blue / RUNNER_RULE purple / USER indigo / NONE red) — the "why did this land
 here" transparency — plus a **compute chip**
-(SERVERLESS violet / CLASSIC slate, from `cost_fact.is_serverless`; per-query warehouse rows
-show "—").
+(SERVERLESS violet / CLASSIC slate, from `cost_fact.is_serverless`).
 
 ### 7.3b AI costs — `/ai`
 
@@ -535,6 +534,7 @@ Honest statement of what has and hasn't been exercised:
 
 | Item | Notes |
 |---|---|
+| Pipeline bridge admin screen | `pipeline_product_mapping` (waterfall rule 4c, `PIPELINE_MAPPING`) exists in the data model, feeds `cost_fact`, and is covered by the health checks (orphans + duplicate keys), but has no CRUD screen yet — rows are managed via SQL. An `/admin/pipelines` screen would mirror `/admin/endpoints` |
 | Azure in invoiced totals & report pack | Desk statements now show a live, informational Azure section and the health page reconciles the Azure bill against `azure_cost_fact`, but the dashboard/report pack and the invoiced total remain Databricks-only. Billing Azure for real still needs a publish snapshot for Azure |
 | Azure work-queue tab | Unmatched Azure resources surface on the coverage tab (`method=NONE` filter); a queue tab with inline fixes would mirror the Databricks flow |
 | Azure health checks | Duplicate/conflicting Azure rules and orphan products are prevented at write time but not yet re-checked on the health page |

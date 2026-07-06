@@ -53,8 +53,10 @@ export function BarList({
  */
 export function StackedTrend({
   points,
+  specials = DOMAIN_SPECIALS,
 }: {
   points: { billing_month: string; series: string; total_cost: number }[];
+  specials?: Record<string, string>;
 }) {
   const months = [...new Set(points.map((p) => p.billing_month))].sort();
   const series = [...new Set(points.map((p) => p.series))].sort();
@@ -81,7 +83,7 @@ export function StackedTrend({
                     key={d}
                     style={{
                       height: `${(v / totals[mi]) * 100}%`,
-                      backgroundColor: colorFor(d, DOMAIN_SPECIALS),
+                      backgroundColor: colorFor(d, specials),
                     }}
                     title={`${d}: ${fmtMoney(v)}`}
                   />
@@ -101,7 +103,7 @@ export function StackedTrend({
           </span>
         ))}
       </div>
-      <Legend items={series.map((d) => ({ label: d, color: colorFor(d, DOMAIN_SPECIALS) }))} />
+      <Legend items={series.map((d) => ({ label: d, color: colorFor(d, specials) }))} />
     </div>
   );
 }
@@ -113,6 +115,7 @@ export function CoverageBar({ coverage }: { coverage: CoverageRow[] }) {
     "TAG_RULE",
     "WAREHOUSE_MAPPING",
     "ENDPOINT_MAPPING",
+    "PIPELINE_MAPPING",
     "RUNNER_RULE",
     "USER",
     "NONE",
@@ -250,6 +253,7 @@ export function CoverageTrend({ rows }: { rows: CoverageRow[] }) {
     "TAG_RULE",
     "WAREHOUSE_MAPPING",
     "ENDPOINT_MAPPING",
+    "PIPELINE_MAPPING",
     "RUNNER_RULE",
     "USER",
     "NONE",

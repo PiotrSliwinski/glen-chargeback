@@ -91,7 +91,7 @@ Billing records for a SQL warehouse carry no user identity: many users share one
 **B. Everything else — direct attribution (`usage_view`).**
 Jobs, DLT pipelines, serverless workloads and model serving carry `identity_metadata.run_as` (the executing user or service principal) directly on the billing record, so no proportional split is needed. One row per day × runner × workspace × job × SKU × tags.
 
-**Non-overlap rule:** `usage_view` excludes all rows where `usage_metadata.warehouse_id IS NOT NULL`, because that spend is allocated per-query in `query_view`. Together the two views cover all DBU spend **exactly once**.
+**Non-overlap rule:** `usage_view` excludes exactly the rows `query_view` allocates — `usage_metadata.warehouse_id IS NOT NULL AND usage_unit = 'DBU'` — its filter is the exact complement of `query_view`'s. Together the two views cover **every** `system.billing.usage` row exactly once, including any non-DBU usage that carries a `warehouse_id` (such rows flow through `usage_view`).
 
 ### 2.3 The attribution waterfall
 
@@ -104,6 +104,7 @@ Jobs, DLT pipelines, serverless workloads and model serving carry `identity_meta
 | 3 | Any custom tag key=value found in `tag_product_mapping` | `TAG_RULE` | Rule-based: workloads tagged with team/project/etc. tags (but no `data_product` tag) route to a product |
 | 4 | Dedicated warehouse in `warehouse_product_mapping` (`is_shared = false`) | `WAREHOUSE_MAPPING` | Whole warehouse belongs to one product (incl. its idle cost) |
 | 4b | `(workspace_id, endpoint_name)` found in `endpoint_product_mapping` | `ENDPOINT_MAPPING` | Dedicated AI/model-serving endpoint — the serving analogue of a dedicated warehouse; all its spend (realtime and `ai_query` batch inference alike) belongs to one product. Mutually exclusive with rule 4: a billing row has a warehouse OR an endpoint, never both |
+| 4c | `(workspace_id, pipeline_id)` found in `pipeline_product_mapping` | `PIPELINE_MAPPING` | Dedicated DLT pipeline (`usage_metadata.dlt_pipeline_id`) — the pipeline analogue of a dedicated warehouse; all its spend, maintenance included, belongs to one product |
 | 5 | Runner found in `runner_product_mapping` | `RUNNER_RULE` | Explicit opt-in: everything this identity runs (jobs, DLT, serverless) belongs to one product |
 | 6 | **Ad-hoc spend only** (`job_id IS NULL`): runner found in `user_mapping` | `USER` | Ad-hoc work → product `AD_HOC`, desk = runner's desk |
 | 7 | Nothing matched | `NONE` | Product/desk = `UNALLOCATED`; visible line item, pressure to fix |
@@ -269,6 +270,21 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.endpoint_product_mapping (
 
 Semantics: **all** spend of the endpoint — realtime inference and `ai_query` batch inference alike — attributes to `data_product` (waterfall rule 4b, the serving analogue of a dedicated warehouse). `endpoint_name` must match `usage_metadata.endpoint_name` byte-for-byte; endpoint names are only unique per workspace, hence the composite key. A `data_product` tag on the endpoint itself (rule 1) always wins — this bridge exists for endpoints not yet tagged at source, and the goal state is to empty it. One row per `(workspace_id, endpoint_name)`; duplicates are integrity violations (§7.4).
 
+### 4.7c `pipeline_product_mapping` — dedicated DLT pipelines
+
+```sql
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.pipeline_product_mapping (
+  workspace_id   STRING NOT NULL,
+  pipeline_id    STRING NOT NULL,     -- composite key with workspace_id, exactly as in usage_metadata.dlt_pipeline_id
+  data_product   STRING NOT NULL,
+  note           STRING,              -- optional: why mapped manually
+  mapped_by      STRING,              -- audit: who created the mapping
+  mapped_at      TIMESTAMP            -- audit: when
+);
+```
+
+Semantics: **all** spend of the DLT pipeline — compute and maintenance alike — attributes to `data_product` (waterfall rule 4c, the pipeline analogue of a dedicated warehouse). `pipeline_id` must match `usage_metadata.dlt_pipeline_id` byte-for-byte; ids are scoped per workspace, hence the composite key. A `data_product` tag on the pipeline itself (rule 1) always wins — this bridge exists for pipelines not yet tagged at source, and the goal state is to empty it. One row per `(workspace_id, pipeline_id)`; duplicates are integrity violations (§7.4).
+
 ### 4.8 (Optional, deferred) `data_product_split`
 
 Only create if a product genuinely must be split across desks. Start without it — splits invite negotiation overhead.
@@ -316,6 +332,15 @@ months keep the figures they were published with.
 > **Change note vs v0.9:** both views now expose the columns the semantic layer needs — `usage_view` adds `job_id` and `tag_data_product` (from `custom_tags.data_product`); `query_view` adds `workspace_id`. Everything else is unchanged.
 >
 > **Change note (AI cost tracking):** `usage_view` and `cost_fact` additionally expose `endpoint_name` (`usage_metadata.endpoint_name`) and `serving_type` (`product_features.model_serving.offering_type`, e.g. `BATCH_INFERENCE` for `ai_query` batch jobs); `cost_fact` gains waterfall rule 4b (`ENDPOINT_MAPPING`, §4.7b). Freshness caveat for AI spend: `system.billing.usage` lags real usage by roughly 1–2 hours (no official SLA) and the billing pipeline emits hourly aggregates before DBUs appear in the system tables — the current day's model-serving cost is always incomplete; closed months are unaffected. Existing deployments must drop and recreate `usage_fact_tbl` (rebuildable cache) so its shape matches the extended view — see the migration note in `databricks/setup.sql` §9.
+>
+> **Change note (unified dimensions):** `databricks/setup.sql` is the canonical source for the current view definitions; the SQL listings below predate this change. What changed:
+>
+> 1. **Complete coverage** — `usage_view`'s scope filter is now the exact complement of `query_view`'s (`NOT (warehouse_id IS NOT NULL AND usage_unit = 'DBU')` instead of `warehouse_id IS NULL`), so non-DBU usage carrying a `warehouse_id` can no longer fall between the two views; such rows also keep their `warehouse_id` so the dedicated-warehouse rule applies to them.
+> 2. **Unit-clean measures** — `usage_view.total_dbus` was renamed `total_quantity` (it is in `usage_unit` terms: DBU, GB, …). `cost_fact` now exposes `usage_unit` + `usage_quantity`, and its `dbus` measure counts **DBU-metered quantity only** (0 for non-DBU rows), so `SUM(dbus)` — and `monthly_chargeback.total_dbus` — never mixes units. Cost was and remains complete.
+> 3. **Warehouse tags participate in the waterfall** — `query_view` carries the warehouse custom tags per warehouse-hour (`tag_data_product`, key-sorted `tags_json`, plus `sku_name` and `is_serverless`), so SQL-warehouse spend can attribute via rules 1 (TAG) and 3 (TAG_RULE) exactly like all other spend, instead of relying solely on `warehouse_product_mapping`.
+> 4. **New detail dimensions** — `usage_view` and `cost_fact` expose `cluster_id` (all-purpose/job compute), `pipeline_id` (`usage_metadata.dlt_pipeline_id`), `app_name` (Databricks Apps), and `cost_fact` additionally `sku_name` + `usage_unit`; `cost_fact` gains waterfall rule 4c (`PIPELINE_MAPPING`, §4.7c) with its `pipeline_product_mapping` bridge table.
+>
+> Existing deployments must drop and recreate **both** fact-table caches (`query_fact_tbl`, `usage_fact_tbl`) — see the migration note in `databricks/setup.sql` §9.
 
 ### 5.1 `query_view` — per-query SQL warehouse allocation
 
@@ -1053,10 +1078,10 @@ The waterfall exists because each compute type has a different native tagging me
 |---|---|---|---|
 | Jobs (classic compute) | `data_product` custom tag on the job cluster — flows into `custom_tags` on billing rows automatically | **Cluster policies** making the tag mandatory: new jobs cannot launch untagged | 1 (TAG) |
 | Serverless jobs / notebooks / DLT | **Serverless budget policies** — a policy carries tags stamped onto serverless billing records | One policy per data product (or per domain to start); grant teams permission only on their own policies | 1 (TAG) |
-| DLT pipelines (classic) | Pipeline cluster custom tags | Cluster policy on pipeline clusters | 1 (TAG) |
+| DLT pipelines (classic) | Pipeline cluster custom tags | Cluster policy on pipeline clusters; pipelines not yet tagged can be bridged per pipeline in `pipeline_product_mapping` | 1 (TAG) / 4c (PIPELINE_MAPPING) |
 | Model serving (realtime + `ai_query` batch inference) | Endpoint tags / budget policy (serverless) | Same as serverless; endpoints not yet tagged can be bridged per endpoint in `endpoint_product_mapping` | 1 (TAG) / 4b (ENDPOINT_MAPPING) |
-| Dedicated SQL warehouse | Row in `warehouse_product_mapping` (`is_shared = false`) — whole warehouse incl. idle cost goes to the product | Interface admin screen | 4 |
-| Shared SQL warehouse | No product tag possible — per-query allocation, then runner's desk | — | 6 (USER → `AD_HOC`) |
+| Dedicated SQL warehouse | `data_product` tag on the warehouse (carried per warehouse-hour into `query_view`), or a row in `warehouse_product_mapping` (`is_shared = false`) — whole warehouse incl. idle cost goes to the product | Tag at source preferred; interface admin screen for the mapping row | 1 (TAG) / 4 |
+| Shared SQL warehouse | Warehouse tags would claim the whole warehouse — leave untagged; per-query allocation, then runner's desk | — | 6 (USER → `AD_HOC`) |
 | Untagged legacy jobs | Row in `job_product_mapping` as a **temporary bridge**, or a `tag_product_mapping` rule when the job already carries a team/project tag, or a `runner_product_mapping` rule when its service principal serves one product | Work queue (§7.2) drives cleanup; target is tags at source | 2 / 3 / 5 |
 | Ad-hoc user queries / personal notebooks | None — attribution via `user_mapping` to the runner's desk, product = `AD_HOC` | Keep `user_mapping` complete (§7.2 second query) | 6 |
 

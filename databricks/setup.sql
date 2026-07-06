@@ -99,6 +99,17 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.endpoint_product_mapping (
 )
 COMMENT 'Dedicated AI/model-serving endpoint -> data product. Rule 4b of the attribution waterfall (the serving analogue of a dedicated warehouse): ALL spend of the endpoint - realtime and ai_query batch inference alike - bills to that product. endpoint_name must match usage_metadata.endpoint_name exactly; names are only unique per workspace. Prefer tagging the endpoint at source with data_product (rule 1) - this bridge is for endpoints not yet tagged.';
 
+-- §4.8b Dedicated DLT pipelines (waterfall rule 4c)
+CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.pipeline_product_mapping (
+  workspace_id   STRING NOT NULL,
+  pipeline_id    STRING NOT NULL,     -- composite key with workspace_id, exactly as in usage_metadata.dlt_pipeline_id
+  data_product   STRING NOT NULL,
+  note           STRING,              -- optional: why mapped manually
+  mapped_by      STRING,              -- audit: who created the mapping
+  mapped_at      TIMESTAMP            -- audit: when
+)
+COMMENT 'Dedicated DLT pipeline -> data product. Rule 4c of the attribution waterfall (the pipeline analogue of a dedicated warehouse): ALL spend of the pipeline - compute and maintenance alike - bills to that product. pipeline_id must match usage_metadata.dlt_pipeline_id exactly; ids are scoped per workspace, hence the composite key. Prefer tagging the pipeline at source with data_product (rule 1) - this bridge is for pipelines not yet tagged.';
+
 -- §4.9 DBU reservation-plan discounts (pricing reference data, not attribution)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.dbu_discount_plan (
   valid_from     DATE   NOT NULL,   -- first day the plan covers (inclusive)
@@ -199,18 +210,36 @@ COMMENT 'Subscription rule: everything in a subscription -> data product. Rule 5
 --   * Cost = price less any DBU reservation-plan discount effective on
 --     the usage date (dbu_discount_plan, §4.9); classic warehouses also
 --     exclude the Azure VM/infra cost billed separately by Microsoft.
+--   * Warehouse custom tags (sku_name, is_serverless, tag_data_product,
+--     tags_json) are carried per warehouse-hour so warehouse spend can
+--     attribute via TAG / TAG_RULE in cost_fact, exactly like all other
+--     spend. A warehouse-hour whose billing rows carry different tag sets
+--     or SKUs yields one row per set - each distributed independently
+--     across the hour's queries, so totals still reconcile.
+--   * Non-DBU usage that carries a warehouse_id is NOT lost: query_view
+--     allocates only DBU-metered warehouse spend, everything else flows
+--     through usage_view (its filter is the exact complement).
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.query_view
-COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at the time-effective USD price - effective_list preferred, same basis as usage_view - less any reservation-plan discount from dbu_discount_plan) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing; usage without a matching price row keeps its DBUs with NULL cost rather than being dropped. statement_text excluded for performance - join to system.query.history on statement_id.'
+COMMENT 'Per-query DBU and cost allocation for SQL warehouses. Hourly warehouse DBUs (system.billing.usage, priced at the time-effective USD price - effective_list preferred, same basis as usage_view - less any reservation-plan discount from dbu_discount_plan) distributed across finished queries proportionally to task duration. Idle/unmatched hours appear as UNALLOCATED_IDLE so totals reconcile with billing; usage without a matching price row keeps its DBUs with NULL cost rather than being dropped. Carries sku_name, is_serverless and the warehouse custom tags (tag_data_product, key-sorted tags_json) so warehouse spend participates in the TAG / TAG_RULE waterfall rules in cost_fact. statement_text excluded for performance - join to system.query.history on statement_id.'
 AS
 WITH usage_data AS (
   -- Hourly DBU consumption and cost per warehouse,
-  -- priced at the rate effective at the time of usage
+  -- priced at the rate effective at the time of usage.
+  -- Grouped by SKU + tag set too: a warehouse-hour with several tag sets
+  -- or SKUs yields several rows, each fully distributed across the hour's
+  -- queries below - the sum over rows still reconciles with billing.
   SELECT
     u.usage_date,
     DATE_TRUNC('hour', u.usage_start_time)      AS usage_hour,
     u.workspace_id,
     u.usage_metadata.warehouse_id               AS warehouse_id,
+    u.sku_name,
+    u.product_features.is_serverless            AS is_serverless,
+    u.custom_tags.data_product                  AS tag_data_product,
+    -- all custom tags, key-sorted so identical tag sets group together
+    -- (same expression as usage_view.tags_json - tag rules match both)
+    to_json(map_from_entries(array_sort(map_entries(u.custom_tags)))) AS tags_json,
     SUM(u.usage_quantity)                       AS total_dbu_per_hour,
     SUM(u.usage_quantity
         * COALESCE(p.pricing.effective_list.default,
@@ -227,7 +256,7 @@ WITH usage_data AS (
   WHERE u.usage_metadata.warehouse_id IS NOT NULL
     AND u.usage_unit = 'DBU'
     -- AND u.usage_date >= current_date() - INTERVAL 90 DAYS   -- optional: align with query.history retention
-  GROUP BY 1, 2, 3, 4
+  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
 ),
 
 usage_data_discounted AS (
@@ -241,6 +270,10 @@ usage_data_discounted AS (
     ud.usage_hour,
     ud.workspace_id,
     ud.warehouse_id,
+    ud.sku_name,
+    ud.is_serverless,
+    ud.tag_data_product,
+    ud.tags_json,
     ud.total_dbu_per_hour,
     ud.list_cost_per_hour * (1 - COALESCE(MAX(d.discount_pct), 0)) AS cost_per_hour
   FROM usage_data ud
@@ -248,6 +281,7 @@ usage_data_discounted AS (
     ON  ud.usage_date >= d.valid_from
     AND ud.usage_date <= d.valid_to
   GROUP BY ud.usage_date, ud.usage_hour, ud.workspace_id, ud.warehouse_id,
+           ud.sku_name, ud.is_serverless, ud.tag_data_product, ud.tags_json,
            ud.total_dbu_per_hour, ud.list_cost_per_hour
 ),
 
@@ -302,6 +336,10 @@ SELECT
   u.usage_hour,
   u.workspace_id,
   u.warehouse_id,
+  u.sku_name,
+  u.is_serverless,
+  u.tag_data_product,
+  u.tags_json,
   q.statement_id,
   COALESCE(q.user_id, 'UNALLOCATED_IDLE')       AS user_id,
   COALESCE(um.user_name, q.user_id,
@@ -354,15 +392,24 @@ LEFT JOIN main_dev.cost_reporting.user_mapping um
 --     day's AI spend is always incomplete.
 --   * tags_json carries ALL custom tags as a key-sorted JSON object -
 --     the input for tag rules (waterfall rule 3) and the coverage UI.
+--   * Compute detail dimensions from usage_metadata: cluster_id
+--     (all-purpose/job compute), pipeline_id (DLT - also drives waterfall
+--     rule 4c), app_name (Databricks Apps), warehouse_id (only on the
+--     rare non-DBU warehouse-attached rows admitted by the scope filter).
+--   * total_quantity is in usage_unit terms (DBU, GB, ...) - it is NOT
+--     always DBUs; cost_fact derives its DBU-only measure from the unit.
 --
 -- Scope / reconciliation:
---   * SQL warehouse usage EXCLUDED (allocated per-query in query_view);
---     together the two views cover all DBU spend exactly once.
+--   * DBU-metered SQL warehouse usage EXCLUDED (allocated per-query in
+--     query_view); the filter is the exact complement of query_view's, so
+--     together the two views cover EVERY system.billing.usage row exactly
+--     once - including any non-DBU usage that carries a warehouse_id,
+--     which would otherwise fall between the two views.
 --   * Unmapped workspaces surface as 'UNMAPPED: <id>'; unmapped runners
 --     keep their raw run_as identity.
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.usage_view
-COMMENT 'Daily chargeback of all non-SQL-warehouse spend (jobs, DLT, serverless, model serving, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred) less any reservation-plan discount from dbu_discount_plan (DBU-metered rows only). SQL warehouse usage excluded - allocated per-query in query_view. Unmapped workspaces surface as UNMAPPED rows so totals reconcile with billing. Exposes job_id, endpoint_name + serving_type (AI/model-serving dimensions), tag_data_product and tags_json (all custom tags, key-sorted JSON) for the attribution waterfall in cost_fact.'
+COMMENT 'Daily chargeback of all spend not allocated per-query in query_view (jobs, DLT, serverless, model serving, etc.) from system.billing.usage, attributed via identity_metadata.run_as and priced at the time-effective USD price (effective_list preferred) less any reservation-plan discount from dbu_discount_plan (DBU-metered rows only). Scope is the exact complement of query_view (NOT warehouse+DBU), so the two views cover every billing row exactly once. total_quantity is in usage_unit terms (DBU, GB, ...). Exposes job_id, cluster_id, pipeline_id, app_name, endpoint_name + serving_type, tag_data_product and tags_json (all custom tags, key-sorted JSON) for the attribution waterfall in cost_fact.'
 AS
 WITH latest_jobs AS (
   -- Latest known name per job. job_id is only unique within a
@@ -398,6 +445,13 @@ SELECT
   u.billing_origin_product,
   u.product_features.is_serverless                            AS is_serverless,
   u.usage_unit,
+  -- compute detail dimensions (NULL where not applicable)
+  u.usage_metadata.cluster_id                                 AS cluster_id,
+  u.usage_metadata.dlt_pipeline_id                            AS pipeline_id,
+  u.usage_metadata.app_name                                   AS app_name,
+  -- only non-NULL on non-DBU warehouse-attached rows (see scope filter);
+  -- lets cost_fact apply the dedicated-warehouse rule to them too
+  u.usage_metadata.warehouse_id                               AS warehouse_id,
   -- AI/model-serving dimensions (NULL outside MODEL_SERVING / VECTOR_SEARCH)
   u.usage_metadata.endpoint_name                              AS endpoint_name,
   u.product_features.model_serving.offering_type              AS serving_type,
@@ -408,7 +462,8 @@ SELECT
   u.custom_tags.Environment                                   AS environment,
   -- all custom tags, key-sorted so identical tag sets group together
   to_json(map_from_entries(array_sort(map_entries(u.custom_tags)))) AS tags_json,
-  SUM(u.usage_quantity)                                       AS total_dbus,
+  -- quantity in usage_unit terms (DBU, GB, ...) - NOT always DBUs
+  SUM(u.usage_quantity)                                       AS total_quantity,
   SUM(u.usage_quantity
       * COALESCE(lp.pricing.effective_list.default,
                  lp.pricing.default))                         AS total_list_cost
@@ -437,9 +492,14 @@ LEFT JOIN latest_jobs lj
   ON  u.workspace_id = lj.workspace_id
   AND u.usage_metadata.job_id = lj.job_id
 
--- SQL warehouse spend excluded: allocated per-query in query_view.
--- Removing this filter would double count warehouse DBUs.
-WHERE u.usage_metadata.warehouse_id IS NULL
+-- DBU-metered SQL warehouse spend excluded: allocated per-query in
+-- query_view. The predicate is the exact complement of query_view's
+-- (warehouse_id IS NOT NULL AND usage_unit = 'DBU') so no billing row can
+-- fall between the two views - non-DBU rows that carry a warehouse_id
+-- (e.g. a future networking/storage SKU attached to a warehouse) land
+-- here instead of vanishing. Loosening this further would double count.
+WHERE NOT (u.usage_metadata.warehouse_id IS NOT NULL
+           AND u.usage_unit = 'DBU')
 
 GROUP BY
   u.usage_date,
@@ -454,6 +514,10 @@ GROUP BY
   u.billing_origin_product,
   u.product_features.is_serverless,
   u.usage_unit,
+  cluster_id,
+  pipeline_id,
+  app_name,
+  u.usage_metadata.warehouse_id,
   endpoint_name,
   serving_type,
   u.custom_tags.data_product,
@@ -481,6 +545,10 @@ SELECT
   b.billing_origin_product,
   b.is_serverless,
   b.usage_unit,
+  b.cluster_id,
+  b.pipeline_id,
+  b.app_name,
+  b.warehouse_id,
   b.endpoint_name,
   b.serving_type,
   b.tag_data_product,
@@ -489,7 +557,7 @@ SELECT
   b.tag_desk,
   b.environment,
   b.tags_json,
-  b.total_dbus,
+  b.total_quantity,
   b.total_list_cost
     * (1 - CASE WHEN b.usage_unit = 'DBU'
                 THEN COALESCE(MAX(d.discount_pct), 0)
@@ -501,9 +569,10 @@ LEFT JOIN main_dev.cost_reporting.dbu_discount_plan d
 GROUP BY b.usage_date, b.user_name, b.desk, b.workspace_name, b.job_runner,
          b.job_id, b.job_name, b.workspace_id, b.sku_name,
          b.billing_origin_product, b.is_serverless, b.usage_unit,
+         b.cluster_id, b.pipeline_id, b.app_name, b.warehouse_id,
          b.endpoint_name, b.serving_type,
          b.tag_data_product, b.provider, b.domain, b.tag_desk, b.environment,
-         b.tags_json, b.total_dbus, b.total_list_cost;
+         b.tags_json, b.total_quantity, b.total_list_cost;
 
 -- §5.3 query_view_daily_summary — convenience rollup
 CREATE OR REPLACE VIEW main_dev.cost_reporting.query_view_daily_summary
@@ -539,6 +608,9 @@ GROUP BY 1, 2, 3;
 --                            of a dedicated warehouse; mutually exclusive
 --                            with rule 4 - a row has a warehouse OR an
 --                            endpoint, never both)
+--       4c PIPELINE_MAPPING  dedicated DLT pipeline in
+--                            pipeline_product_mapping (the pipeline analogue
+--                            of a dedicated warehouse)
 --       5 RUNNER_RULE        runner in runner_product_mapping
 --       6 USER               ad-hoc spend ONLY (job_id IS NULL): known
 --                            runner -> AD_HOC, desk = runner's desk.
@@ -552,16 +624,19 @@ GROUP BY 1, 2, 3;
 --     restate when a product moves desk.
 --   * Multi-desk splits: a product with several mapping rows (one per
 --     desk, cost_split_pct summing to 1.0) fans each usage row out into
---     one row per desk, with dbus/cost scaled by that desk's share.
+--     one row per desk, with quantities/cost scaled by that desk's share.
 --     Products without a mapping row (AD_HOC, UNALLOCATED) keep a
 --     factor of 1.0.
+--   * Measures: usage_quantity is in usage_unit terms (DBU, GB, ...);
+--     dbus is the DBU-only measure (0 for non-DBU rows) so summing it
+--     never mixes units. cost is always USD.
 --
 -- Invariant: SUM(cost) over cost_fact = SUM over billing (methodology §7.1)
 -- - holds as long as each product's splits sum to 1.0, which the health
 -- page checks (§7.4).
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.cost_fact
-COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > ENDPOINT_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Exposes endpoint_name + serving_type for AI/model-serving cost tracking. Source of truth for monthly chargeback.'
+COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > ENDPOINT_MAPPING > PIPELINE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Warehouse rows carry their custom tags, so TAG/TAG_RULE apply to warehouse spend too. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Exposes sku_name, usage_unit + usage_quantity (dbus = DBU-metered quantity only, 0 otherwise), cluster_id, pipeline_id, app_name, endpoint_name + serving_type. Source of truth for monthly chargeback.'
 AS
 WITH unified AS (
 
@@ -574,13 +649,18 @@ WITH unified AS (
     CAST(NULL AS STRING)               AS job_id,
     CAST(NULL AS STRING)               AS job_name,
     user_id                            AS runner,
-    CAST(NULL AS BOOLEAN)              AS is_serverless,  -- not tracked per-query
+    is_serverless,
+    sku_name,
+    'DBU'                              AS usage_unit,    -- query_view allocates DBU-metered spend only
+    CAST(NULL AS STRING)               AS cluster_id,
+    CAST(NULL AS STRING)               AS pipeline_id,
+    CAST(NULL AS STRING)               AS app_name,
     CAST(NULL AS STRING)               AS endpoint_name,  -- warehouse rows have no endpoint
     CAST(NULL AS STRING)               AS serving_type,
-    CAST(NULL AS STRING)               AS tag_data_product,
-    CAST(NULL AS STRING)               AS tags_json,      -- no custom tags per query
+    tag_data_product,                                     -- warehouse custom tags: rules 1 + 3 apply
+    tags_json,
     statement_id,
-    dbu_allocated                      AS dbus,
+    dbu_allocated                      AS quantity,
     cost_allocated                     AS cost
   FROM main_dev.cost_reporting.query_view
 
@@ -591,17 +671,24 @@ WITH unified AS (
     usage_date,
     billing_origin_product             AS usage_category,
     CAST(workspace_id AS STRING)       AS workspace_id,
-    CAST(NULL AS STRING)               AS compute_key,
+    -- non-NULL only for non-DBU warehouse-attached rows: they too get the
+    -- dedicated-warehouse rule (rule 4) via compute_key
+    warehouse_id                       AS compute_key,
     CAST(job_id AS STRING)             AS job_id,
     job_name,
     job_runner                         AS runner,
     is_serverless,
+    sku_name,
+    usage_unit,
+    CAST(cluster_id AS STRING)         AS cluster_id,
+    CAST(pipeline_id AS STRING)        AS pipeline_id,
+    app_name,
     endpoint_name,
     serving_type,
     tag_data_product,
     tags_json,
     CAST(NULL AS STRING)               AS statement_id,
-    total_dbus                         AS dbus,
+    total_quantity                     AS quantity,
     total_cost                         AS cost
   FROM main_dev.cost_reporting.usage_view
 ),
@@ -637,6 +724,14 @@ endpoint_rules AS (
   GROUP BY workspace_id, endpoint_name
 ),
 
+-- One product per (workspace, pipeline) even if the table holds duplicate
+-- rows (deterministic MIN — duplicate keys can never fan out cost).
+pipeline_rules AS (
+  SELECT workspace_id, pipeline_id, MIN(data_product) AS data_product
+  FROM main_dev.cost_reporting.pipeline_product_mapping
+  GROUP BY workspace_id, pipeline_id
+),
+
 attributed AS (
   SELECT
     u.*,
@@ -646,6 +741,7 @@ attributed AS (
       tr.data_product,                                        -- rule 3: TAG_RULE
       whm.data_product,                                       -- rule 4: WAREHOUSE_MAPPING
       em.data_product,                                        -- rule 4b: ENDPOINT_MAPPING
+      pm.data_product,                                        -- rule 4c: PIPELINE_MAPPING
       rr.data_product,                                        -- rule 5: RUNNER_RULE
       CASE WHEN u.job_id IS NULL                              -- rule 6: USER (ad-hoc only,
             AND um.user_id IS NOT NULL THEN 'AD_HOC' END,     --   never job spend)
@@ -657,6 +753,7 @@ attributed AS (
       WHEN tr.data_product    IS NOT NULL THEN 'TAG_RULE'
       WHEN whm.data_product   IS NOT NULL THEN 'WAREHOUSE_MAPPING'
       WHEN em.data_product    IS NOT NULL THEN 'ENDPOINT_MAPPING'
+      WHEN pm.data_product    IS NOT NULL THEN 'PIPELINE_MAPPING'
       WHEN rr.data_product    IS NOT NULL THEN 'RUNNER_RULE'
       WHEN u.job_id IS NULL
        AND um.user_id         IS NOT NULL THEN 'USER'
@@ -677,6 +774,9 @@ attributed AS (
   LEFT JOIN endpoint_rules em
     ON  u.workspace_id  = em.workspace_id
     AND u.endpoint_name = em.endpoint_name
+  LEFT JOIN pipeline_rules pm
+    ON  u.workspace_id = pm.workspace_id
+    AND u.pipeline_id  = pm.pipeline_id
   LEFT JOIN runner_rules rr
     ON u.runner = rr.user_id
   LEFT JOIN main_dev.cost_reporting.user_mapping um
@@ -701,11 +801,16 @@ SELECT
   a.tags_json,
   -- ---- detail dimensions
   a.usage_category,
-  a.is_serverless,                              -- serverless vs classic compute (NULL for per-query warehouse rows)
+  a.is_serverless,                              -- serverless vs classic compute
   a.workspace_id,
   a.compute_key                                 AS warehouse_id,
+  a.cluster_id,                                 -- all-purpose/job compute cluster (NULL elsewhere)
+  a.pipeline_id,                                -- DLT pipeline (NULL outside DLT)
+  a.app_name,                                   -- Databricks App (NULL outside APPS)
   a.endpoint_name,                              -- AI/serving endpoint (NULL outside model serving / vector search)
   a.serving_type,                               -- e.g. BATCH_INFERENCE for ai_query batch jobs
+  a.sku_name,
+  a.usage_unit,                                 -- unit of usage_quantity: DBU, GB, ...
   a.job_id,
   a.job_name,
   a.runner,
@@ -714,7 +819,12 @@ SELECT
   -- ---- measures, scaled by the desk's split share (1.0 = no split).
   -- The dp join deliberately fans out for split products: one mapping
   -- row per desk means one cost_fact row per desk.
-  a.dbus * COALESCE(dp.cost_split_pct, 1.0)     AS dbus,
+  a.quantity * COALESCE(dp.cost_split_pct, 1.0) AS usage_quantity,
+  -- DBU-only measure: 0 for non-DBU rows (GB, ...) so SUM(dbus) never
+  -- mixes units. The full quantity is always in usage_quantity.
+  CASE WHEN a.usage_unit = 'DBU'
+       THEN a.quantity * COALESCE(dp.cost_split_pct, 1.0)
+       ELSE 0 END                               AS dbus,
   a.cost * COALESCE(dp.cost_split_pct, 1.0)     AS cost
 FROM attributed a
 LEFT JOIN main_dev.cost_reporting.data_product_mapping dp
@@ -724,7 +834,7 @@ LEFT JOIN main_dev.cost_reporting.data_product_mapping dp
 
 -- §6.2 monthly_chargeback — the report
 CREATE OR REPLACE VIEW main_dev.cost_reporting.monthly_chargeback
-COMMENT 'Monthly chargeback rollup: billing month x domain x product x desk x usage category. Direct source for the monthly report and desk invoices. UNALLOCATED rows are a real line item - they represent spend nobody has claimed yet.'
+COMMENT 'Monthly chargeback rollup: billing month x domain x product x desk x usage category. Direct source for the monthly report and desk invoices. UNALLOCATED rows are a real line item - they represent spend nobody has claimed yet. total_dbus sums the DBU-only measure (non-DBU usage contributes 0, its cost is still fully included).'
 AS
 SELECT
   DATE_TRUNC('month', usage_date)               AS billing_month,
@@ -972,6 +1082,16 @@ GROUP BY 1, 2, 3, 4, 5;
 -- The fact tables are rebuildable caches — on existing deployments simply
 --   DROP TABLE main_dev.cost_reporting.usage_fact_tbl;
 -- and rerun this script; the next refresh run refills it.
+--
+-- MIGRATION NOTE (unified dimensions): query_view gained sku_name,
+-- is_serverless, tag_data_product and tags_json; usage_view gained
+-- cluster_id, pipeline_id, app_name and warehouse_id, renamed total_dbus
+-- to total_quantity, and its scope filter is now the exact complement of
+-- query_view's (non-DBU warehouse-attached rows are no longer dropped).
+-- BOTH fact-table caches predating this change have the old shape:
+--   DROP TABLE main_dev.cost_reporting.query_fact_tbl;
+--   DROP TABLE main_dev.cost_reporting.usage_fact_tbl;
+-- then rerun this script; the next refresh run refills them.
 -- =====================================================================
 
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.query_fact_tbl

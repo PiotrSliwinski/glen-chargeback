@@ -34,7 +34,7 @@ const METHOD_FILTERS: { key: string; label: string }[] = [
   { key: "TAG_RULE", label: "Via tag rule" },
   { key: "RESOURCE_GROUP", label: "Via RG rule" },
   { key: "SUBSCRIPTION", label: "Via subscription" },
-  { key: "NONE", label: "Unmatched" },
+  { key: "NONE", label: "Unmapped" },
 ];
 
 /** Union of a resource group's tags across its attribution slices. */
@@ -181,7 +181,7 @@ export async function CoverageView({
             <CardTitle>Azure cost reaching desks — last 30 days</CardTitle>
             <CardDescription className="text-xs">
               The attributed slice, split by desk via the shared product catalogue (multi-desk %
-              splits applied). Unmatched cost ({fmtMoney(unmatchedCost)}) is not billed to any
+              splits applied). Unallocated cost ({fmtMoney(unmatchedCost)}) is not billed to any
               desk.
             </CardDescription>
           </CardHeader>
@@ -400,7 +400,7 @@ function ResourceStatus({ group }: { group: ResourceGroup }) {
   if (group.methods.has("NONE")) {
     return (
       <Badge variant="secondary" className={AZURE_METHOD_STYLE.NONE.chip}>
-        unmatched — not billed
+        unmapped — not billed
       </Badge>
     );
   }

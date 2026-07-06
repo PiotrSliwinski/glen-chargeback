@@ -148,7 +148,10 @@ export async function getAiTrend(month: string): Promise<AiTrendPoint[]> {
 
 /**
  * Endpoints whose trailing-30-day spend fell to UNALLOCATED — the candidates
- * for tagging at source or an endpoint-bridge row (rule 4b).
+ * for tagging at source or an endpoint-bridge row (rule 4b). top_runner shows
+ * who created the cost (run-as of the costliest slice) — often the fastest
+ * fix is mapping that runner, which routes the spend to their desk via the
+ * USER rule without any endpoint bridge.
  */
 export async function getUnmappedEndpoints(): Promise<UnmappedEndpointRow[]> {
   "use cache";
@@ -156,12 +159,15 @@ export async function getUnmappedEndpoints(): Promise<UnmappedEndpointRow[]> {
   cacheTag("queue");
 
   if (env.DAL_MOCK) {
+    // one fixture row per unmapped endpoint, so per-row mapping suffices
     return mockStore.aiEndpointUsage
       .filter((r) => r.endpoint_name != null && r.attribution_method === "NONE")
       .map((r) => ({
         workspace_id: r.workspace_id,
         endpoint_name: r.endpoint_name!,
         serving_type: r.serving_type,
+        top_runner: r.runner_name ?? r.runner,
+        runner_count: r.runner == null ? 0 : 1,
         cost_30d: r.cost,
       }))
       .sort((a, b) => b.cost_30d - a.cost_30d);
@@ -169,7 +175,10 @@ export async function getUnmappedEndpoints(): Promise<UnmappedEndpointRow[]> {
 
   return query(
     `SELECT workspace_id, endpoint_name,
-            MAX(serving_type) AS serving_type, SUM(cost) AS cost_30d
+            MAX(serving_type) AS serving_type,
+            MAX_BY(COALESCE(runner_name, runner), cost) AS top_runner,
+            COUNT(DISTINCT runner) AS runner_count,
+            SUM(cost) AS cost_30d
      FROM ${T("cost_fact")}
      WHERE endpoint_name IS NOT NULL
        AND attribution_method = 'NONE'
@@ -180,6 +189,8 @@ export async function getUnmappedEndpoints(): Promise<UnmappedEndpointRow[]> {
       workspace_id: zId,
       endpoint_name: zStr,
       serving_type: zStrOrNull,
+      top_runner: zStrOrNull,
+      runner_count: zNum,
       cost_30d: zNum,
     }) as z.ZodType<UnmappedEndpointRow>,
   );

@@ -477,7 +477,7 @@ export function buildInsights(input: {
         `TAG coverage ${fmtPct(tagCur.pct_of_month)}` +
         (pp == null ? "" : ` (${pp >= 0 ? "+" : ""}${pp.toFixed(1)}pp over three months)`) +
         (noneCur && noneCur.cost > 0
-          ? `; ${fmtMoney(noneCur.cost)} still unattributed (NONE).`
+          ? `; ${fmtMoney(noneCur.cost)} still unallocated (NONE).`
           : "."),
     });
   }

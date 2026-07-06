@@ -116,7 +116,7 @@ export async function GET(request: Request) {
     // ---- Scorecard ----
     addTable(
       wb.addWorksheet("Scorecard"),
-      ["Desk", "Total cost", "TAG cost", "TAG %", "Unattributed (NONE) cost"],
+      ["Desk", "Total cost", "TAG cost", "TAG %", "Unallocated (NONE) cost"],
       scorecard.map((s) => [s.desk, s.total_cost, s.tag_cost, s.tag_pct, s.none_cost]),
       { 2: MONEY, 3: MONEY, 4: PCT, 5: MONEY },
     );

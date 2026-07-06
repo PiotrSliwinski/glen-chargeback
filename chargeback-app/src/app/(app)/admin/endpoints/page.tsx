@@ -90,10 +90,10 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
           info={KPI_HELP.endpointsUnmapped30d}
         />
         <KpiTile
-          label="Unattributed endpoint cost 30d"
+          label="Unallocated endpoint cost 30d"
           value={fmtMoney(unmappedCost)}
           hint="what a mapping would route to a desk"
-          tone={unmappedCost > 0 ? "warn" : "good"}
+          tone={unmappedCost > 0 ? "bad" : "good"}
           info={KPI_HELP.endpointsUnmappedCost30d}
         />
         <KpiTile
@@ -129,8 +129,10 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
             </CardTitle>
             <CardDescription className="text-xs text-amber-800">
               These endpoints emitted cost in the last 30 days that no waterfall rule could
-              attribute. The durable fix is a <code>data_product</code> tag on the endpoint
-              itself; the bridge below routes it today.
+              attribute. Run as shows who created the cost — if that identity should own it,
+              mapping the runner (Reference data → Users) routes the spend to their desk. The
+              durable fix is a <code>data_product</code> tag on the endpoint itself; the bridge
+              below routes it today.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -140,6 +142,7 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
                   <TableHead>Workspace</TableHead>
                   <TableHead>Endpoint</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead>Run as</TableHead>
                   <TableHead className="text-right">Unallocated cost 30d</TableHead>
                   <TableHead>
                     <span className="sr-only">Action</span>
@@ -158,6 +161,12 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-44 truncate text-xs" title={u.top_runner ?? undefined}>
+                      {u.top_runner ?? "—"}
+                      {u.runner_count > 1 && (
+                        <span className="text-muted-foreground"> +{u.runner_count - 1} more</span>
                       )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{fmtMoney(u.cost_30d)}</TableCell>

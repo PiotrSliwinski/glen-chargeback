@@ -120,9 +120,9 @@ export async function MappingsView({
           hint="tag, resource-group and subscription rules"
         />
         <KpiTile
-          label="Unmatched Azure cost 30d"
+          label="Unallocated Azure cost 30d"
           value={fmtMoney(unmatchedCost)}
-          hint="stays unallocated — never billed to a desk"
+          hint="unmatched by design — never billed to a desk"
           info={KPI_HELP.azureUnmatchedCost}
           infoAlign="end"
         />

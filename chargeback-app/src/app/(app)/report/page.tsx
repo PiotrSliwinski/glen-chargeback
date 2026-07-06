@@ -283,7 +283,7 @@ async function Report({ searchParams }: { searchParams: SearchParams }) {
                       <TableHead>Desk</TableHead>
                       <TableHead className="text-right">Total cost</TableHead>
                       <TableHead className="text-right">TAG %</TableHead>
-                      <TableHead className="text-right">Unattributed (NONE)</TableHead>
+                      <TableHead className="text-right">Unallocated (NONE)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

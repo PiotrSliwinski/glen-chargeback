@@ -11,6 +11,7 @@ export type AttributionMethod =
   | "TAG_RULE"
   | "WAREHOUSE_MAPPING"
   | "ENDPOINT_MAPPING" // rule 4b — dedicated AI/serving endpoint
+  | "PIPELINE_MAPPING" // rule 4c — dedicated DLT pipeline
   | "RUNNER_RULE"
   | "USER" // ad-hoc spend only — job cost never defaults to the runner
   | "NONE";
@@ -59,7 +60,7 @@ export interface ProductRollup {
 
 export interface DetailRow {
   usage_category: string;
-  /** true = serverless compute, false = classic; null when the source can't tell (per-query warehouse rows) */
+  /** true = serverless compute, false = classic; null when the source can't tell */
   is_serverless: boolean | null;
   job_name: string | null;
   warehouse_id: string | null;
@@ -225,6 +226,16 @@ export interface WarehouseMappingRow {
 export interface EndpointMappingRow {
   workspace_id: string;
   endpoint_name: string;
+  data_product: string;
+  note: string | null;
+  mapped_by: string | null;
+  mapped_at: string | null;
+}
+
+/** Rule 4c bridge — dedicated DLT pipeline → product (pipeline_product_mapping). */
+export interface PipelineMappingRow {
+  workspace_id: string;
+  pipeline_id: string;
   data_product: string;
   note: string | null;
   mapped_by: string | null;
@@ -414,6 +425,10 @@ export interface UnmappedEndpointRow {
   workspace_id: string;
   endpoint_name: string;
   serving_type: string | null;
+  /** who created the cost: run-as of the costliest slice (mapped name, else raw id); null when billing carried no identity */
+  top_runner: string | null;
+  /** distinct run-as identities behind the endpoint's unattributed spend */
+  runner_count: number;
   cost_30d: number;
 }
 

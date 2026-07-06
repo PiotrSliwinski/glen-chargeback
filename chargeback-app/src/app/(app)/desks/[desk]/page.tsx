@@ -159,9 +159,10 @@ async function Desk({
           info={KPI_HELP.deskTagCoverage}
         />
         <KpiTile
-          label="Unattributed (NONE)"
+          label="Unallocated cost"
           value={score ? fmtMoney(score.none_cost) : "—"}
-          tone={score && score.none_cost > 0 ? "warn" : "good"}
+          hint="attribution NONE — fix in the work queue"
+          tone={score && score.none_cost > 0 ? "bad" : "good"}
           info={KPI_HELP.deskNoneCost}
           infoAlign="end"
         />

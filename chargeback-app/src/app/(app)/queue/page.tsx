@@ -101,7 +101,7 @@ async function Queue({ searchParams }: { searchParams: SearchParams }) {
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2">
         <KpiTile
-          label="Unallocated cost (30d)"
+          label="Unallocated cost 30d"
           value={fmtMoney(summary.totalUnallocatedCost30d)}
           tone={summary.totalUnallocatedCost30d > 0 ? "bad" : "good"}
           hint="untagged jobs + rogue tags"

@@ -12,6 +12,7 @@ import { AZURE_SECTION_HELP, KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { paginate } from "@/lib/paginate";
 import { cn } from "@/lib/utils";
 import {
+  AZURE_DOMAIN_SPECIALS,
   AZURE_METHOD_STYLE,
   AzureMethodBadge,
   EmptyState,
@@ -19,6 +20,7 @@ import {
   InfoTip,
   KpiTile,
   PageTitle,
+  UnallocatedLabel,
 } from "@/components/ui";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -282,6 +284,7 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                       series: t.desk,
                       total_cost: t.total_cost,
                     }))}
+                    specials={AZURE_DOMAIN_SPECIALS}
                   />
                 )}
               </CardContent>
@@ -307,13 +310,8 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                   <TableBody>
                     {domainRows.map((d) => (
                       <TableRow key={d.domain}>
-                        <TableCell
-                          className={cn(
-                            "font-medium",
-                            d.domain === "UNALLOCATED" && "text-muted-foreground",
-                          )}
-                        >
-                          {d.domain}
+                        <TableCell className="font-medium">
+                          {d.domain === "UNALLOCATED" ? <UnallocatedLabel expected /> : d.domain}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{fmtMoney(d.cost)}</TableCell>
                         <TableCell className="text-right">
@@ -347,13 +345,8 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                   <TableBody>
                     {deskRows.map((d) => (
                       <TableRow key={d.desk}>
-                        <TableCell
-                          className={cn(
-                            "font-medium",
-                            d.desk === "UNALLOCATED" && "text-muted-foreground",
-                          )}
-                        >
-                          {d.desk}
+                        <TableCell className="font-medium">
+                          {d.desk === "UNALLOCATED" ? <UnallocatedLabel expected /> : d.desk}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{fmtMoney(d.cost)}</TableCell>
                         <TableCell className="text-right">
@@ -441,21 +434,15 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                           <TableCell>
                             <AzureMethodBadge method={r.attribution_method} />
                           </TableCell>
-                          <TableCell
-                            className={cn(
-                              "font-mono text-xs",
-                              r.data_product === "UNALLOCATED" && "text-muted-foreground",
+                          <TableCell className="font-mono text-xs">
+                            {r.data_product === "UNALLOCATED" ? (
+                              <UnallocatedLabel expected />
+                            ) : (
+                              r.data_product
                             )}
-                          >
-                            {r.data_product}
                           </TableCell>
-                          <TableCell
-                            className={cn(
-                              "text-sm",
-                              r.desk === "UNALLOCATED" && "text-muted-foreground",
-                            )}
-                          >
-                            {r.desk}
+                          <TableCell className="text-sm">
+                            {r.desk === "UNALLOCATED" ? <UnallocatedLabel expected /> : r.desk}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">{fmtMoney(r.cost)}</TableCell>
                           <TableCell className="text-right tabular-nums">
@@ -469,7 +456,7 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
                 </>
               )}
               <p className="no-print mt-3 text-xs text-muted-foreground">
-                Unmatched cost that should reach a desk? Tag the resource at source with{" "}
+                Unallocated cost that should reach a desk? Tag the resource at source with{" "}
                 <code>data_product</code>, or add a rule under{" "}
                 <Link href="/admin/azure" className="font-medium text-indigo-600 hover:underline">
                   Reference data → Azure attribution

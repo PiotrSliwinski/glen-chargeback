@@ -152,7 +152,7 @@ export async function CoverageView({
           info={KPI_HELP.jobsBridged}
         />
         <KpiTile
-          label="Unmapped job cost 30d"
+          label="Unallocated job cost 30d"
           value={fmtMoney(kpis.unmappedCost)}
           hint="attribution NONE — fix in the work queue"
           tone={kpis.unmappedCost > 0 ? "bad" : "good"}

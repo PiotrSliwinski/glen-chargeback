@@ -13,6 +13,7 @@ import type {
   JobAttributionRow,
   JobMappingRow,
   MonthlyChargebackRow,
+  PipelineMappingRow,
   ReconRow,
   RunnerRuleRow,
   UnmappedRunnerRow,
@@ -46,6 +47,7 @@ export interface MockStore {
   runnerRules: RunnerRuleRow[];
   warehouseMappings: WarehouseMappingRow[];
   endpointMappings: EndpointMappingRow[];
+  pipelineMappings: PipelineMappingRow[];
   // base (unscaled) values — DAL scales by monthFactor and resolves
   // workspace_name from the workspaces fixture at read time
   aiEndpointUsage: Omit<AiEndpointUsageRow, "workspace_name">[];
@@ -128,6 +130,11 @@ function createStore(): MockStore {
   // Endpoint bridge (waterfall rule 4b): dedicated AI/serving endpoint → product.
   const endpointMappings: EndpointMappingRow[] = [
     { workspace_id: "1111111111111111", endpoint_name: "curves-embedding-api", data_product: "pricing-curves", note: "embedding endpoint feeding curve search, tagging ticket DATA-3110", mapped_by: "steward@example.com", mapped_at: "2026-06-15T10:00:00Z" },
+  ];
+
+  // Pipeline bridge (waterfall rule 4c): dedicated DLT pipeline → product.
+  const pipelineMappings: PipelineMappingRow[] = [
+    { workspace_id: "2222222222222222", pipeline_id: "b7c1d2e3-ref-data-dlt", data_product: "ref-data-ingest", note: "reference-data DLT pipeline, tagging ticket DATA-3244", mapped_by: "steward@example.com", mapped_at: "2026-06-28T09:00:00Z" },
   ];
 
   // AI/model-serving cost per endpoint × offering type × runner (cost_fact
@@ -322,6 +329,7 @@ function createStore(): MockStore {
     runnerRules,
     warehouseMappings,
     endpointMappings,
+    pipelineMappings,
     aiEndpointUsage,
     dbuDiscounts,
     monthly,

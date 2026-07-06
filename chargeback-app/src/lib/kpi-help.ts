@@ -72,7 +72,7 @@ export const KPI_HELP = {
   threeMonthGrowth:
     "Total cost this month ÷ total cost three months earlier − 1, on live figures. Smooths single-month noise — the KPI to watch for budget drift.",
   topConcentration:
-    "Share of the month's total cost carried by the three most expensive products (UNALLOCATED counts as a product, so concentration never hides unattributed spend). High concentration means one migration or optimisation moves the whole bill.",
+    "Share of the month's total cost carried by the three most expensive products (UNALLOCATED counts as a product, so concentration never hides unallocated spend). High concentration means one migration or optimisation moves the whole bill.",
   productsTo80:
     "The smallest number of products whose combined cost reaches 80% of the month's total, counting from the most expensive down (UNALLOCATED counts as a product). A small number means the bill is a short list: optimising or migrating a handful of products moves most of the spend.",
   topDeskShare:
@@ -88,7 +88,7 @@ export const KPI_HELP = {
     "Cost on this desk with attribution_method = NONE — spend nothing in the waterfall could attribute to a product, from live cost_fact for the month. Fix the sources in the work queue.",
 
   queueUnallocated30d:
-    "Untagged-job cost + rogue-tag cost over the trailing 30 days — the two queues that carry real unattributed dollars. Runner, workspace and warehouse items are hygiene tasks; their cost is not double-counted here.",
+    "Untagged-job cost + rogue-tag cost over the trailing 30 days — the two queues that carry real unallocated dollars. Runner, workspace and warehouse items are hygiene tasks; their cost is not double-counted here.",
   queueOpenItems:
     "Row count across all five queues: untagged jobs + unknown runners + unknown workspaces + rogue tags + unassigned warehouses.",
 
@@ -142,7 +142,7 @@ export const KPI_HELP = {
   endpointsUnmapped30d:
     "Endpoints whose trailing-30-day spend fell to UNALLOCATED (attribution_method = NONE in live cost_fact) — candidates for a tag at source or a bridge row.",
   endpointsUnmappedCost30d:
-    "Sum of that unattributed 30-day endpoint spend — the dollars a mapping would route to a desk.",
+    "Sum of that unallocated 30-day endpoint spend — the dollars a mapping would route to a desk.",
 } as const;
 
 export const AI_SECTION_HELP = {
@@ -154,6 +154,8 @@ export const AI_SECTION_HELP = {
     "Every endpoint that emitted AI spend in the month (top 500 slices by cost), per serving endpoint × offering type × run-as identity from live cost_fact: who ran it (identity_metadata.run_as — the mapped name, or the raw identity for unmapped runners), the workspace it serves from (friendly name from workspace mapping; UNMAPPED: <id> otherwise), which product and desk it bills to, the attribution rule that routed it, the days of the month it was active, DBUs and cost. Filterable by any of those. BATCH_INFERENCE marks ai_query batch jobs. Rows without an endpoint (vector search, training) group under “(no endpoint)”. MoM Δ compares the endpoint against last month's live figures — “new” means it had no spend then; an endpoint split across desks or runners shows “—” because a per-row Δ would double-count. Serving spend with no job carries a runner, so mapping that runner routes otherwise-unclaimed endpoint cost to their desk as AD_HOC (USER rule), exactly like serverless ad-hoc spend. Active days are day-precision: billing usage is pre-aggregated, so per-call counts and timestamps do not exist in billing data. Endpoint detail is never snapshotted, so this table reads live data in both modes.",
   desks:
     "The month's AI cost per desk: absolute cost, month-over-month change (previous month always live), the desk's share of all AI spend, and AI intensity — AI cost ÷ the desk's whole bill, i.e. how AI-heavy that desk's usage is. Same monthly_chargeback rows as the KPI tiles, so the desks sum to the AI cost tile.",
+  runners:
+    "Who created the month's AI cost: spend per run-as identity (identity_metadata.run_as, from the same live endpoint slices as the table below), with the number of endpoints each identity ran, month-over-month change and share of AI spend. Mapped identities show their display name; a raw id in amber is an unmapped runner — map them under Reference data → Users and their unclaimed serving spend (which carries no job) bills to their desk as AD_HOC via the USER rule.",
   movers:
     "Endpoints ranked by absolute month-over-month cost change (both months live, compared per workspace × endpoint × offering type × category, so a re-mapped endpoint compares against itself). “new” = no spend last month; “gone” = spent last month, nothing this month. The list behind the MoM Δ tile: these are the endpoints that moved the AI bill.",
 } as const;
@@ -179,7 +181,7 @@ export const ANALYTICS_SECTION_HELP = {
   movers:
     "Products ranked by absolute month-over-month cost change. The current month follows the selected mode; the previous month is always live — same convention as the report pack's movement section.",
   productDrivers:
-    "Every data product ranked by cost: share of the month's total with cumulative (Pareto) share, month-over-month change (prior month always live), blended $/DBU, the number of desks billed for it, and a trailing-12-month spend sparkline from live history. UNALLOCATED appears as a product like any other, so concentration never hides unattributed spend.",
+    "Every data product ranked by cost: share of the month's total with cumulative (Pareto) share, month-over-month change (prior month always live), blended $/DBU, the number of desks billed for it, and a trailing-12-month spend sparkline from live history. UNALLOCATED appears as a product like any other, so concentration never hides unallocated spend.",
   categories:
     "Unit economics per usage category (JOBS, SQL_WAREHOUSE, DLT, MODEL_SERVING…): cost, DBUs and the blended $/DBU rate with its month-over-month change. Rate moves signal mix shifts (e.g. serverless adoption), not volume.",
   rateTrend:
@@ -196,7 +198,7 @@ export const REPORT_SECTION_HELP = {
   breakdown:
     "Domain subtotals with product × desk rows beneath. Share = cost ÷ the month's grand total. Domains link into the drill-down.",
   coverage:
-    "Cost per attribution method for the month, exact dollars and share of total. TAG = tagged at source · JOB_MAPPING = manual job bridge · TAG_RULE = matched a tag rule (any custom tag → product) · WAREHOUSE_MAPPING = dedicated warehouse · ENDPOINT_MAPPING = dedicated AI/serving endpoint · RUNNER_RULE = runner's workload assigned to a product · USER = runner's home desk (ad-hoc only — job spend never defaults to the runner) · NONE = unattributed, lands in UNALLOCATED.",
+    "Cost per attribution method for the month, exact dollars and share of total. TAG = tagged at source · JOB_MAPPING = manual job bridge · TAG_RULE = matched a tag rule (any custom tag → product) · WAREHOUSE_MAPPING = dedicated warehouse · ENDPOINT_MAPPING = dedicated AI/serving endpoint · PIPELINE_MAPPING = dedicated DLT pipeline · RUNNER_RULE = runner's workload assigned to a product · USER = runner's home desk (ad-hoc only — job spend never defaults to the runner) · NONE = no rule matched, lands in UNALLOCATED.",
   scorecard:
-    "Per desk, always from live cost_fact regardless of mode: TAG % = TAG-attributed cost ÷ desk total; the last column is the desk's unattributed (NONE) cost. Ranked by TAG % — the tagging-adoption leaderboard.",
+    "Per desk, always from live cost_fact regardless of mode: TAG % = TAG-attributed cost ÷ desk total; the last column is the desk's unallocated (NONE) cost. Ranked by TAG % — the tagging-adoption leaderboard.",
 } as const;

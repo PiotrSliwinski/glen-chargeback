@@ -199,6 +199,9 @@ export async function getIntegrityViolations(product?: string): Promise<Integrit
        WHERE data_product NOT IN (SELECT data_product FROM ${T("data_product_mapping")})
        UNION ALL
        SELECT 'endpoint_product_mapping', data_product FROM ${T("endpoint_product_mapping")}
+       WHERE data_product NOT IN (SELECT data_product FROM ${T("data_product_mapping")})
+       UNION ALL
+       SELECT 'pipeline_product_mapping', data_product FROM ${T("pipeline_product_mapping")}
        WHERE data_product NOT IN (SELECT data_product FROM ${T("data_product_mapping")})`,
       {},
       z.object({ src: zStr, data_product: zStrOrNull }),
@@ -233,6 +236,19 @@ export async function getIntegrityViolations(product?: string): Promise<Integrit
       violations.push({
         check: "duplicate_bridge_key",
         detail: `endpoint_product_mapping has ${d.c} rows for (workspace ${d.workspace_id}, endpoint ${d.endpoint_name})`,
+      });
+    }
+
+    const pipelineDupes = await query(
+      `SELECT workspace_id, pipeline_id, COUNT(*) AS c FROM ${T("pipeline_product_mapping")}
+       GROUP BY 1, 2 HAVING COUNT(*) > 1`,
+      {},
+      z.object({ workspace_id: zId, pipeline_id: zStr, c: zNum }),
+    );
+    for (const d of pipelineDupes) {
+      violations.push({
+        check: "duplicate_bridge_key",
+        detail: `pipeline_product_mapping has ${d.c} rows for (workspace ${d.workspace_id}, pipeline ${d.pipeline_id})`,
       });
     }
 
@@ -435,6 +451,21 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
           detail: `endpoint_product_mapping has duplicate rows for (workspace ${e.workspace_id}, endpoint ${e.endpoint_name})`,
         });
       seenEndpoints.add(key);
+    }
+    const seenPipelines = new Set<string>();
+    for (const p of mockStore.pipelineMappings) {
+      if (!known.has(p.data_product))
+        violations.push({
+          check: "orphan_product",
+          detail: `pipeline_product_mapping references unknown product '${p.data_product}'`,
+        });
+      const key = `${p.workspace_id}|${p.pipeline_id}`;
+      if (seenPipelines.has(key))
+        violations.push({
+          check: "duplicate_bridge_key",
+          detail: `pipeline_product_mapping has duplicate rows for (workspace ${p.workspace_id}, pipeline ${p.pipeline_id})`,
+        });
+      seenPipelines.add(key);
     }
 
     // DBU reservation windows: no overlaps (both ends inclusive), sane rates
