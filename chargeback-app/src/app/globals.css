@@ -64,6 +64,21 @@
   }
 }
 
+/* Pending-navigation overlay: scrim fade and status-pill entrance.
+   Both start invisible and animate in after a delay (set at the usage
+   site) so sub-150ms transitions never flash a loader. */
+@keyframes route-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes route-pill-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+}
+
 :root {
   --background: oklch(0.985 0 0);
   --foreground: oklch(0.145 0 0);
