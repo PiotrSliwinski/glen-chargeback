@@ -496,6 +496,32 @@ export async function insertAzureResourceMapping(
   );
 }
 
+/** Bulk insert in one statement — Databricks guarantees per-statement atomicity only. */
+export async function insertAzureResourceMappings(
+  ids: string[],
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  if (ids.length === 0) return;
+  if (env.DAL_MOCK) {
+    for (const resource_id of ids) {
+      await insertAzureResourceMapping({ resource_id, data_product, note }, actor);
+    }
+    return;
+  }
+  const values = ids
+    .map((_, i) => `(:r_${i}, :data_product, :note, :actor, current_timestamp())`)
+    .join(", ");
+  const params = Object.fromEntries(ids.map((id, i) => [`r_${i}`, arm(id)]));
+  await exec(
+    `INSERT INTO ${T("azure_resource_product_mapping")}
+       (resource_id, data_product, note, mapped_by, mapped_at)
+     VALUES ${values}`,
+    { ...params, data_product, note, actor },
+  );
+}
+
 /** OR-chain over resource ids + named params — bulk WHERE clause. */
 function resourceKeyPredicate(ids: string[]): { where: string; params: Record<string, string> } {
   return {
@@ -612,6 +638,48 @@ export async function insertAzureRgRule(
   );
 }
 
+/** Re-point an existing RG rule at a new product (subscription + RG stay fixed). */
+export async function updateAzureRgRule(
+  subscription_id: string,
+  resource_group: string,
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  const sub = arm(subscription_id);
+  const rg = arm(resource_group);
+  if (env.DAL_MOCK) {
+    const rule = mockStore.azureRgRules.find(
+      (r) => r.subscription_id === sub && r.resource_group === rg,
+    );
+    if (!rule) return;
+    rule.data_product = data_product;
+    rule.note = note;
+    rule.mapped_by = actor;
+    rule.mapped_at = now();
+    const desk = mockActiveDesk(data_product);
+    for (const a of mockStore.azureAttributions) {
+      if (
+        a.attribution_method === "RESOURCE_GROUP" &&
+        a.subscription_id === sub &&
+        a.resource_group === rg
+      ) {
+        a.data_product = data_product;
+        a.desk = desk;
+      }
+    }
+    return;
+  }
+  await exec(
+    `UPDATE ${T("azure_rg_product_mapping")}
+     SET data_product = :data_product, note = :note,
+         mapped_by = :actor, mapped_at = current_timestamp()
+     WHERE lower(subscription_id) = :subscription_id
+       AND lower(resource_group) = :resource_group`,
+    { subscription_id: sub, resource_group: rg, data_product, note, actor },
+  );
+}
+
 export async function deleteAzureRgRule(
   subscription_id: string,
   resource_group: string,
@@ -670,6 +738,39 @@ export async function insertAzureSubscriptionRule(
        (subscription_id, data_product, note, mapped_by, mapped_at)
      VALUES (:subscription_id, :data_product, :note, :actor, current_timestamp())`,
     { subscription_id, data_product: row.data_product, note: row.note, actor },
+  );
+}
+
+/** Re-point an existing subscription rule at a new product (subscription stays fixed). */
+export async function updateAzureSubscriptionRule(
+  subscription_id: string,
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  const sub = arm(subscription_id);
+  if (env.DAL_MOCK) {
+    const rule = mockStore.azureSubscriptionRules.find((r) => r.subscription_id === sub);
+    if (!rule) return;
+    rule.data_product = data_product;
+    rule.note = note;
+    rule.mapped_by = actor;
+    rule.mapped_at = now();
+    const desk = mockActiveDesk(data_product);
+    for (const a of mockStore.azureAttributions) {
+      if (a.attribution_method === "SUBSCRIPTION" && a.subscription_id === sub) {
+        a.data_product = data_product;
+        a.desk = desk;
+      }
+    }
+    return;
+  }
+  await exec(
+    `UPDATE ${T("azure_subscription_product_mapping")}
+     SET data_product = :data_product, note = :note,
+         mapped_by = :actor, mapped_at = current_timestamp()
+     WHERE lower(subscription_id) = :subscription_id`,
+    { subscription_id: sub, data_product, note, actor },
   );
 }
 

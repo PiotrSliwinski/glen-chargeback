@@ -15,11 +15,14 @@ import {
   deleteAzureResourceMappingAction,
   deleteAzureRgRuleAction,
   deleteAzureSubscriptionRuleAction,
+  editAzureRgRuleAction,
+  editAzureSubscriptionRuleAction,
   mapAzureResourceAction,
 } from "@/actions/azure";
 import { TagRulesCard } from "@/components/tag-rules-card";
+import { JanitorCard } from "@/components/janitor-card";
 import { scopeCovers } from "@/lib/tag-rules";
-import { ArrowRightLeft, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Plus, Trash2 } from "lucide-react";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import {
@@ -114,7 +117,7 @@ export async function MappingsView({
           tone={taggedResources.length > 0 ? "warn" : "good"}
         />
         <KpiTile
-          label="Scope rules"
+          label="Attribution rules"
           value={`${azureRules} tag · ${rgRules.length} RG · ${subRules.length} sub`}
           hint="tag rules covering Azure, resource-group and subscription rules"
         />
@@ -152,83 +155,20 @@ export async function MappingsView({
         </div>
       </div>
 
-      {taggedResources.length > 0 && (
-        <Card className="mb-4 ring-emerald-200 bg-emerald-50/50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-1.5 text-emerald-800">
-              <Sparkles className="size-4" aria-hidden /> Safe to remove — now tagged at source
-            </CardTitle>
-            <CardDescription className="text-xs text-emerald-700">
-              These bridge rows point at resources that produced TAG-attributed cost in the last
-              30 days: the data_product tag has landed, the bridge is redundant. The tag keeps
-              winning either way — it is rule 1 of the waterfall.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="no-print mb-3">
-              <EditDialog
-                trigger={
-                  <Button variant="outline" size="sm">
-                    <Trash2 aria-hidden /> Remove all {taggedResources.length} redundant bridge
-                    {taggedResources.length > 1 ? "s" : ""}
-                  </Button>
-                }
-                title={`Remove ${taggedResources.length} redundant bridge mapping${taggedResources.length > 1 ? "s" : ""}?`}
-                description="Every listed resource produced TAG-attributed cost in the last 30 days — the tag keeps winning either way. This just prunes the redundant rows."
-              >
-                <ActionForm
-                  action={bulkDeleteAzureResourceMappingsAction}
-                  submitLabel="Remove all listed"
-                >
-                  {taggedResources.map((r) => (
-                    <input key={r.resource_id} type="hidden" name="keys" value={r.resource_id} />
-                  ))}
-                </ActionForm>
-              </EditDialog>
-            </div>
-            <Table className="max-w-2xl">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Resource</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead className="text-right">TAG cost 30d</TableHead>
-                  <TableHead>
-                    <span className="sr-only">Action</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {taggedResources.map((r) => (
-                  <TableRow key={r.resource_id}>
-                    <TableCell>
-                      <ResourceCell resource_id={r.resource_id} />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{r.data_product}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtMoney(r.tagged_cost_30d)}
-                    </TableCell>
-                    <TableCell>
-                      <EditDialog
-                        trigger={<RowAction danger>Remove bridge</RowAction>}
-                        title={`Remove redundant bridge for ${resourceName(r.resource_id)}?`}
-                        description="This resource produced TAG-attributed cost in the last 30 days — the tag keeps winning either way. This just prunes the redundant row."
-                      >
-                        <ActionForm
-                          action={deleteAzureResourceMappingAction}
-                          submitLabel="Remove bridge"
-                          danger
-                        >
-                          <input type="hidden" name="resource_id" value={r.resource_id} />
-                        </ActionForm>
-                      </EditDialog>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
+      <JanitorCard
+        noun="resource"
+        headers={["Resource"]}
+        items={taggedResources.map((r) => ({
+          key: r.resource_id,
+          dialogLabel: resourceName(r.resource_id),
+          cells: [<ResourceCell key="res" resource_id={r.resource_id} />],
+          hidden: [{ name: "resource_id", value: r.resource_id }],
+          data_product: r.data_product,
+          tagged_cost_30d: r.tagged_cost_30d,
+        }))}
+        deleteAction={deleteAzureResourceMappingAction}
+        bulkDeleteAction={bulkDeleteAzureResourceMappingsAction}
+      />
 
       <BulkSelect values={pageRows.map((r) => r.resource_id)}>
         <Card>
@@ -286,12 +226,37 @@ export async function MappingsView({
                         </TableCell>
                         <TableCell>
                           <div className="flex items-start gap-4">
+                            {/* full ARM id — resource names are not unique across RGs */}
                             <Link
-                              href={`/admin/azure?view=coverage&q=${encodeURIComponent(resourceName(r.resource_id))}`}
+                              href={`/admin/azure?view=coverage&q=${encodeURIComponent(r.resource_id)}`}
                               className="text-xs font-medium text-indigo-600 hover:underline"
                             >
                               Attribution
                             </Link>
+                            <EditDialog
+                              trigger={<RowAction>Re-map</RowAction>}
+                              title={`Re-map ${resourceName(r.resource_id)}`}
+                              description="Points this bridge row at a different product. Reminder: the durable fix is tagging the resource at source."
+                            >
+                              <ActionForm
+                                action={bulkRemapAzureResourcesAction}
+                                submitLabel="Re-map"
+                              >
+                                <input type="hidden" name="keys" value={r.resource_id} />
+                                <SelectField
+                                  label="Data product"
+                                  name="data_product"
+                                  defaultValue={r.data_product}
+                                  options={productOptions}
+                                />
+                                <Field
+                                  label="Note (why re-mapped)"
+                                  name="note"
+                                  defaultValue={r.note ?? ""}
+                                  required={false}
+                                />
+                              </ActionForm>
+                            </EditDialog>
                             <EditDialog
                               trigger={<RowAction danger>Remove</RowAction>}
                               title={`Remove mapping for ${resourceName(r.resource_id)}?`}
@@ -420,16 +385,40 @@ export async function MappingsView({
                       {r.mapped_at && <> · {r.mapped_at.slice(0, 10)}</>}
                     </TableCell>
                     <TableCell>
-                      <EditDialog
-                        trigger={<RowAction danger>Remove</RowAction>}
-                        title={`Remove rule for ${r.resource_group}?`}
-                        description="The RG's cost falls back to subscription rules — or stays unallocated."
-                      >
-                        <ActionForm action={deleteAzureRgRuleAction} submitLabel="Remove rule" danger>
-                          <input type="hidden" name="subscription_id" value={r.subscription_id} />
-                          <input type="hidden" name="resource_group" value={r.resource_group} />
-                        </ActionForm>
-                      </EditDialog>
+                      <div className="flex items-start gap-4">
+                        <EditDialog
+                          trigger={<RowAction>Edit</RowAction>}
+                          title={`Edit rule for ${r.resource_group}`}
+                          description="Points the rule at a different product — all cost it carries follows. Subscription and RG stay fixed; to change those, remove and re-add."
+                        >
+                          <ActionForm action={editAzureRgRuleAction} submitLabel="Save rule">
+                            <input type="hidden" name="subscription_id" value={r.subscription_id} />
+                            <input type="hidden" name="resource_group" value={r.resource_group} />
+                            <SelectField
+                              label="Data product"
+                              name="data_product"
+                              defaultValue={r.data_product}
+                              options={productOptions}
+                            />
+                            <Field
+                              label="Note (why this rule)"
+                              name="note"
+                              defaultValue={r.note ?? ""}
+                              required={false}
+                            />
+                          </ActionForm>
+                        </EditDialog>
+                        <EditDialog
+                          trigger={<RowAction danger>Remove</RowAction>}
+                          title={`Remove rule for ${r.resource_group}?`}
+                          description="The RG's cost falls back to subscription rules — or stays unallocated."
+                        >
+                          <ActionForm action={deleteAzureRgRuleAction} submitLabel="Remove rule" danger>
+                            <input type="hidden" name="subscription_id" value={r.subscription_id} />
+                            <input type="hidden" name="resource_group" value={r.resource_group} />
+                          </ActionForm>
+                        </EditDialog>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -497,19 +486,42 @@ export async function MappingsView({
                       {r.mapped_at && <> · {r.mapped_at.slice(0, 10)}</>}
                     </TableCell>
                     <TableCell>
-                      <EditDialog
-                        trigger={<RowAction danger>Remove</RowAction>}
-                        title={`Remove rule for subscription ${r.subscription_id}?`}
-                        description="The subscription's unclaimed cost stays visible in coverage until another rule catches it."
-                      >
-                        <ActionForm
-                          action={deleteAzureSubscriptionRuleAction}
-                          submitLabel="Remove rule"
-                          danger
+                      <div className="flex items-start gap-4">
+                        <EditDialog
+                          trigger={<RowAction>Edit</RowAction>}
+                          title={`Edit rule for subscription ${r.subscription_id}`}
+                          description="Points the rule at a different product — all cost it carries follows. The subscription stays fixed; to change it, remove and re-add."
                         >
-                          <input type="hidden" name="subscription_id" value={r.subscription_id} />
-                        </ActionForm>
-                      </EditDialog>
+                          <ActionForm action={editAzureSubscriptionRuleAction} submitLabel="Save rule">
+                            <input type="hidden" name="subscription_id" value={r.subscription_id} />
+                            <SelectField
+                              label="Data product"
+                              name="data_product"
+                              defaultValue={r.data_product}
+                              options={productOptions}
+                            />
+                            <Field
+                              label="Note (why this rule)"
+                              name="note"
+                              defaultValue={r.note ?? ""}
+                              required={false}
+                            />
+                          </ActionForm>
+                        </EditDialog>
+                        <EditDialog
+                          trigger={<RowAction danger>Remove</RowAction>}
+                          title={`Remove rule for subscription ${r.subscription_id}?`}
+                          description="The subscription's unclaimed cost stays visible in coverage until another rule catches it."
+                        >
+                          <ActionForm
+                            action={deleteAzureSubscriptionRuleAction}
+                            submitLabel="Remove rule"
+                            danger
+                          >
+                            <input type="hidden" name="subscription_id" value={r.subscription_id} />
+                          </ActionForm>
+                        </EditDialog>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

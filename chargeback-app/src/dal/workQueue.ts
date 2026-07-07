@@ -2,6 +2,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { query, T } from "@/dal/client";
+import { getUnmappedEndpoints } from "@/dal/ai";
 import { getRunnerActivity30d } from "@/dal/insights";
 import { listUsers } from "@/dal/mappings";
 import { mockStore } from "@/dal/mock";
@@ -11,12 +12,16 @@ import type {
   UnassignedWarehouseRow,
   UnknownRunnerRow,
   UnknownWorkspaceRow,
+  UnmatchedAzureResourceRow,
   UntaggedJobRow,
 } from "@/dal/types";
 
 /**
- * Work-queue reads (Methodology §7.2 / §7.3 → §10.4). All queries look at
- * the trailing 30 days of cost_fact — "what to map or tag next".
+ * Work-queue reads (Methodology §7.2 / §7.3 → §10.4): the trailing 30 days
+ * of unattributed cost across all three sources — Databricks (cost_fact),
+ * Azure (azure_cost_fact) and AI serving (via dal/ai) — "what to map or tag
+ * next". Readers are uncapped so the queue counts and cost totals are honest;
+ * the page paginates.
  */
 
 export async function getUntaggedJobs(): Promise<UntaggedJobRow[]> {
@@ -25,6 +30,7 @@ export async function getUntaggedJobs(): Promise<UntaggedJobRow[]> {
   cacheTag("queue");
   if (env.DAL_MOCK) return [...mockStore.queueUntaggedJobs];
   return query(
+    // endpoint-dimension rows are the AI queue's — one item, one queue
     `SELECT usage_category, workspace_id,
             COALESCE(job_name, warehouse_id, runner, 'unknown') AS work_item,
             job_id, runner, SUM(cost) AS unallocated_cost_30d
@@ -32,7 +38,8 @@ export async function getUntaggedJobs(): Promise<UntaggedJobRow[]> {
      WHERE usage_date >= current_date() - INTERVAL 30 DAYS
        AND attribution_method = 'NONE'
        AND usage_category <> 'SQL_WAREHOUSE'
-     GROUP BY 1, 2, 3, 4, 5 ORDER BY unallocated_cost_30d DESC LIMIT 50`,
+       AND endpoint_name IS NULL
+     GROUP BY 1, 2, 3, 4, 5 ORDER BY unallocated_cost_30d DESC`,
     {},
     z.object({
       usage_category: zStr,
@@ -58,7 +65,6 @@ export async function getUnknownRunners(): Promise<UnknownRunnerRow[]> {
   const mapped = new Set(users.map((u) => u.user_id));
   return activity
     .filter((r) => !mapped.has(r.runner))
-    .slice(0, 50)
     .map((r) => ({ runner: r.runner, cost_30d: r.cost_30d, rows_30d: r.rows_30d }));
 }
 
@@ -116,7 +122,7 @@ export async function getUnassignedWarehouses(): Promise<UnassignedWarehouseRow[
        AND warehouse_id NOT IN (
          SELECT warehouse_id FROM ${T("warehouse_product_mapping")} WHERE is_shared = true
        )
-     GROUP BY 1, 2 ORDER BY cost_30d DESC LIMIT 50`,
+     GROUP BY 1, 2 ORDER BY cost_30d DESC`,
     {},
     z.object({
       warehouse_id: zStr,
@@ -124,6 +130,50 @@ export async function getUnassignedWarehouses(): Promise<UnassignedWarehouseRow[
       cost_30d: zNum,
       idle_share: zNum,
     }) as z.ZodType<UnassignedWarehouseRow>,
+  );
+}
+
+/**
+ * Azure resources whose trailing-30-day cost no waterfall rule matched
+ * (attribution NONE in azure_cost_fact) — the Azure queue. Also tagged
+ * 'azure' so rule edits on /admin/azure refresh it without a manual rescan.
+ */
+export async function getUnmatchedAzureResources(): Promise<UnmatchedAzureResourceRow[]> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("queue", "azure");
+  if (env.DAL_MOCK) {
+    return mockStore.azureAttributions
+      .filter((a) => a.attribution_method === "NONE")
+      .map((a) => ({
+        subscription_id: a.subscription_id,
+        resource_group: a.resource_group,
+        resource_id: a.resource_id,
+        resource_name: a.resource_name,
+        meter_category: a.meter_category,
+        cost_30d: a.cost_30d,
+      }))
+      .sort((a, b) => b.cost_30d - a.cost_30d);
+  }
+  return query(
+    `SELECT subscription_id, resource_group, resource_id,
+            MAX(resource_name) AS resource_name,
+            MAX_BY(meter_category, cost) AS meter_category,
+            SUM(cost) AS cost_30d
+     FROM ${T("azure_cost_fact")}
+     WHERE usage_date >= current_date() - INTERVAL 30 DAYS
+       AND attribution_method = 'NONE'
+       AND resource_id IS NOT NULL
+     GROUP BY 1, 2, 3 ORDER BY cost_30d DESC`,
+    {},
+    z.object({
+      subscription_id: zStr,
+      resource_group: zStrOrNull,
+      resource_id: zStr,
+      resource_name: zStrOrNull,
+      meter_category: zStrOrNull,
+      cost_30d: zNum,
+    }) as z.ZodType<UnmatchedAzureResourceRow>,
   );
 }
 
@@ -180,25 +230,43 @@ export interface QueueSummary {
   unknownWorkspaces: number;
   rogueTags: number;
   unassignedWarehouses: number;
+  unmatchedAzureResources: number;
+  unmappedEndpoints: number;
+  /** untagged jobs + rogue tags — the Databricks queues carrying real unallocated dollars */
+  databricksUnallocatedCost30d: number;
+  azureUnallocatedCost30d: number;
+  aiUnallocatedCost30d: number;
+  /** Databricks + Azure + AI — no queue's dollars are counted twice */
   totalUnallocatedCost30d: number;
 }
 
 export async function getQueueSummary(): Promise<QueueSummary> {
-  const [jobs, runners, workspaces, tags, warehouses] = await Promise.all([
-    getUntaggedJobs(),
-    getUnknownRunners(),
-    getUnknownWorkspaces(),
-    getRogueTags(),
-    getUnassignedWarehouses(),
-  ]);
+  const [jobs, runners, workspaces, tags, warehouses, azureResources, endpoints] =
+    await Promise.all([
+      getUntaggedJobs(),
+      getUnknownRunners(),
+      getUnknownWorkspaces(),
+      getRogueTags(),
+      getUnassignedWarehouses(),
+      getUnmatchedAzureResources(),
+      getUnmappedEndpoints(),
+    ]);
+  const databricks =
+    jobs.reduce((s, r) => s + r.unallocated_cost_30d, 0) +
+    tags.reduce((s, r) => s + r.cost_30d, 0);
+  const azure = azureResources.reduce((s, r) => s + r.cost_30d, 0);
+  const ai = endpoints.reduce((s, r) => s + r.cost_30d, 0);
   return {
     untaggedJobs: jobs.length,
     unknownRunners: runners.length,
     unknownWorkspaces: workspaces.length,
     rogueTags: tags.length,
     unassignedWarehouses: warehouses.length,
-    totalUnallocatedCost30d:
-      jobs.reduce((s, r) => s + r.unallocated_cost_30d, 0) +
-      tags.reduce((s, r) => s + r.cost_30d, 0),
+    unmatchedAzureResources: azureResources.length,
+    unmappedEndpoints: endpoints.length,
+    databricksUnallocatedCost30d: databricks,
+    azureUnallocatedCost30d: azure,
+    aiUnallocatedCost30d: ai,
+    totalUnallocatedCost30d: databricks + azure + ai,
   };
 }

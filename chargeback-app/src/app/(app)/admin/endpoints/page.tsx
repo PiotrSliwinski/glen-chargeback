@@ -14,7 +14,6 @@ import { PAGE_HELP, KPI_HELP } from "@/lib/kpi-help";
 import { fmtMoney } from "@/lib/format";
 import { EmptyState, FilteredCount, KpiTile, PageTitle } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -122,74 +121,15 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
       </div>
 
       {unmapped.length > 0 && (
-        <Card className="mb-4 ring-amber-200 bg-amber-50/50">
-          <CardHeader>
-            <CardTitle className="text-amber-900">
-              Unmapped endpoints — spend landing in UNALLOCATED
-            </CardTitle>
-            <CardDescription className="text-xs text-amber-800">
-              These endpoints emitted cost in the last 30 days that no waterfall rule could
-              attribute. Run as shows who created the cost — if that identity should own it,
-              mapping the runner (Reference data → Users) routes the spend to their desk. The
-              durable fix is a <code>data_product</code> tag on the endpoint itself; the bridge
-              below routes it today.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table className="max-w-3xl">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Workspace</TableHead>
-                  <TableHead>Endpoint</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Run as</TableHead>
-                  <TableHead className="text-right">Unallocated cost 30d</TableHead>
-                  <TableHead>
-                    <span className="sr-only">Action</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {unmapped.map((u) => (
-                  <TableRow key={`${u.workspace_id}|${u.endpoint_name}`}>
-                    <TableCell>{wsName.get(u.workspace_id) ?? u.workspace_id}</TableCell>
-                    <TableCell className="font-mono text-xs">{u.endpoint_name}</TableCell>
-                    <TableCell>
-                      {u.serving_type ? (
-                        <Badge variant="secondary" className="bg-slate-100 text-slate-700">
-                          {u.serving_type}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-44 truncate text-xs" title={u.top_runner ?? undefined}>
-                      {u.top_runner ?? "—"}
-                      {u.runner_count > 1 && (
-                        <span className="text-muted-foreground"> +{u.runner_count - 1} more</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtMoney(u.cost_30d)}</TableCell>
-                    <TableCell>
-                      <EditDialog
-                        trigger={<RowAction>Map to product</RowAction>}
-                        title={`Map endpoint ${u.endpoint_name}`}
-                        description="Routes this endpoint's spend with no attributable user — past and future, batch inference included — to the selected product. Spend run by mapped users keeps billing their desk (user-first)."
-                      >
-                        <EndpointForm
-                          productOptions={productOptions}
-                          workspaceOptions={workspaceOptions}
-                          workspaceId={u.workspace_id}
-                          endpointName={u.endpoint_name}
-                        />
-                      </EditDialog>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        <p className="mb-4 rounded-lg bg-amber-50/70 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
+          {unmapped.length} endpoint{unmapped.length > 1 ? "s" : ""} emitted{" "}
+          {fmtMoney(unmappedCost)} of UNALLOCATED spend in the last 30 days — fix them (inline,
+          with bulk mapping) in the{" "}
+          <Link href="/queue?tab=endpoints" className="font-medium underline">
+            work queue → Unmapped endpoints
+          </Link>
+          .
+        </p>
       )}
 
       <Card>

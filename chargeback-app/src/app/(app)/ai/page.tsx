@@ -2,6 +2,15 @@ import Link from "next/link";
 import { getAiEndpointUsage, getAiTrend, isAiCategory } from "@/dal/ai";
 import { categoryEconomics } from "@/dal/analytics";
 import { getMonthlyRows } from "@/dal/reports";
+import { listActiveProducts } from "@/dal/mappings";
+import { mapEndpointAction, upsertUserAction } from "@/actions/mappings";
+import { getSession } from "@/lib/auth";
+import { atLeast } from "@/lib/rbac";
+import { toProductOptions } from "@/lib/product-options";
+import { ActionForm, DatalistField, Field, SelectField } from "@/components/action-form";
+import { EditDialog, RowAction } from "@/components/edit-dialog";
+import { SpNameField } from "@/components/sp-name-field";
+import { isServicePrincipal } from "@/lib/identity";
 import { fmtDbu, fmtDelta, fmtMoney, fmtMoneyExact, fmtMonth, fmtPct, momKpi, shiftMonth } from "@/lib/format";
 import { param, resolveReportParams, type SearchParams } from "@/lib/report-params";
 import { AI_SECTION_HELP, KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
@@ -53,13 +62,20 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
   const notPublished = mode === "published" && !publishedMonths.includes(month);
   const prevMonth = shiftMonth(month, -1);
 
-  const [curRows, prevRows, trend, endpoints, prevEndpoints] = await Promise.all([
-    getMonthlyRows(month, mode),
-    getMonthlyRows(prevMonth, "live"),
-    getAiTrend(month),
-    getAiEndpointUsage(month),
-    getAiEndpointUsage(prevMonth),
-  ]);
+  const [curRows, prevRows, trend, endpoints, prevEndpoints, session, products] =
+    await Promise.all([
+      getMonthlyRows(month, mode),
+      getMonthlyRows(prevMonth, "live"),
+      getAiTrend(month),
+      getAiEndpointUsage(month),
+      getAiEndpointUsage(prevMonth),
+      getSession(),
+      listActiveProducts(),
+    ]);
+  // stewards get inline fix actions on unallocated rows; viewers see the report only
+  const canFix = atLeast(session?.user.role, "steward");
+  const productOptions = toProductOptions(products);
+  const deskOptions = [...new Set(products.map((p) => p.desk))].sort();
 
   const aiRows = curRows.filter((r) => isAiCategory(r.usage_category));
   const prevAiRows = prevRows.filter((r) => isAiCategory(r.usage_category));
@@ -504,6 +520,9 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                         month={month}
                         mode={mode}
                         aiCost={endpointCost}
+                        canFix={canFix}
+                        productOptions={productOptions}
+                        deskOptions={deskOptions}
                       />
                       <TablePagination {...endpointsPaged} noun="row" />
                     </>
@@ -517,10 +536,18 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
                 </>
               )}
               <p className="no-print mt-3 text-xs text-muted-foreground">
-                Endpoint spend landing in UNALLOCATED? Tag the endpoint at source with{" "}
-                <code>data_product</code>, or route it under{" "}
+                Endpoint spend landing in UNALLOCATED? Fix it inline on the amber rows, in bulk
+                in the{" "}
+                <Link
+                  href="/queue?tab=endpoints"
+                  className="font-medium text-indigo-600 hover:underline"
+                >
+                  work queue
+                </Link>
+                , or durably with a <code>data_product</code> tag on the endpoint at source. The
+                bridge table lives under{" "}
                 <Link href="/admin/endpoints" className="font-medium text-indigo-600 hover:underline">
-                  Reference data → Endpoints
+                  Reference data → AI endpoints
                 </Link>
                 .{" "}
                 <a
@@ -589,16 +616,94 @@ function ServingTypeChip({ type }: { type: string | null }) {
   );
 }
 
+/**
+ * The user-first duality made actionable: an unallocated slice with a run-as
+ * identity is fixed by mapping the RUNNER (their spend bills their desk,
+ * rule 0); one without is fixed by an ENDPOINT bridge row (rule 4b). The Fix
+ * column offers exactly the action(s) that apply to each amber row.
+ */
+function EndpointFixCell({
+  row,
+  productOptions,
+  deskOptions,
+}: {
+  row: AiEndpointUsageRow;
+  productOptions: { value: string; label: string }[];
+  deskOptions: string[];
+}) {
+  if (row.attribution_method !== "NONE") {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {row.runner && (
+        <EditDialog
+          trigger={<RowAction>Map runner</RowAction>}
+          title={`Map runner ${row.runner_name ?? row.runner}`}
+          description="AI serving is user-first: registering this identity bills their serving spend to their desk (rule 0), from now and retroactively on live views. The ID is read-only — it must match run_as exactly."
+        >
+          <ActionForm action={upsertUserAction} submitLabel="Add user">
+            <Field label="User ID" name="user_id" defaultValue={row.runner} readOnly />
+            {isServicePrincipal(row.runner) ? (
+              <SpNameField runnerId={row.runner} />
+            ) : (
+              <Field
+                label="Display name"
+                name="user_name"
+                defaultValue={row.runner_name ?? row.runner}
+              />
+            )}
+            <DatalistField label="Desk" name="desk" options={deskOptions} />
+          </ActionForm>
+        </EditDialog>
+      )}
+      {row.endpoint_name && (
+        <EditDialog
+          trigger={<RowAction>Map endpoint</RowAction>}
+          title={`Map endpoint ${row.endpoint_name}`}
+          description="Routes this endpoint's spend with no attributable user — past and future, batch inference included — to the selected product (rule 4b). Spend run by mapped users keeps billing their desk. The durable fix is a data_product tag on the endpoint."
+        >
+          <ActionForm action={mapEndpointAction} submitLabel="Map endpoint">
+            <Field
+              label="Workspace ID"
+              name="workspace_id"
+              defaultValue={row.workspace_id}
+              readOnly
+            />
+            <Field
+              label="Endpoint name"
+              name="endpoint_name"
+              defaultValue={row.endpoint_name}
+              readOnly
+            />
+            <SelectField label="Data product" name="data_product" options={productOptions} />
+            <Field label="Note (why mapped manually)" name="note" required={false} />
+          </ActionForm>
+        </EditDialog>
+      )}
+      {!row.runner && !row.endpoint_name && (
+        <span className="text-xs text-muted-foreground">—</span>
+      )}
+    </div>
+  );
+}
+
 function EndpointTable({
   endpoints,
   month,
   mode,
   aiCost,
+  canFix,
+  productOptions,
+  deskOptions,
 }: {
   endpoints: (AiEndpointUsageRow & { delta: number | null; isNew: boolean })[];
   month: string;
   mode: string;
   aiCost: number;
+  canFix: boolean;
+  productOptions: { value: string; label: string }[];
+  deskOptions: string[];
 }) {
   return (
     <Table>
@@ -616,6 +721,11 @@ function EndpointTable({
           <TableHead className="text-right">Cost</TableHead>
           <TableHead className="text-right">MoM Δ</TableHead>
           <TableHead className="text-right">Share</TableHead>
+          {canFix && (
+            <TableHead>
+              <span className="sr-only">Fix</span>
+            </TableHead>
+          )}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -697,6 +807,15 @@ function EndpointTable({
             <TableCell className="text-right tabular-nums">
               {aiCost > 0 ? fmtPct(e.cost / aiCost) : "—"}
             </TableCell>
+            {canFix && (
+              <TableCell>
+                <EndpointFixCell
+                  row={e}
+                  productOptions={productOptions}
+                  deskOptions={deskOptions}
+                />
+              </TableCell>
+            )}
           </TableRow>
         ))}
       </TableBody>

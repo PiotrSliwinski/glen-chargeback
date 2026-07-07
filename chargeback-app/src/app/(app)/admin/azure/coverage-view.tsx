@@ -7,6 +7,7 @@ import {
 import { KPI_HELP } from "@/lib/kpi-help";
 import { fmtMoney } from "@/lib/format";
 import { AZURE_METHOD_STYLE, AzureMethodBadge, EmptyState, FilteredCount, KpiTile } from "@/components/ui";
+import { mergeTagsJson, TagChips } from "@/components/tag-chips";
 import { TableFilter } from "@/components/table-filter";
 import { TablePagination } from "@/components/table-pagination";
 import { paginate } from "@/lib/paginate";
@@ -36,20 +37,6 @@ const METHOD_FILTERS: { key: string; label: string }[] = [
   { key: "SUBSCRIPTION", label: "Via subscription" },
   { key: "NONE", label: "Unmapped" },
 ];
-
-/** Union of a resource group's tags across its attribution slices. */
-function resourceTags(rows: AzureResourceAttributionRow[]): Record<string, string> {
-  const tags: Record<string, string> = {};
-  for (const r of rows) {
-    if (!r.tags_json) continue;
-    try {
-      Object.assign(tags, JSON.parse(r.tags_json));
-    } catch {
-      // malformed tags_json — skip the slice, never break the page
-    }
-  }
-  return tags;
-}
 
 interface ResourceGroup {
   resource_id: string;
@@ -132,7 +119,7 @@ export async function CoverageView({
       g.resource_group ?? "",
       g.meter_category ?? "",
       ...g.rows.flatMap((r) => [r.data_product, r.desk]),
-      ...Object.entries(resourceTags(g.rows)).map(([k, v]) => `${k}=${v}`),
+      ...Object.entries(mergeTagsJson(g.rows)).map(([k, v]) => `${k}=${v}`),
     ]
       .join(" ")
       .toLowerCase()
@@ -270,7 +257,7 @@ export async function CoverageView({
                         </p>
                       </TableCell>
                       <TableCell>
-                        <ResourceTagChips tags={resourceTags(g.rows)} />
+                        <TagChips tags={mergeTagsJson(g.rows)} />
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1.5">
@@ -332,76 +319,16 @@ export async function CoverageView({
   );
 }
 
-// Most resources carry a dozen boilerplate policy tags; only the first few are
-// worth row height. data_product sorts first — it's the input tag rules match on.
-const VISIBLE_TAGS = 4;
-
-function TagChip({ k, v, className = "" }: { k: string; v: string; className?: string }) {
-  return (
-    <Badge
-      variant="secondary"
-      className={`${
-        k === "data_product"
-          ? "bg-emerald-100 font-mono text-[11px] text-emerald-800"
-          : "bg-muted font-mono text-[11px] text-muted-foreground"
-      } ${className}`}
-    >
-      {k}={v}
-    </Badge>
-  );
-}
-
-/** The resource's tags, data_product highlighted — the input tag rules match on. */
-function ResourceTagChips({ tags }: { tags: Record<string, string> }) {
-  const entries = Object.entries(tags).sort(([a], [b]) =>
-    a === "data_product" ? -1 : b === "data_product" ? 1 : a.localeCompare(b),
-  );
-  if (entries.length === 0) {
-    return <span className="text-xs text-muted-foreground">no tags</span>;
-  }
-  const head = entries.slice(0, VISIBLE_TAGS);
-  const rest = entries.slice(VISIBLE_TAGS);
-  if (rest.length === 0) {
-    return (
-      <div className="flex max-w-64 flex-wrap gap-1">
-        {head.map(([k, v]) => (
-          <TagChip key={k} k={k} v={v} />
-        ))}
-      </div>
-    );
-  }
-  // native <details> keeps this a server component — no client JS for the toggle
-  return (
-    <details className="group max-w-64">
-      <summary className="flex cursor-pointer list-none flex-wrap gap-1 [&::-webkit-details-marker]:hidden">
-        {head.map(([k, v]) => (
-          <TagChip key={k} k={k} v={v} />
-        ))}
-        {rest.map(([k, v]) => (
-          <TagChip key={k} k={k} v={v} className="hidden group-open:inline-flex" />
-        ))}
-        <Badge variant="outline" className="text-[11px] text-muted-foreground group-open:hidden">
-          +{rest.length} more
-        </Badge>
-        <Badge
-          variant="outline"
-          className="hidden text-[11px] text-muted-foreground group-open:inline-flex"
-        >
-          show less
-        </Badge>
-      </summary>
-    </details>
-  );
-}
-
 // Status chips reuse the Azure waterfall palette from AZURE_METHOD_STYLE — one
 // source of truth, so the status column always matches the method badges.
 function ResourceStatus({ group }: { group: ResourceGroup }) {
   if (group.methods.has("NONE")) {
     return (
-      <Badge variant="secondary" className={AZURE_METHOD_STYLE.NONE.chip}>
-        unmapped — not billed
-      </Badge>
+      <Link href="/queue?tab=azure" className="inline-block">
+        <Badge variant="secondary" className={`${AZURE_METHOD_STYLE.NONE.chip} hover:underline`}>
+          unmapped → work queue
+        </Badge>
+      </Link>
     );
   }
   if (group.methods.has("TAG") && group.bridge) {

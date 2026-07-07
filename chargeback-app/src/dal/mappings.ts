@@ -566,6 +566,13 @@ export async function insertTagRule(
       mockStore.queueUntaggedJobs = mockStore.queueUntaggedJobs.filter(
         (q) => !matched.has(`${q.workspace_id}|${q.job_id}`),
       );
+      // a rule on the data_product key routes that mis-tag's spend (rule 3),
+      // so the rogue-tag queue row is resolved
+      if (row.tag_key === "data_product") {
+        mockStore.queueRogueTags = mockStore.queueRogueTags.filter(
+          (t) => t.raw_tag_data_product !== row.tag_value,
+        );
+      }
     }
     if (scopeCovers(row.scope, "azure")) {
       for (const a of mockStore.azureAttributions) {
@@ -634,6 +641,57 @@ export async function deleteTagRule(
   );
 }
 
+/**
+ * Re-point an existing rule at a new product (key, value and scope are the
+ * rule's identity and stay fixed — changing those is delete + re-add).
+ */
+export async function updateTagRule(
+  tag_key: string,
+  tag_value: string,
+  scope: TagRuleScope,
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  if (env.DAL_MOCK) {
+    const rule = mockStore.tagRules.find(
+      (r) => r.tag_key === tag_key && r.tag_value === tag_value && r.scope === scope,
+    );
+    if (!rule) return;
+    const oldProduct = rule.data_product;
+    rule.data_product = data_product;
+    rule.note = note;
+    rule.mapped_by = actor;
+    rule.mapped_at = now();
+    // rows the rule carries follow it to the new product, on every covered side
+    const desk = mockActiveDesk(data_product);
+    if (scopeCovers(scope, "databricks")) {
+      for (const a of mockStore.jobAttributions) {
+        if (a.attribution_method === "TAG_RULE" && a.data_product === oldProduct) {
+          a.data_product = data_product;
+          a.desk = desk;
+        }
+      }
+    }
+    if (scopeCovers(scope, "azure")) {
+      for (const a of mockStore.azureAttributions) {
+        if (a.attribution_method === "TAG_RULE" && a.data_product === oldProduct) {
+          a.data_product = data_product;
+          a.desk = desk;
+        }
+      }
+    }
+    return;
+  }
+  await exec(
+    `UPDATE ${T("tag_product_mapping")}
+     SET data_product = :data_product, note = :note,
+         mapped_by = :actor, mapped_at = current_timestamp()
+     WHERE tag_key = :tag_key AND tag_value = :tag_value AND scope = :scope`,
+    { tag_key, tag_value, scope, data_product, note, actor },
+  );
+}
+
 export async function insertRunnerRule(
   row: { user_id: string; data_product: string; note: string | null },
   actor: string,
@@ -664,6 +722,39 @@ export async function insertRunnerRule(
        (user_id, data_product, note, mapped_by, mapped_at)
      VALUES (:user_id, :data_product, :note, :actor, current_timestamp())`,
     { ...row, actor },
+  );
+}
+
+/** Re-point an existing runner rule at a new product (user_id stays fixed). */
+export async function updateRunnerRule(
+  user_id: string,
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  if (env.DAL_MOCK) {
+    const rule = mockStore.runnerRules.find((r) => r.user_id === user_id);
+    if (!rule) return;
+    const oldProduct = rule.data_product;
+    rule.data_product = data_product;
+    rule.note = note;
+    rule.mapped_by = actor;
+    rule.mapped_at = now();
+    const desk = mockActiveDesk(data_product);
+    for (const a of mockStore.jobAttributions) {
+      if (a.attribution_method === "RUNNER_RULE" && a.data_product === oldProduct) {
+        a.data_product = data_product;
+        a.desk = desk;
+      }
+    }
+    return;
+  }
+  await exec(
+    `UPDATE ${T("runner_product_mapping")}
+     SET data_product = :data_product, note = :note,
+         mapped_by = :actor, mapped_at = current_timestamp()
+     WHERE user_id = :user_id`,
+    { user_id, data_product, note, actor },
   );
 }
 
@@ -739,6 +830,42 @@ export async function insertEndpointMapping(
        (workspace_id, endpoint_name, data_product, note, mapped_by, mapped_at)
      VALUES (:workspace_id, :endpoint_name, :data_product, :note, :actor, current_timestamp())`,
     { ...row, actor },
+  );
+}
+
+export interface EndpointKey {
+  workspace_id: string;
+  endpoint_name: string;
+}
+
+/** Bulk insert in one statement — Databricks guarantees per-statement atomicity only. */
+export async function insertEndpointMappings(
+  keys: EndpointKey[],
+  data_product: string,
+  note: string | null,
+  actor: string,
+): Promise<void> {
+  if (keys.length === 0) return;
+  if (env.DAL_MOCK) {
+    for (const k of keys) {
+      await insertEndpointMapping({ ...k, data_product, note }, actor);
+    }
+    return;
+  }
+  const values = keys
+    .map((_, i) => `(:w_${i}, :e_${i}, :data_product, :note, :actor, current_timestamp())`)
+    .join(", ");
+  const params = Object.fromEntries(
+    keys.flatMap((k, i) => [
+      [`w_${i}`, k.workspace_id],
+      [`e_${i}`, k.endpoint_name],
+    ]),
+  );
+  await exec(
+    `INSERT INTO ${T("endpoint_product_mapping")}
+       (workspace_id, endpoint_name, data_product, note, mapped_by, mapped_at)
+     VALUES ${values}`,
+    { ...params, data_product, note, actor },
   );
 }
 

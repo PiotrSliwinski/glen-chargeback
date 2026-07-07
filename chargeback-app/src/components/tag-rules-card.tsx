@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
-import { addTagRuleAction, deleteTagRuleAction } from "@/actions/mappings";
+import { addTagRuleAction, deleteTagRuleAction, editTagRuleAction } from "@/actions/mappings";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import { EmptyState } from "@/components/ui";
@@ -16,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { paginate } from "@/lib/paginate";
-import { SCOPE_LABELS, TAG_RULE_SCOPES } from "@/lib/tag-rules";
+import { SCOPE_LABELS, TAG_RULE_SCOPES, scopeCovers } from "@/lib/tag-rules";
 import { cn } from "@/lib/utils";
 import type { TagRuleRow, TagRuleScope } from "@/dal/types";
 
@@ -42,8 +42,9 @@ function ScopeBadge({ scope }: { scope: TagRuleScope }) {
 /**
  * The ONE tag-rule table (tag_product_mapping), shared by the Databricks
  * (/admin/jobs) and Azure (/admin/azure) attribution screens. Rule 3 of
- * both waterfalls reads it, filtered by each rule's scope — so both screens
- * show the full list and only the add-form default differs.
+ * both waterfalls reads it, filtered by each rule's scope. Each screen shows
+ * the rules covering ITS side (own scope + "both"); rules scoped only to the
+ * other side sit behind an expander so they can't be mistaken for local ones.
  */
 export function TagRulesCard({
   rules,
@@ -60,11 +61,14 @@ export function TagRulesCard({
   /** the coverage tab where this screen shows each item's actual tags */
   coverageHref: string;
 }) {
-  const { rows: page, ...paged } = paginate(rules, pageCursor);
+  const inScope = rules.filter((r) => scopeCovers(r.scope, defaultScope));
+  const otherScope = rules.filter((r) => !scopeCovers(r.scope, defaultScope));
+  const { rows: page, ...paged } = paginate(inScope, pageCursor);
   const tagSource =
     defaultScope === "databricks"
       ? "custom_tags in system.billing.usage"
       : "the resource tags in the cost export";
+  const otherSide = defaultScope === "databricks" ? "Azure" : "Databricks";
 
   return (
     <Card className="mt-6">
@@ -108,57 +112,105 @@ export function TagRulesCard({
             </ActionForm>
           </EditDialog>
         </div>
-        {rules.length === 0 ? (
+        {inScope.length === 0 ? (
           <EmptyState message="No tag rules. Add one to route spend by team/application tags when the data_product tag is missing." />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Tag</TableHead>
-                <TableHead>Scope</TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead>Note</TableHead>
-                <TableHead>Mapped by / at</TableHead>
-                <TableHead>
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {page.map((r) => (
-                <TableRow key={`${r.tag_key}|${r.tag_value}|${r.scope}`}>
-                  <TableCell className="font-mono text-xs">
-                    {r.tag_key}={r.tag_value}
-                  </TableCell>
-                  <TableCell>
-                    <ScopeBadge scope={r.scope} />
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{r.data_product}</TableCell>
-                  <TableCell className="text-xs">{r.note ?? "—"}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {r.mapped_by ?? "—"}
-                    {r.mapped_at && <> · {r.mapped_at.slice(0, 10)}</>}
-                  </TableCell>
-                  <TableCell>
-                    <EditDialog
-                      trigger={<RowAction danger>Remove</RowAction>}
-                      title={`Remove ${SCOPE_LABELS[r.scope]} rule ${r.tag_key}=${r.tag_value}?`}
-                      description="Spend carried by this rule falls back to later waterfall rules — or the work queue / unallocated."
-                    >
-                      <ActionForm action={deleteTagRuleAction} submitLabel="Remove rule" danger>
-                        <input type="hidden" name="tag_key" value={r.tag_key} />
-                        <input type="hidden" name="tag_value" value={r.tag_value} />
-                        <input type="hidden" name="scope" value={r.scope} />
-                      </ActionForm>
-                    </EditDialog>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <RuleTable rows={page} productOptions={productOptions} />
         )}
         <TablePagination {...paged} noun="tag rule" paramName="tagsPage" />
+        {otherScope.length > 0 && (
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
+              {otherScope.length} rule{otherScope.length > 1 ? "s" : ""} scoped to {otherSide}{" "}
+              only — same table, managed on the {otherSide} screen
+            </summary>
+            <div className="mt-2">
+              <RuleTable rows={otherScope} productOptions={productOptions} />
+            </div>
+          </details>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+function RuleTable({
+  rows,
+  productOptions,
+}: {
+  rows: TagRuleRow[];
+  productOptions: { value: string; label: string }[];
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Tag</TableHead>
+          <TableHead>Scope</TableHead>
+          <TableHead>Product</TableHead>
+          <TableHead>Note</TableHead>
+          <TableHead>Mapped by / at</TableHead>
+          <TableHead>
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r) => (
+          <TableRow key={`${r.tag_key}|${r.tag_value}|${r.scope}`}>
+            <TableCell className="font-mono text-xs">
+              {r.tag_key}={r.tag_value}
+            </TableCell>
+            <TableCell>
+              <ScopeBadge scope={r.scope} />
+            </TableCell>
+            <TableCell className="font-mono text-xs">{r.data_product}</TableCell>
+            <TableCell className="text-xs">{r.note ?? "—"}</TableCell>
+            <TableCell className="text-xs text-muted-foreground">
+              {r.mapped_by ?? "—"}
+              {r.mapped_at && <> · {r.mapped_at.slice(0, 10)}</>}
+            </TableCell>
+            <TableCell>
+              <div className="flex items-start gap-4">
+                <EditDialog
+                  trigger={<RowAction>Edit</RowAction>}
+                  title={`Edit ${SCOPE_LABELS[r.scope]} rule ${r.tag_key}=${r.tag_value}`}
+                  description="Points the rule at a different product — all spend it carries follows. Key, value and scope are the rule's identity; to change those, remove and re-add."
+                >
+                  <ActionForm action={editTagRuleAction} submitLabel="Save rule">
+                    <input type="hidden" name="tag_key" value={r.tag_key} />
+                    <input type="hidden" name="tag_value" value={r.tag_value} />
+                    <input type="hidden" name="scope" value={r.scope} />
+                    <SelectField
+                      label="Data product"
+                      name="data_product"
+                      defaultValue={r.data_product}
+                      options={productOptions}
+                    />
+                    <Field
+                      label="Note (why this rule)"
+                      name="note"
+                      defaultValue={r.note ?? ""}
+                      required={false}
+                    />
+                  </ActionForm>
+                </EditDialog>
+                <EditDialog
+                  trigger={<RowAction danger>Remove</RowAction>}
+                  title={`Remove ${SCOPE_LABELS[r.scope]} rule ${r.tag_key}=${r.tag_value}?`}
+                  description="Spend carried by this rule falls back to later waterfall rules — or the work queue / unallocated."
+                >
+                  <ActionForm action={deleteTagRuleAction} submitLabel="Remove rule" danger>
+                    <input type="hidden" name="tag_key" value={r.tag_key} />
+                    <input type="hidden" name="tag_value" value={r.tag_value} />
+                    <input type="hidden" name="scope" value={r.scope} />
+                  </ActionForm>
+                </EditDialog>
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }

@@ -26,7 +26,7 @@ export const PAGE_HELP = {
   invoiceDetail:
     "Printable statement for one desk, read from the immutable published snapshot — the number finance bills against. Mapping edits after publication never change it; corrections land in the next month.",
   queue:
-    "The operational to-do list: cost drivers from the trailing 30 days that the attribution waterfall could not (fully) place, split into five queues. Every row carries a pre-filled inline fix that writes to the mapping tables. Fixes change live views immediately and never touch published months.",
+    "The operational to-do list: cost drivers from the trailing 30 days that no attribution waterfall could (fully) place, split into queues grouped by source — Databricks (untagged jobs, unknown runners, unknown workspaces, rogue tags, unassigned warehouses), Azure (unmatched resources) and AI (unmapped serving endpoints). Every row carries a pre-filled inline fix that writes to the mapping tables. Fixes change live views immediately and never touch published months.",
   health:
     "Pre-publication control room. Reconciliation proves billing truth = cost_fact = report for every month within the configured tolerance; the Azure counterpart proves the same for the Azure bill = azure_cost_fact = Azure rollup (informational — Azure is never published); integrity checks catch catalogue overlaps, desk splits that don't sum to 100%, orphan bridge rows, duplicate keys and inconsistent warehouse flags; the diff shows exactly what the snapshot will freeze. Publication unlocks only when the Databricks checks are green — and the gate re-checks server-side at submit.",
   admin:
@@ -88,9 +88,13 @@ export const KPI_HELP = {
     "Cost on this desk with attribution_method = NONE — spend nothing in the waterfall could attribute to a product, from live cost_fact for the month. Fix the sources in the work queue.",
 
   queueUnallocated30d:
-    "Untagged-job cost + rogue-tag cost over the trailing 30 days — the two queues that carry real unallocated dollars. Runner, workspace and warehouse items are hygiene tasks; their cost is not double-counted here.",
-  queueOpenItems:
-    "Row count across all five queues: untagged jobs + unknown runners + unknown workspaces + rogue tags + unassigned warehouses.",
+    "All unallocated cost over the trailing 30 days: Databricks (untagged jobs + rogue tags) + Azure (unmatched resources) + AI (unmapped endpoints). Each dollar is counted in exactly one source queue. Runner, workspace and warehouse items are hygiene tasks; their cost is not double-counted here.",
+  queueDatabricksUnallocated30d:
+    "Untagged-job cost + rogue-tag cost from cost_fact over the trailing 30 days — the two Databricks queues that carry real unallocated dollars. AI serving spend with an endpoint dimension is counted in the AI tile instead.",
+  queueAzureUnallocated30d:
+    "Azure cost with attribution_method = NONE from azure_cost_fact over the trailing 30 days — no tag, bridge or scope rule matched. Visible in coverage, never billed to a desk until mapped.",
+  queueAiUnallocated30d:
+    "Serving-endpoint cost that fell to UNALLOCATED over the trailing 30 days. AI is user-first: mapping the run-as identity routes it to their desk; the endpoint bridge catches spend with no attributable user.",
 
   usersMappedRunners:
     "Rows in user_mapping. IDs without an “@” are counted as service principals, the rest as humans.",

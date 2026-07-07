@@ -158,6 +158,16 @@ export interface UnassignedWarehouseRow {
   idle_share: number;
 }
 
+/** Azure resource whose trailing-30-day cost no waterfall rule matched — never billed to a desk. */
+export interface UnmatchedAzureResourceRow {
+  subscription_id: string;
+  resource_group: string | null;
+  resource_id: string;
+  resource_name: string | null;
+  meter_category: string | null;
+  cost_30d: number;
+}
+
 /** Runner with spend in the trailing 30 days who is absent from user_mapping. */
 export interface UnmappedRunnerRow {
   runner: string;

@@ -4,6 +4,7 @@ import { listJobMappings, listWorkspaces } from "@/dal/mappings";
 import { KPI_HELP } from "@/lib/kpi-help";
 import { fmtMoney } from "@/lib/format";
 import { EmptyState, FilteredCount, KpiTile, MethodBadge, METHOD_STYLE } from "@/components/ui";
+import { mergeTagsJson, TagChips } from "@/components/tag-chips";
 import { TableFilter } from "@/components/table-filter";
 import { TablePagination } from "@/components/table-pagination";
 import { paginate } from "@/lib/paginate";
@@ -28,20 +29,6 @@ const METHOD_FILTERS: { key: string; label: string }[] = [
   { key: "RUNNER_RULE", label: "Via runner rule" },
   { key: "NONE", label: "Unmapped" },
 ];
-
-/** Union of a job group's tags across its attribution slices. */
-function jobTags(rows: JobAttributionRow[]): Record<string, string> {
-  const tags: Record<string, string> = {};
-  for (const r of rows) {
-    if (!r.tags_json) continue;
-    try {
-      Object.assign(tags, JSON.parse(r.tags_json));
-    } catch {
-      // malformed tags_json — skip the slice, never break the page
-    }
-  }
-  return tags;
-}
 
 interface JobGroup {
   workspace_id: string;
@@ -123,7 +110,7 @@ export async function CoverageView({
       g.workspace_id,
       wsName.get(g.workspace_id) ?? "",
       ...g.rows.flatMap((r) => [r.data_product, r.desk]),
-      ...Object.entries(jobTags(g.rows)).map(([k, v]) => `${k}=${v}`),
+      ...Object.entries(mergeTagsJson(g.rows)).map(([k, v]) => `${k}=${v}`),
     ]
       .join(" ")
       .toLowerCase()
@@ -220,7 +207,7 @@ export async function CoverageView({
                         )}
                       </TableCell>
                       <TableCell>
-                        <JobTagChips tags={jobTags(g.rows)} />
+                        <TagChips tags={mergeTagsJson(g.rows)} />
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1.5">
@@ -279,69 +266,6 @@ export async function CoverageView({
         unmapped job goes to the work queue instead.
       </p>
     </div>
-  );
-}
-
-// Most jobs carry a dozen boilerplate platform tags; only the first few are
-// worth row height. data_product sorts first — it's the input tag rules match on.
-const VISIBLE_TAGS = 4;
-
-function TagChip({ k, v, className = "" }: { k: string; v: string; className?: string }) {
-  return (
-    <Badge
-      variant="secondary"
-      className={`${
-        k === "data_product"
-          ? "bg-emerald-100 font-mono text-[11px] text-emerald-800"
-          : "bg-muted font-mono text-[11px] text-muted-foreground"
-      } ${className}`}
-    >
-      {k}={v}
-    </Badge>
-  );
-}
-
-/** The job's custom tags, data_product highlighted — the input tag rules match on. */
-function JobTagChips({ tags }: { tags: Record<string, string> }) {
-  const entries = Object.entries(tags).sort(([a], [b]) =>
-    a === "data_product" ? -1 : b === "data_product" ? 1 : a.localeCompare(b),
-  );
-  if (entries.length === 0) {
-    return <span className="text-xs text-muted-foreground">no tags</span>;
-  }
-  const head = entries.slice(0, VISIBLE_TAGS);
-  const rest = entries.slice(VISIBLE_TAGS);
-  if (rest.length === 0) {
-    return (
-      <div className="flex max-w-64 flex-wrap gap-1">
-        {head.map(([k, v]) => (
-          <TagChip key={k} k={k} v={v} />
-        ))}
-      </div>
-    );
-  }
-  // native <details> keeps this a server component — no client JS for the
-  // toggle; all chips live in the summary so the list wraps as one flow
-  return (
-    <details className="group max-w-64">
-      <summary className="flex cursor-pointer list-none flex-wrap gap-1 [&::-webkit-details-marker]:hidden">
-        {head.map(([k, v]) => (
-          <TagChip key={k} k={k} v={v} />
-        ))}
-        {rest.map(([k, v]) => (
-          <TagChip key={k} k={k} v={v} className="hidden group-open:inline-flex" />
-        ))}
-        <Badge variant="outline" className="text-[11px] text-muted-foreground group-open:hidden">
-          +{rest.length} more
-        </Badge>
-        <Badge
-          variant="outline"
-          className="hidden text-[11px] text-muted-foreground group-open:inline-flex"
-        >
-          show less
-        </Badge>
-      </summary>
-    </details>
   );
 }
 

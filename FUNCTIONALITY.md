@@ -36,7 +36,7 @@ rule, and known gap.
 |---|---|
 | **Reference data** | Full CRUD (within the methodology's rules) on all eight Databricks mapping tables — product catalogue (versioned), job bridge, unified tag rules (one scoped table serving Databricks AND Azure), warehouse classification, AI endpoint bridge, runner rules, users, workspaces — plus the three Azure-specific attribution rule tables (resource bridge, resource-group rules, subscription rules) and DBU reservation-discount windows (`dbu_discount_plan`) |
 | **Azure attribution** | Route Azure spend (`azure_cleaned.amortized_costs`) to the same product catalogue via an allowlist waterfall (TAG → resource bridge → tag rule → RG rule → subscription rule), with a 30-day coverage audit, per-desk rollup and a dedicated monthly Azure cost-monitoring screen (`/azure`) — only matched cost reaches a desk |
-| **Work queue** | Five actionable queues of unattributed/unmapped cost with inline, pre-filled fix forms |
+| **Work queue** | Seven actionable queues of unattributed/unmapped cost — Databricks, Azure and AI — with inline, pre-filled fix forms and bulk actions |
 | **Attribution policy** | Category-aware waterfall in `cost_fact`: **interactive spend is user-first** — serverless SQL-warehouse queries and AI serving run by a mapped user bill that user's desk (AD_HOC) BEFORE any tag; **automated spend is tag-first** — jobs (and job-launched `ai_query` batch) and Azure resources attribute by tags/rules, and job cost never defaults to the runner. AI spend with no attributable user (NULL/unmapped `run_as`) falls to tags and the endpoint bridge |
 | **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, an AI-costs page (model serving incl. `ai_query` batch inference, per-endpoint spend), printable desk invoices, per-desk self-service pages, tagging scorecard |
 | **Exports** | 13 CSV reports + a 6-sheet XLSX report workbook |
@@ -110,7 +110,7 @@ rule, and known gap.
 | `/azure` | viewer | Azure cost monitoring (the whole Azure bill, attribution mix, per-resource detail) |
 | `/desks`, `/desks/[desk]` | viewer | Desk self-service views |
 | `/invoices`, `/invoices/[desk]` | viewer | Published desk invoices |
-| `/queue` | steward | Work queue (5 tabs) |
+| `/queue` | steward | Work queue (7 tabs, grouped Databricks / Azure / AI) |
 | `/admin` (+ 7 sub-pages) | steward | Reference-data management (incl. `/admin/azure`, `/admin/endpoints`) |
 | `/health` | steward (publish: publisher) | Checks, diff, publication |
 | `/login` | public | Sign-in |
@@ -175,9 +175,11 @@ ad-hoc spend.
   `data_product` tag. One rule covers every current and future item carrying the tag.
 - **One table for both clouds**: `tag_product_mapping` carries a `scope` column
   (`databricks` | `azure` | `both`) and drives rule 3 of the Databricks AND the Azure
-  waterfall — the same card (with the full rule list) appears on `/admin/jobs` and
-  `/admin/azure`, only the add-form's default scope differs. `both` is for
-  organisation-wide tags that mean the same thing in either namespace.
+  waterfall — the same card appears on `/admin/jobs` and `/admin/azure`. Each screen lists
+  the rules covering ITS side (own scope + `both`); rules scoped only to the other side sit
+  behind a collapsed expander so they can't be mistaken for local ones. The add-form's
+  default scope matches the screen. `both` is for organisation-wide tags that mean the same
+  thing in either namespace.
 - Duplicate `(key, value)` with **overlapping scopes** rejected (a `databricks` rule next to
   an `azure` rule on the same key is fine — they can never match the same record);
   conflicting rules resolve deterministically in the facts (alphabetically first
@@ -187,6 +189,11 @@ ad-hoc spend.
 
 - Everything an identity (typically a platform service principal) runs → product. The explicit
   opt-in replacement for the removed implicit runner default. One rule per `user_id`.
+
+**Rule editing (all four rule tables — tag, runner, RG, subscription):** every rule row has an
+in-place **Edit** that re-points it at a different product (note included) — all spend the rule
+carries follows. The rule's key (tag key+value+scope / identity / subscription+RG) is its
+identity and stays fixed; changing it is remove + re-add.
 
 - Every add form reminds stewards the durable fix is tagging at source with `data_product`.
 
@@ -203,9 +210,10 @@ ad-hoc spend.
   inference alike, bills to that product. Composite key `(workspace_id, endpoint_name)` because
   endpoint names are only unique per workspace; `endpoint_name` must match
   `usage_metadata.endpoint_name` byte-for-byte.
-- **Unmapped-endpoints panel**: endpoints whose trailing-30-day spend fell to `UNALLOCATED`
-  (`attribution_method = NONE` in live `cost_fact`), with cost and an inline pre-filled
-  "Map to product" form — the endpoint analogue of the work-queue flow.
+- **Unmapped endpoints live in the work queue** (`/queue?tab=endpoints`): endpoints whose
+  trailing-30-day spend fell to `UNALLOCATED` (`attribution_method = NONE` in live `cost_fact`)
+  are fixed there, inline and in bulk; this page shows a banner with the count/cost pointing at
+  the queue.
 - Add mapping (duplicate key rejected; product must exist — §7.4(b) checked before commit) and
   remove mapping (with a "falls back to UNALLOCATED" warning). Every form reminds stewards the
   durable fix is a `data_product` tag on the endpoint at source.
@@ -238,7 +246,7 @@ derive from `data_product_mapping`. Two views, mirroring the jobs screen:
 | Rule | Mechanism | Analogue on the jobs screen |
 |---|---|---|
 | 1 `TAG` | `data_product` tag on the resource itself — always wins | tag at source |
-| 2 `RESOURCE_MAPPING` | resource bridge: one ARM resource ID → product (tech debt; janitor panel flags rows whose resource is now tagged at source; bulk re-map / bulk delete) | job bridge |
+| 2 `RESOURCE_MAPPING` | resource bridge: one ARM resource ID → product (tech debt; janitor panel flags rows whose resource is now tagged at source; per-row and bulk re-map / delete) | job bridge |
 | 3 `TAG_RULE` | any Azure resource tag `key=value` → product (the UNIFIED `tag_product_mapping`, rules with scope `azure`/`both` — same table as the Databricks tag rules) | tag rule |
 | 4 `RESOURCE_GROUP` | whole (subscription, resource group) → product | dedicated warehouse |
 | 5 `SUBSCRIPTION` | whole subscription → product | runner rule |
@@ -283,19 +291,24 @@ billing Databricks DBU spend at list price × (1 − discount). Applied at prici
 ## 6. Work Queue
 
 `/queue` — the operational heart (Methodology §10.4): unattributed and unmapped cost drivers over
-the trailing 30 days, with a KPI strip (total unallocated $, open item count) and five tabs, each
-row carrying an inline, pre-filled fix form:
+the trailing 30 days across **all three sources**. KPI strip: total unallocated $ (Databricks +
+Azure + AI, each dollar counted once) plus a per-source tile each; the open-item count sits in
+the page subtitle and the per-tab badges. Tabs are grouped **Databricks / Azure / AI**; every row
+carries an inline, pre-filled fix form and every tab has a bulk action:
 
-| Tab | Source (Methodology) | Inline action |
-|---|---|---|
-| Untagged jobs | §7.2 first query | "Map to product" → job bridge insert (+ tag-at-source reminder) |
-| Unknown runners | §7.2 second query | "Add user" → `user_mapping` (user_id read-only, pre-filled) |
-| Unknown workspaces | §7.2 third query | "Add workspace" → `workspace_mapping` |
-| Rogue tags | §7.3 | "Register as product" (key pre-filled = tag value) or flag for tag fix at source |
-| Unassigned warehouses | dedicated-warehouse candidates with idle share | "Assign warehouse" → shared/dedicated upsert |
+| Group | Tab | Source | Inline action (bulk analogue) |
+|---|---|---|---|
+| Databricks | Untagged jobs | §7.2 first query (rows with an endpoint dimension belong to the AI tab) | "Map to product" → job bridge insert (+ tag-at-source reminder) |
+| Databricks | Unknown runners | §7.2 second query | "Add user" → `user_mapping` (user_id read-only, pre-filled) |
+| Databricks | Unknown workspaces | §7.2 third query | "Add workspace" → `workspace_mapping` (bulk: names default to the ID) |
+| Databricks | Rogue tags | §7.3 | "Register as product" (key pre-filled = tag value) or — for typos — "Map via tag rule" (`data_product=<mis-tag>` → product, scope databricks) |
+| Databricks | Unassigned warehouses | dedicated-warehouse candidates with idle share | "Assign warehouse" → shared/dedicated upsert |
+| Azure | Unmatched resources | `azure_cost_fact` `NONE` rows | "Map to product" → resource bridge insert; RG/subscription rules stay on `/admin/azure` |
+| AI | Unmapped endpoints | endpoint spend fallen to `UNALLOCATED` (was the `/admin/endpoints` panel) | "Map endpoint" → endpoint bridge; user-first reminder links the runners tab |
 
-Fixes affect **live** views immediately (page states this); published months never change. Each
-tab has a CSV download. Successful fixes remove the row from the queue.
+Queue readers are uncapped, so badges and cost tiles are honest for backlogs of any size (the
+page paginates). Fixes affect **live** views immediately (page states this); published months
+never change. Each tab has a CSV download. Successful fixes remove the row from the queue.
 
 ---
 
@@ -352,8 +365,11 @@ as every other report (so AI figures always reconcile with the monthly chargebac
 - **Serving-endpoints table** from live `cost_fact`: endpoint × offering type × product × desk
   with attribution badge, DBUs, cost, MoM Δ ("new" = no spend last month; desk-split endpoints
   show "—" to avoid double-counting) and share of AI spend; rows without an endpoint dimension
-  (vector search, training) group under "(no endpoint)"; CSV download and a pointer to
-  `/admin/endpoints` for unallocated endpoints.
+  (vector search, training) group under "(no endpoint)"; CSV download. **Stewards get an
+  inline Fix column** on unallocated rows offering exactly the action(s) that apply — "Map
+  runner" (user-first, rule 0) when the slice carries a run-as identity, "Map endpoint"
+  (bridge, rule 4b) when it has an endpoint dimension; bulk fixes live in the work queue's
+  AI tab.
 - A visible **freshness note**: `system.billing.usage` lags real usage by ~1–2 h (no official
   SLA) and the billing pipeline emits hourly aggregates before DBUs appear in the system
   tables — the current day's AI spend is always incomplete. Month/mode picker as everywhere;

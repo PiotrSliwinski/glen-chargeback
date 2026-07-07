@@ -76,6 +76,31 @@ export async function bulkDeleteAzureResourceMappingsAction(
   });
 }
 
+const BulkMapResources = z.object({ data_product: z.string().min(1), note: optionalText });
+
+/** Work-queue bulk fix: NEW bridge rows for unmatched resources (vs. re-mapping existing ones). */
+export async function bulkMapAzureResourcesAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const ids = [...new Set(formList(formData, "keys"))];
+    const input = parseForm(formData, BulkMapResources);
+    await assertProductExists(input.data_product);
+    const existing = await dal.listAzureResourceMappings();
+    const dupes = ids.filter((id) => existing.some((m) => m.resource_id === lower(id)));
+    if (dupes.length > 0) {
+      throw new DomainError(
+        "DUPLICATE_KEY",
+        `already mapped: resource${dupes.length > 1 ? "s" : ""} ${dupes.join(", ")}`,
+      );
+    }
+    await dal.insertAzureResourceMappings(ids, input.data_product, input.note, actor);
+    invalidateAzure();
+    return `${ids.length} resource${ids.length > 1 ? "s" : ""} mapped to '${input.data_product}'. Reminder: the durable fix is a data_product tag on each resource.`;
+  });
+}
+
 const BulkRemapResources = z.object({ data_product: z.string().min(1), note: optionalText });
 
 export async function bulkRemapAzureResourcesAction(
@@ -139,6 +164,46 @@ export async function addAzureRgRuleAction(
   });
 }
 
+const EditRgRule = z.object({
+  subscription_id: z.string().min(1),
+  resource_group: z.string().min(1),
+  data_product: z.string().min(1),
+  note: optionalText,
+});
+
+/** Re-point an RG rule at a new product; subscription + RG stay fixed. */
+export async function editAzureRgRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const input = parseForm(formData, EditRgRule);
+    await assertProductExists(input.data_product);
+    const existing = await dal.listAzureRgRules();
+    if (
+      !existing.some(
+        (r) =>
+          r.subscription_id === lower(input.subscription_id) &&
+          r.resource_group === lower(input.resource_group),
+      )
+    ) {
+      throw new DomainError(
+        "NOT_FOUND",
+        `no rule for resource group '${input.resource_group}' in that subscription`,
+      );
+    }
+    await dal.updateAzureRgRule(
+      input.subscription_id,
+      input.resource_group,
+      input.data_product,
+      input.note,
+      actor,
+    );
+    invalidateAzure();
+    return `Rule updated: resource group '${input.resource_group}' now routes to '${input.data_product}' — all cost it carries follows.`;
+  });
+}
+
 const DeleteRgRule = z.object({
   subscription_id: z.string().min(1),
   resource_group: z.string().min(1),
@@ -181,6 +246,38 @@ export async function addAzureSubscriptionRuleAction(
     await dal.insertAzureSubscriptionRule(input, actor);
     invalidateAzure();
     return `Rule created: everything in subscription ${lower(input.subscription_id)} → '${input.data_product}'.`;
+  });
+}
+
+const EditSubscriptionRule = z.object({
+  subscription_id: z.string().min(1),
+  data_product: z.string().min(1),
+  note: optionalText,
+});
+
+/** Re-point a subscription rule at a new product; the subscription stays fixed. */
+export async function editAzureSubscriptionRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const input = parseForm(formData, EditSubscriptionRule);
+    await assertProductExists(input.data_product);
+    const existing = await dal.listAzureSubscriptionRules();
+    if (!existing.some((r) => r.subscription_id === lower(input.subscription_id))) {
+      throw new DomainError(
+        "NOT_FOUND",
+        `no rule for subscription '${input.subscription_id}'`,
+      );
+    }
+    await dal.updateAzureSubscriptionRule(
+      input.subscription_id,
+      input.data_product,
+      input.note,
+      actor,
+    );
+    invalidateAzure();
+    return `Rule updated: subscription ${lower(input.subscription_id)} now routes to '${input.data_product}'.`;
   });
 }
 

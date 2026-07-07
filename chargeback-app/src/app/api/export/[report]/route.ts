@@ -10,13 +10,14 @@ import {
   getPublishedMonths,
 } from "@/dal/reports";
 import { listCatalogue } from "@/dal/mappings";
-import { getAiEndpointUsage } from "@/dal/ai";
+import { getAiEndpointUsage, getUnmappedEndpoints } from "@/dal/ai";
 import { getAzureMonthResources } from "@/dal/azure";
 import {
   getRogueTags,
   getUnassignedWarehouses,
   getUnknownRunners,
   getUnknownWorkspaces,
+  getUnmatchedAzureResources,
   getUntaggedJobs,
 } from "@/dal/workQueue";
 import type { ReportMode } from "@/dal/types";
@@ -76,6 +77,8 @@ const REPORTS: Record<string, { role: Role; fetch: Fetcher }> = {
   "queue-workspaces": { role: "steward", fetch: () => getUnknownWorkspaces() },
   "queue-tags": { role: "steward", fetch: () => getRogueTags() },
   "queue-warehouses": { role: "steward", fetch: () => getUnassignedWarehouses() },
+  "queue-azure": { role: "steward", fetch: () => getUnmatchedAzureResources() },
+  "queue-endpoints": { role: "steward", fetch: () => getUnmappedEndpoints() },
 };
 
 export async function GET(

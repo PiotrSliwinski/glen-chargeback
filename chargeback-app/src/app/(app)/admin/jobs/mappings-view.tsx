@@ -13,11 +13,13 @@ import {
   bulkRemapJobsAction,
   deleteJobMappingAction,
   deleteRunnerRuleAction,
+  editRunnerRuleAction,
   mapJobAction,
 } from "@/actions/mappings";
 import { TagRulesCard } from "@/components/tag-rules-card";
+import { JanitorCard } from "@/components/janitor-card";
 import { scopeCovers } from "@/lib/tag-rules";
-import { ArrowRightLeft, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Plus, Trash2 } from "lucide-react";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import {
@@ -101,9 +103,9 @@ export async function MappingsView({
           hint={`tag rules covering Databricks · ${productsReferenced} product(s) referenced by bridge rows`}
         />
         <KpiTile
-          label="Untagged jobs 30d"
-          value={String(untaggedJobs.length)}
-          hint="in the work queue, waiting for a mapping"
+          label="Unallocated job cost 30d"
+          value={fmtMoney(untaggedJobs.reduce((s, r) => s + r.unallocated_cost_30d, 0))}
+          hint={`${untaggedJobs.length} untagged job${untaggedJobs.length === 1 ? "" : "s"} in the work queue`}
           tone={untaggedJobs.length > 0 ? "warn" : "good"}
         />
       </div>
@@ -137,87 +139,28 @@ export async function MappingsView({
         </div>
       </div>
 
-      {taggedJobs.length > 0 && (
-        <Card className="mb-4 ring-emerald-200 bg-emerald-50/50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-1.5 text-emerald-800">
-              <Sparkles className="size-4" aria-hidden /> Safe to remove — now tagged at source
-            </CardTitle>
-            <CardDescription className="text-xs text-emerald-700">
-              These bridge rows point at jobs that produced TAG-attributed cost in the last 30
-              days: the tag has landed, the bridge is redundant. Removing them shrinks this table
-              toward its goal state (empty). The tag keeps winning either way — it is rule 1 of
-              the waterfall.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="no-print mb-3">
-              <EditDialog
-                trigger={
-                  <Button variant="outline" size="sm">
-                    <Trash2 aria-hidden /> Remove all {taggedJobs.length} redundant bridge
-                    {taggedJobs.length > 1 ? "s" : ""}
-                  </Button>
-                }
-                title={`Remove ${taggedJobs.length} redundant bridge mapping${taggedJobs.length > 1 ? "s" : ""}?`}
-                description="Every listed job produced TAG-attributed cost in the last 30 days — the tag keeps winning either way. This just prunes the redundant rows."
-              >
-                <ActionForm action={bulkDeleteJobMappingsAction} submitLabel="Remove all listed">
-                  {taggedJobs.map((j) => (
-                    <input
-                      key={`${j.workspace_id}|${j.job_id}`}
-                      type="hidden"
-                      name="keys"
-                      value={`${j.workspace_id}|${j.job_id}`}
-                    />
-                  ))}
-                </ActionForm>
-              </EditDialog>
-            </div>
-            <Table className="max-w-2xl">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Workspace</TableHead>
-                  <TableHead>Job ID</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead className="text-right">TAG cost 30d</TableHead>
-                  <TableHead>
-                    <span className="sr-only">Action</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {taggedJobs.map((j) => (
-                  <TableRow key={`${j.workspace_id}|${j.job_id}`}>
-                    <TableCell>{wsName.get(j.workspace_id) ?? j.workspace_id}</TableCell>
-                    <TableCell className="font-mono text-xs">{j.job_id}</TableCell>
-                    <TableCell className="font-mono text-xs">{j.data_product}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {fmtMoney(j.tagged_cost_30d)}
-                    </TableCell>
-                    <TableCell>
-                      <EditDialog
-                        trigger={<RowAction danger>Remove bridge</RowAction>}
-                        title={`Remove redundant bridge for job ${j.job_id}?`}
-                        description="This job produced TAG-attributed cost in the last 30 days — the tag keeps winning either way. This just prunes the redundant row."
-                      >
-                        <ActionForm
-                          action={deleteJobMappingAction}
-                          submitLabel="Remove bridge"
-                          danger
-                        >
-                          <input type="hidden" name="workspace_id" value={j.workspace_id} />
-                          <input type="hidden" name="job_id" value={j.job_id} />
-                        </ActionForm>
-                      </EditDialog>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
+      <JanitorCard
+        noun="job"
+        headers={["Workspace", "Job ID"]}
+        items={taggedJobs.map((j) => ({
+          key: `${j.workspace_id}|${j.job_id}`,
+          dialogLabel: `job ${j.job_id}`,
+          cells: [
+            wsName.get(j.workspace_id) ?? j.workspace_id,
+            <span key="id" className="font-mono text-xs">
+              {j.job_id}
+            </span>,
+          ],
+          hidden: [
+            { name: "workspace_id", value: j.workspace_id },
+            { name: "job_id", value: j.job_id },
+          ],
+          data_product: j.data_product,
+          tagged_cost_30d: j.tagged_cost_30d,
+        }))}
+        deleteAction={deleteJobMappingAction}
+        bulkDeleteAction={bulkDeleteJobMappingsAction}
+      />
 
       <BulkSelect values={pageRows.map((r) => `${r.workspace_id}|${r.job_id}`)}>
       <Card>
@@ -281,6 +224,31 @@ export async function MappingsView({
                       >
                         Attribution
                       </Link>
+                      <EditDialog
+                        trigger={<RowAction>Re-map</RowAction>}
+                        title={`Re-map job ${r.job_id}`}
+                        description="Points this bridge row at a different product. Reminder: the durable fix is tagging the job at source."
+                      >
+                        <ActionForm action={bulkRemapJobsAction} submitLabel="Re-map">
+                          <input
+                            type="hidden"
+                            name="keys"
+                            value={`${r.workspace_id}|${r.job_id}`}
+                          />
+                          <SelectField
+                            label="Data product"
+                            name="data_product"
+                            defaultValue={r.data_product}
+                            options={productOptions}
+                          />
+                          <Field
+                            label="Note (why re-mapped)"
+                            name="note"
+                            defaultValue={r.note ?? ""}
+                            required={false}
+                          />
+                        </ActionForm>
+                      </EditDialog>
                       <EditDialog
                         trigger={<RowAction danger>Remove</RowAction>}
                         title={`Remove mapping for job ${r.job_id}?`}
@@ -403,15 +371,38 @@ export async function MappingsView({
                       {r.mapped_at && <> · {r.mapped_at.slice(0, 10)}</>}
                     </TableCell>
                     <TableCell>
-                      <EditDialog
-                        trigger={<RowAction danger>Remove</RowAction>}
-                        title={`Remove rule for ${r.user_id}?`}
-                        description="The runner's job spend stops attributing here — jobs never fall back to the runner's desk."
-                      >
-                        <ActionForm action={deleteRunnerRuleAction} submitLabel="Remove rule" danger>
-                          <input type="hidden" name="user_id" value={r.user_id} />
-                        </ActionForm>
-                      </EditDialog>
+                      <div className="flex items-start gap-4">
+                        <EditDialog
+                          trigger={<RowAction>Edit</RowAction>}
+                          title={`Edit rule for ${r.user_id}`}
+                          description="Points the rule at a different product — all spend it carries follows. The identity stays fixed; to change it, remove and re-add."
+                        >
+                          <ActionForm action={editRunnerRuleAction} submitLabel="Save rule">
+                            <input type="hidden" name="user_id" value={r.user_id} />
+                            <SelectField
+                              label="Data product"
+                              name="data_product"
+                              defaultValue={r.data_product}
+                              options={productOptions}
+                            />
+                            <Field
+                              label="Note (why this rule)"
+                              name="note"
+                              defaultValue={r.note ?? ""}
+                              required={false}
+                            />
+                          </ActionForm>
+                        </EditDialog>
+                        <EditDialog
+                          trigger={<RowAction danger>Remove</RowAction>}
+                          title={`Remove rule for ${r.user_id}?`}
+                          description="The runner's job spend stops attributing here — jobs never fall back to the runner's desk."
+                        >
+                          <ActionForm action={deleteRunnerRuleAction} submitLabel="Remove rule" danger>
+                            <input type="hidden" name="user_id" value={r.user_id} />
+                          </ActionForm>
+                        </EditDialog>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -114,6 +114,50 @@ export async function addTagRuleAction(
   });
 }
 
+const EditTagRule = z.object({
+  tag_key: z.string().min(1),
+  tag_value: z.string().min(1),
+  scope: z.enum(["databricks", "azure", "both"]),
+  data_product: z.string().min(1),
+  note: optionalText,
+});
+
+/** Re-point a rule at a new product; key, value and scope are its identity and stay fixed. */
+export async function editTagRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const input = parseForm(formData, EditTagRule);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listTagRules();
+    if (
+      !existing.some(
+        (r) =>
+          r.tag_key === input.tag_key &&
+          r.tag_value === input.tag_value &&
+          r.scope === input.scope,
+      )
+    ) {
+      throw new DomainError(
+        "NOT_FOUND",
+        `no ${SCOPE_LABELS[input.scope]}-scoped rule for tag ${input.tag_key}=${input.tag_value}`,
+      );
+    }
+    await dal.updateTagRule(
+      input.tag_key,
+      input.tag_value,
+      input.scope,
+      input.data_product,
+      input.note,
+      actor,
+    );
+    invalidateMappings();
+    if (scopeCovers(input.scope, "azure")) updateTag("azure");
+    return `Rule updated: tag ${input.tag_key}=${input.tag_value} now routes to '${input.data_product}' — all spend it carries follows.`;
+  });
+}
+
 const DeleteTagRule = z.object({
   tag_key: z.string().min(1),
   tag_value: z.string().min(1),
@@ -156,6 +200,30 @@ export async function addRunnerRuleAction(
     await dal.insertRunnerRule(input, actor);
     invalidateMappings();
     return `Rule created: everything '${input.user_id}' runs → '${input.data_product}'.`;
+  });
+}
+
+const EditRunnerRule = z.object({
+  user_id: z.string().min(1),
+  data_product: z.string().min(1),
+  note: optionalText,
+});
+
+/** Re-point a runner rule at a new product; the identity stays fixed. */
+export async function editRunnerRuleAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const input = parseForm(formData, EditRunnerRule);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listRunnerRules();
+    if (!existing.some((r) => r.user_id === input.user_id)) {
+      throw new DomainError("NOT_FOUND", `no rule for runner '${input.user_id}'`);
+    }
+    await dal.updateRunnerRule(input.user_id, input.data_product, input.note, actor);
+    invalidateMappings();
+    return `Rule updated: everything '${input.user_id}' runs now routes to '${input.data_product}'.`;
   });
 }
 
@@ -391,6 +459,72 @@ export async function bulkRemapJobsAction(
     await dal.remapJobs(keys, input.data_product, input.note, actor);
     invalidateMappings();
     return `${keys.length} job${keys.length > 1 ? "s" : ""} re-mapped to '${input.data_product}'. Reminder: the durable fix is tagging at source.`;
+  });
+}
+
+/**
+ * Endpoint keys travel as 'workspace_id|endpoint_name' — same shape as React
+ * keys. Deduped for the same reason as jobs: one endpoint, one bridge row.
+ */
+function parseEndpointKeys(formData: FormData): { workspace_id: string; endpoint_name: string }[] {
+  return [...new Set(formList(formData, "keys"))].map((key) => {
+    const [workspace_id, endpoint_name, ...rest] = key.split("|");
+    if (!workspace_id || !endpoint_name || rest.length > 0) {
+      throw new DomainError("VALIDATION", `malformed endpoint key '${key}'`);
+    }
+    return { workspace_id, endpoint_name };
+  });
+}
+
+const BulkMapEndpoints = z.object({ data_product: z.string().min(1), note: optionalText });
+
+/** Work-queue bulk fix: NEW bridge rows for unmapped serving endpoints. */
+export async function bulkMapEndpointsAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const keys = parseEndpointKeys(formData);
+    const input = parseForm(formData, BulkMapEndpoints);
+    await assertProductExists(input.data_product); // §7.4(b) before commit
+    const existing = await dal.listEndpointMappings();
+    const dupes = keys.filter((k) =>
+      existing.some(
+        (e) => e.workspace_id === k.workspace_id && e.endpoint_name === k.endpoint_name,
+      ),
+    );
+    if (dupes.length > 0) {
+      throw new DomainError(
+        "DUPLICATE_KEY",
+        `already mapped: endpoint${dupes.length > 1 ? "s" : ""} ${dupes.map((k) => k.endpoint_name).join(", ")}`,
+      );
+    }
+    await dal.insertEndpointMappings(keys, input.data_product, input.note, actor);
+    invalidateMappings();
+    return `${keys.length} endpoint${keys.length > 1 ? "s" : ""} mapped to '${input.data_product}' — their serving spend with no attributable user routes there. Reminder: the durable fix is tagging each endpoint at source.`;
+  });
+}
+
+/**
+ * Work-queue bulk fix: register unknown workspaces. Friendly names default to
+ * the raw workspace ID (refine later under Reference data → Workspaces) —
+ * attribution is unaffected either way.
+ */
+export async function bulkAddWorkspacesAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const ids = [...new Set(formList(formData, "workspace_ids"))];
+    const existing = new Map((await dal.listWorkspaces()).map((w) => [w.workspace_id, w]));
+    for (const id of ids) {
+      await dal.upsertWorkspace({
+        workspace_id: id,
+        workspace_name: existing.get(id)?.workspace_name ?? id,
+      });
+    }
+    invalidateMappings();
+    return `${ids.length} workspace${ids.length > 1 ? "s" : ""} registered. Friendly names default to the workspace ID — refine them under Reference data → Workspaces.`;
   });
 }
 
