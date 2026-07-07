@@ -1,5 +1,5 @@
 import * as mappings from "@/dal/mappings";
-import { getIntegrityViolations } from "@/dal/health";
+import { getIntegrityViolationsLive } from "@/dal/health";
 import { DomainError } from "@/services/errors";
 
 /**
@@ -60,7 +60,7 @@ async function activeRows(product: string) {
 }
 
 async function postCheck(product: string): Promise<void> {
-  const violations = await getIntegrityViolations(product);
+  const violations = await getIntegrityViolationsLive(product);
   if (violations.length > 0) {
     throw new DomainError(
       "CHECKS_FAILED",

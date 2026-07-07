@@ -132,8 +132,26 @@ export async function getAzureReconciliation(): Promise<ReconRow[]> {
   );
 }
 
-/** §7.4 integrity checks; optionally scoped to one product (post-condition use). */
+/**
+ * §7.4 integrity checks, cached like every other warehouse read. Both tags
+ * matter: catalogue mutations expire 'health', bridge-mapping mutations
+ * expire 'mappings', and the global "Refresh data" button expires both.
+ */
 export async function getIntegrityViolations(product?: string): Promise<IntegrityViolation[]> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("health", "mappings");
+  return getIntegrityViolationsLive(product);
+}
+
+/**
+ * Live §7.4 scan; optionally scoped to one product. The write-path
+ * post-condition (productCatalogue.postCheck) calls this directly — it must
+ * see the row written a moment ago, never a cached generation.
+ */
+export async function getIntegrityViolationsLive(
+  product?: string,
+): Promise<IntegrityViolation[]> {
   if (env.DAL_MOCK) return mockIntegrity(product);
 
   const violations: IntegrityViolation[] = [];
