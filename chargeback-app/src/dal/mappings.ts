@@ -1,7 +1,7 @@
 import { cacheLife, cacheTag } from "next/cache";
 import { z } from "zod";
 import { env } from "@/lib/env";
-import { exec, query, T } from "@/dal/client";
+import { exec, query, T, type SqlParam } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
 import { zDate, zDateOrNull, zId, zNum, zStr, zStrOrNull, zTimestampOrNull } from "@/dal/parse";
 import type {
@@ -727,30 +727,46 @@ export async function deleteEndpointMapping(
 }
 
 export async function upsertUser(row: UserMappingRow): Promise<void> {
+  return upsertUsers([row]);
+}
+
+export async function upsertUsers(rows: UserMappingRow[]): Promise<void> {
+  if (rows.length === 0) return;
   if (env.DAL_MOCK) {
-    const existing = mockStore.users.find((u) => u.user_id === row.user_id);
-    if (existing) {
-      existing.user_name = row.user_name;
-      existing.desk = row.desk;
-    } else {
-      mockStore.users.push({ ...row });
+    for (const row of rows) {
+      const existing = mockStore.users.find((u) => u.user_id === row.user_id);
+      if (existing) {
+        existing.user_name = row.user_name;
+        existing.desk = row.desk;
+      } else {
+        mockStore.users.push({ ...row });
+      }
     }
+    const ids = new Set(rows.map((r) => r.user_id));
     mockStore.queueUnknownRunners = mockStore.queueUnknownRunners.filter(
-      (q) => q.runner !== row.user_id,
+      (q) => !ids.has(q.runner),
     );
-    mockStore.unmappedRunners = mockStore.unmappedRunners.filter(
-      (g) => g.runner !== row.user_id,
-    );
+    mockStore.unmappedRunners = mockStore.unmappedRunners.filter((g) => !ids.has(g.runner));
     return;
   }
+  // One MERGE for the whole batch: every statement is a full warehouse round
+  // trip (fresh session + Delta commit), so bulk desk moves must not loop
+  // row-by-row.
+  const values = rows.map((_, i) => `(:user_id_${i}, :user_name_${i}, :desk_${i})`).join(", ");
+  const params: Record<string, SqlParam> = {};
+  rows.forEach((r, i) => {
+    params[`user_id_${i}`] = r.user_id;
+    params[`user_name_${i}`] = r.user_name;
+    params[`desk_${i}`] = r.desk;
+  });
   await exec(
     `MERGE INTO ${T("user_mapping")} t
-     USING (SELECT :user_id AS user_id) s
+     USING (SELECT * FROM (VALUES ${values}) AS v(user_id, user_name, desk)) s
      ON t.user_id = s.user_id
-     WHEN MATCHED THEN UPDATE SET user_name = :user_name, desk = :desk
+     WHEN MATCHED THEN UPDATE SET user_name = s.user_name, desk = s.desk
      WHEN NOT MATCHED THEN
-       INSERT (user_id, user_name, desk) VALUES (:user_id, :user_name, :desk)`,
-    { ...row },
+       INSERT (user_id, user_name, desk) VALUES (s.user_id, s.user_name, s.desk)`,
+    params,
   );
 }
 

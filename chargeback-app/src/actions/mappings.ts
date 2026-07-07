@@ -8,9 +8,15 @@ import * as dal from "@/dal/mappings";
 import { assertProductExists } from "@/services/productCatalogue";
 import { DomainError } from "@/services/errors";
 
-function invalidateMappings() {
+function invalidateMappings(opts: { queueUnchanged?: boolean } = {}) {
   updateTag("mappings");
-  updateTag("queue");
+  // The server action's response re-renders the current page, so every tag
+  // expired here is paid for inline before the dialog reports success. The
+  // "queue" queries are 30-day cost_fact scans that read only user_mapping
+  // membership and display names — a desk-only move of an already-mapped
+  // runner cannot change them, so those actions skip the tag and save the
+  // most expensive inline re-run.
+  if (!opts.queueUnchanged) updateTag("queue");
   updateTag("reports-live");
   updateTag("health");
 }
@@ -210,8 +216,11 @@ export async function upsertUserAction(
 ): Promise<ActionResult> {
   return runAction("steward", async () => {
     const input = parseForm(formData, AddUser);
+    // desk-only move: membership and display names stay as the queue saw them
+    // (queue surfaces runner_name, so a rename must still expire it)
+    const prev = (await dal.listUsers()).find((u) => u.user_id === input.user_id);
     await dal.upsertUser(input);
-    invalidateMappings();
+    invalidateMappings({ queueUnchanged: !!prev && prev.user_name === input.user_name });
     return `Runner '${input.user_id}' mapped to desk ${input.desk}.`;
   });
 }
@@ -412,13 +421,13 @@ export async function bulkAddUsersAction(
     const ids = [...new Set(formList(formData, "user_ids"))];
     const input = parseForm(formData, BulkAddUsers);
     const existing = new Map((await dal.listUsers()).map((u) => [u.user_id, u]));
-    for (const id of ids) {
-      await dal.upsertUser({
+    await dal.upsertUsers(
+      ids.map((id) => ({
         user_id: id,
         user_name: existing.get(id)?.user_name ?? id,
         desk: input.desk,
-      });
-    }
+      })),
+    );
     invalidateMappings();
     return `${ids.length} runner${ids.length > 1 ? "s" : ""} mapped to desk ${input.desk}. Display names default to the raw identity — refine them under Reference data → Users.`;
   });
@@ -438,11 +447,13 @@ export async function bulkSetUserDeskAction(
     if (missing.length > 0) {
       throw new DomainError("NOT_FOUND", `not in user_mapping: ${missing.join(", ")}`);
     }
-    for (const id of ids) {
-      const row = existing.get(id)!;
-      await dal.upsertUser({ user_id: id, user_name: row.user_name, desk: input.desk });
-    }
-    invalidateMappings();
+    await dal.upsertUsers(
+      ids.map((id) => {
+        const row = existing.get(id)!;
+        return { user_id: id, user_name: row.user_name, desk: input.desk };
+      }),
+    );
+    invalidateMappings({ queueUnchanged: true });
     return `${ids.length} runner${ids.length > 1 ? "s" : ""} moved to desk ${input.desk}. Live AD_HOC spend re-routes from now on; published months are unaffected.`;
   });
 }
