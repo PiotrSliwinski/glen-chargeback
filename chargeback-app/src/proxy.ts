@@ -23,7 +23,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except auth endpoints, the login page, and static assets.
-    "/((?!api/auth|login|_next/static|_next/image|favicon.ico).*)",
+    // Everything except auth endpoints, the boot-warm endpoint (guarded by
+    // its own process-local token), the login page, and static assets.
+    "/((?!api/auth|api/warm|login|_next/static|_next/image|favicon.ico).*)",
   ],
 };
