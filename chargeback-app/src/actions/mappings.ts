@@ -1,6 +1,6 @@
 "use server";
 
-import { updateTag } from "next/cache";
+import { revalidateTag, updateTag } from "next/cache";
 import { z } from "zod";
 import type { ActionResult } from "@/lib/action-result";
 import { formList, optionalText, parseForm, runAction } from "@/actions/run";
@@ -8,15 +8,22 @@ import * as dal from "@/dal/mappings";
 import { assertProductExists } from "@/services/productCatalogue";
 import { DomainError } from "@/services/errors";
 
-function invalidateMappings(opts: { queueUnchanged?: boolean } = {}) {
+function invalidateMappings(opts: { queue?: "keep" | "background" } = {}) {
   updateTag("mappings");
   // The server action's response re-renders the current page, so every tag
-  // expired here is paid for inline before the dialog reports success. The
-  // "queue" queries are 30-day cost_fact scans that read only user_mapping
-  // membership and display names — a desk-only move of an already-mapped
-  // runner cannot change them, so those actions skip the tag and save the
-  // most expensive inline re-run.
-  if (!opts.queueUnchanged) updateTag("queue");
+  // expired with updateTag is paid for inline before the dialog reports
+  // success — and the "queue" queries are 30-day cost_fact scans. Actions
+  // pick per mutation:
+  //  - default: expire inline (read-your-writes — e.g. a mapped job must
+  //    leave the untagged-jobs list before the dialog closes)
+  //  - "keep": a desk-only move of an already-mapped runner cannot change
+  //    any queue query, so keep the cache
+  //  - "background": user membership changes — the unknown-runners list
+  //    already updates instantly via its "mappings" tag, so the deep scans
+  //    serve stale and refresh in the background instead of freezing the
+  //    dialog
+  if (opts.queue === "background") revalidateTag("queue", "max");
+  else if (opts.queue !== "keep") updateTag("queue");
   updateTag("reports-live");
   updateTag("health");
 }
@@ -217,10 +224,12 @@ export async function upsertUserAction(
   return runAction("steward", async () => {
     const input = parseForm(formData, AddUser);
     // desk-only move: membership and display names stay as the queue saw them
-    // (queue surfaces runner_name, so a rename must still expire it)
+    // (queue surfaces runner_name, so a rename must still refresh it)
     const prev = (await dal.listUsers()).find((u) => u.user_id === input.user_id);
     await dal.upsertUser(input);
-    invalidateMappings({ queueUnchanged: !!prev && prev.user_name === input.user_name });
+    invalidateMappings({
+      queue: prev && prev.user_name === input.user_name ? "keep" : "background",
+    });
     return `Runner '${input.user_id}' mapped to desk ${input.desk}.`;
   });
 }
@@ -240,7 +249,7 @@ export async function deleteUserAction(
       throw new DomainError("NOT_FOUND", `runner '${input.user_id}' is not in user_mapping`);
     }
     await dal.deleteUser(input.user_id);
-    invalidateMappings();
+    invalidateMappings({ queue: "background" });
     return `Runner '${input.user_id}' removed. Their future ad-hoc spend loses its desk and will surface in the work queue.`;
   });
 }
@@ -428,7 +437,7 @@ export async function bulkAddUsersAction(
         desk: input.desk,
       })),
     );
-    invalidateMappings();
+    invalidateMappings({ queue: "background" });
     return `${ids.length} runner${ids.length > 1 ? "s" : ""} mapped to desk ${input.desk}. Display names default to the raw identity — refine them under Reference data → Users.`;
   });
 }
@@ -453,7 +462,7 @@ export async function bulkSetUserDeskAction(
         return { user_id: id, user_name: row.user_name, desk: input.desk };
       }),
     );
-    invalidateMappings({ queueUnchanged: true });
+    invalidateMappings({ queue: "keep" });
     return `${ids.length} runner${ids.length > 1 ? "s" : ""} moved to desk ${input.desk}. Live AD_HOC spend re-routes from now on; published months are unaffected.`;
   });
 }
@@ -469,10 +478,8 @@ export async function bulkDeleteUsersAction(
     if (missing.length > 0) {
       throw new DomainError("NOT_FOUND", `not in user_mapping: ${missing.join(", ")}`);
     }
-    for (const id of ids) {
-      await dal.deleteUser(id);
-    }
-    invalidateMappings();
+    await dal.deleteUsers(ids);
+    invalidateMappings({ queue: "background" });
     return `${ids.length} runner${ids.length > 1 ? "s" : ""} removed. Their future ad-hoc spend loses its desk and surfaces in the work queue.`;
   });
 }

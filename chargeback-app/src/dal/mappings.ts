@@ -771,11 +771,26 @@ export async function upsertUsers(rows: UserMappingRow[]): Promise<void> {
 }
 
 export async function deleteUser(user_id: string): Promise<void> {
+  return deleteUsers([user_id]);
+}
+
+export async function deleteUsers(user_ids: string[]): Promise<void> {
+  if (user_ids.length === 0) return;
   if (env.DAL_MOCK) {
-    mockStore.users = mockStore.users.filter((u) => u.user_id !== user_id);
+    const ids = new Set(user_ids);
+    mockStore.users = mockStore.users.filter((u) => !ids.has(u.user_id));
     return;
   }
-  await exec(`DELETE FROM ${T("user_mapping")} WHERE user_id = :user_id`, { user_id });
+  // One DELETE for the whole batch — every statement is a full warehouse
+  // round trip, so bulk removals must not loop row-by-row.
+  const params: Record<string, SqlParam> = {};
+  user_ids.forEach((id, i) => {
+    params[`user_id_${i}`] = id;
+  });
+  await exec(
+    `DELETE FROM ${T("user_mapping")} WHERE user_id IN (${user_ids.map((_, i) => `:user_id_${i}`).join(", ")})`,
+    params,
+  );
 }
 
 export async function upsertWorkspace(row: WorkspaceMappingRow): Promise<void> {
