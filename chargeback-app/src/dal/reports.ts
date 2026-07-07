@@ -266,7 +266,7 @@ export async function getProductDetail(month: string, product: string): Promise<
 /** Desk invoice — published snapshot only (Methodology §9: desks are invoiced from the snapshot). */
 export async function getDeskInvoice(month: string, desk: string): Promise<InvoiceRow[]> {
   "use cache";
-  cacheLife("hours");
+  cacheLife("warehouse");
   cacheTag("reports-published");
 
   if (env.DAL_MOCK) {

@@ -19,7 +19,9 @@ import { getSession } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { atLeast } from "@/lib/rbac";
 import { NavLinks, type NavItem } from "@/components/nav-links";
+import { RefreshDataButton } from "@/components/refresh-data";
 import { Badge } from "@/components/ui/badge";
+import { getDataRefreshedAt } from "@/dal/stamp";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -31,6 +33,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <Suspense fallback={null}>
             <RoleNav orientation="vertical" />
+          </Suspense>
+        </div>
+        <div className="border-t px-4 py-3">
+          <Suspense fallback={null}>
+            <DataFreshness />
           </Suspense>
         </div>
         <div className="border-t px-4 py-3">
@@ -48,7 +55,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <RoleNav />
               </Suspense>
             </div>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-1">
+              <Suspense fallback={null}>
+                <DataFreshness compact />
+              </Suspense>
               <Suspense fallback={null}>
                 <UserChip />
               </Suspense>
@@ -109,6 +119,11 @@ async function RoleNav({ orientation = "horizontal" }: { orientation?: "horizont
       )}
     </>
   );
+}
+
+async function DataFreshness({ compact = false }: { compact?: boolean }) {
+  const refreshedAt = await getDataRefreshedAt();
+  return <RefreshDataButton refreshedAt={refreshedAt} compact={compact} />;
 }
 
 async function UserChip() {

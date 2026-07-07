@@ -11,14 +11,15 @@ import type { HealthReport, IntegrityViolation, ReconRow } from "@/dal/types";
  *
  * NOTE: the reconciliation query scans up to a year of system.billing.usage
  * and can run for minutes on a cold warehouse. It is cached ('health' tag,
- * hours lifetime) and refreshed explicitly from the health page. A future
+ * warehouse lifetime) and refreshed explicitly from the health page or the
+ * global "Refresh data" button. A future
  * iteration should move it to a scheduled Databricks Workflow writing into
  * an app_health_runs table (see implementation guide §11.1).
  */
 
 export async function getReconciliation(): Promise<ReconRow[]> {
   "use cache";
-  cacheLife("hours");
+  cacheLife("warehouse");
   cacheTag("health");
 
   if (env.DAL_MOCK) return [...mockStore.recon].sort((a, b) => b.billing_month.localeCompare(a.billing_month));
@@ -91,7 +92,7 @@ export async function getReconciliation(): Promise<ReconRow[]> {
  */
 export async function getAzureReconciliation(): Promise<ReconRow[]> {
   "use cache";
-  cacheLife("hours");
+  cacheLife("warehouse");
   cacheTag("health");
 
   if (env.DAL_MOCK) {

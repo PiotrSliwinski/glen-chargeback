@@ -19,7 +19,7 @@ import type {
 
 export async function getUntaggedJobs(): Promise<UntaggedJobRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   if (env.DAL_MOCK) return [...mockStore.queueUntaggedJobs];
   return query(
@@ -45,7 +45,7 @@ export async function getUntaggedJobs(): Promise<UntaggedJobRow[]> {
 
 export async function getUnknownRunners(): Promise<UnknownRunnerRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   if (env.DAL_MOCK) return [...mockStore.queueUnknownRunners];
   return query(
@@ -63,7 +63,7 @@ export async function getUnknownRunners(): Promise<UnknownRunnerRow[]> {
 
 export async function getUnknownWorkspaces(): Promise<UnknownWorkspaceRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   if (env.DAL_MOCK) return [...mockStore.queueUnknownWorkspaces];
   return query(
@@ -79,7 +79,7 @@ export async function getUnknownWorkspaces(): Promise<UnknownWorkspaceRow[]> {
 
 export async function getRogueTags(): Promise<RogueTagRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   if (env.DAL_MOCK) return [...mockStore.queueRogueTags];
   return query(
@@ -100,7 +100,7 @@ export async function getRogueTags(): Promise<RogueTagRow[]> {
 
 export async function getUnassignedWarehouses(): Promise<UnassignedWarehouseRow[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   if (env.DAL_MOCK) return [...mockStore.queueUnassignedWarehouses];
   return query(
@@ -140,7 +140,7 @@ export interface TaggedBridgeJob {
  */
 export async function getTaggedBridgeJobs(): Promise<TaggedBridgeJob[]> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("warehouse");
   cacheTag("queue");
   if (env.DAL_MOCK) {
     // fixture: pnl-explain (job 1022) has been tagged at source since mapping
