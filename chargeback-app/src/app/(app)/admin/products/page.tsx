@@ -15,7 +15,7 @@ import { SplitEditor } from "@/components/split-editor";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import { PAGE_HELP } from "@/lib/kpi-help";
 import { firstOfNextMonth, plural } from "@/lib/format";
-import { EmptyState, FilteredCount, KpiTile, PageTitle, StatusChip } from "@/components/ui";
+import { EmptyState, FilteredCount, InfoTip, KpiTile, PageTitle, StatusChip } from "@/components/ui";
 import { TableFilter } from "@/components/table-filter";
 import { TablePagination } from "@/components/table-pagination";
 import { Badge } from "@/components/ui/badge";
@@ -98,7 +98,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
             </Button>
           }
           title="Register new product"
-          description="The key becomes the tag vocabulary — lowercase, hyphen/underscore, no spaces (e.g. pricing-curves). Valid-from defaults to the first of next month."
+          description="The key becomes the tag vocabulary — lowercase, hyphen/underscore, no spaces (e.g. pricing-curves) — and is permanent: a rename is retire + register under the new key. Re-using a retired key reactivates that product. Valid-from defaults to the first of next month."
         >
           <ActionForm action={createProductAction} submitLabel="Create product" resetOnSuccess>
             <Field label="Product key" name="data_product" placeholder="pricing-curves" />
@@ -141,6 +141,14 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
                   <div className="flex items-center gap-3">
                     <h2 className="font-mono text-sm font-semibold">{product}</h2>
                     <StatusChip ok={!!primary} label={primary ? "active" : "retired"} />
+                    {!primary && (
+                      <InfoTip>
+                        Retired products are read-only by design — rows are never deleted, so
+                        history keeps attributing past usage. To reactivate, use Register new
+                        product with this exact key and a valid-from on or after the last
+                        window&apos;s end; that starts a new validity window.
+                      </InfoTip>
+                    )}
                     {active.length > 1 && (
                       <Badge variant="secondary" className="bg-muted text-muted-foreground">
                         split across {active.length} desks
