@@ -9,14 +9,14 @@ import {
 import { getTaggedBridgeJobs, getUntaggedJobs } from "@/dal/workQueue";
 import {
   addRunnerRuleAction,
-  addTagRuleAction,
   bulkDeleteJobMappingsAction,
   bulkRemapJobsAction,
   deleteJobMappingAction,
   deleteRunnerRuleAction,
-  deleteTagRuleAction,
   mapJobAction,
 } from "@/actions/mappings";
+import { TagRulesCard } from "@/components/tag-rules-card";
+import { scopeCovers } from "@/lib/tag-rules";
 import { ArrowRightLeft, Plus, Sparkles, Trash2 } from "lucide-react";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
@@ -77,8 +77,8 @@ export async function MappingsView({
         .includes(query),
   );
   const { rows: pageRows, ...bridgePaged } = paginate(shown, pages.bridge);
-  const { rows: tagRulePage, ...tagsPaged } = paginate(tagRules, pages.tags);
   const { rows: runnerRulePage, ...runnersPaged } = paginate(runnerRules, pages.runners);
+  const databricksRules = tagRules.filter((r) => scopeCovers(r.scope, "databricks")).length;
 
   return (
     <div>
@@ -97,8 +97,8 @@ export async function MappingsView({
         />
         <KpiTile
           label="Attribution rules"
-          value={`${tagRules.length} tag · ${runnerRules.length} runner`}
-          hint={`${productsReferenced} product(s) referenced by bridge rows`}
+          value={`${databricksRules} tag · ${runnerRules.length} runner`}
+          hint={`tag rules covering Databricks · ${productsReferenced} product(s) referenced by bridge rows`}
         />
         <KpiTile
           label="Untagged jobs 30d"
@@ -341,85 +341,13 @@ export async function MappingsView({
       </BulkActionBar>
       </BulkSelect>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Tag rules — tag_product_mapping</CardTitle>
-          <CardDescription className="text-xs">
-            Waterfall rule 3: any custom tag key=value → product. Catches platform-created jobs
-            that carry team/project tags but no data_product tag — one rule covers every job with
-            the tag, present and future. Each job&apos;s actual tags are visible in{" "}
-            <Link href="/admin/jobs?view=coverage" className="text-indigo-600 hover:underline">
-              coverage
-            </Link>
-            .
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="no-print mb-4">
-            <EditDialog
-              trigger={
-                <Button size="sm" variant="outline">
-                  <Plus aria-hidden /> Add tag rule
-                </Button>
-              }
-              title="Add tag rule"
-              description="Key and value must match custom_tags in system.billing.usage exactly (case-sensitive)."
-            >
-              <ActionForm action={addTagRuleAction} submitLabel="Add rule" resetOnSuccess>
-                <Field label="Tag key" name="tag_key" placeholder="team" />
-                <Field label="Tag value" name="tag_value" placeholder="market-data-eng" />
-                <SelectField label="Data product" name="data_product" options={productOptions} />
-                <Field label="Note (why this rule)" name="note" required={false} />
-              </ActionForm>
-            </EditDialog>
-          </div>
-          {tagRules.length === 0 ? (
-            <EmptyState message="No tag rules. Add one to route spend by team/project tags when the data_product tag is missing." />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tag</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead>Note</TableHead>
-                  <TableHead>Mapped by / at</TableHead>
-                  <TableHead>
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tagRulePage.map((r) => (
-                  <TableRow key={`${r.tag_key}|${r.tag_value}`}>
-                    <TableCell className="font-mono text-xs">
-                      {r.tag_key}={r.tag_value}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{r.data_product}</TableCell>
-                    <TableCell className="text-xs">{r.note ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {r.mapped_by ?? "—"}
-                      {r.mapped_at && <> · {r.mapped_at.slice(0, 10)}</>}
-                    </TableCell>
-                    <TableCell>
-                      <EditDialog
-                        trigger={<RowAction danger>Remove</RowAction>}
-                        title={`Remove rule ${r.tag_key}=${r.tag_value}?`}
-                        description="Spend carried by this rule falls back to later waterfall rules — or the work queue."
-                      >
-                        <ActionForm action={deleteTagRuleAction} submitLabel="Remove rule" danger>
-                          <input type="hidden" name="tag_key" value={r.tag_key} />
-                          <input type="hidden" name="tag_value" value={r.tag_value} />
-                        </ActionForm>
-                      </EditDialog>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-          <TablePagination {...tagsPaged} noun="tag rule" paramName="tagsPage" />
-        </CardContent>
-      </Card>
+      <TagRulesCard
+        rules={tagRules}
+        productOptions={productOptions}
+        defaultScope="databricks"
+        pageCursor={pages.tags}
+        coverageHref="/admin/jobs?view=coverage"
+      />
 
       <Card className="mt-6">
         <CardHeader>

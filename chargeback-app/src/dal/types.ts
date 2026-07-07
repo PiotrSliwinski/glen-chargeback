@@ -13,7 +13,10 @@ export type AttributionMethod =
   | "ENDPOINT_MAPPING" // rule 4b — dedicated AI/serving endpoint
   | "PIPELINE_MAPPING" // rule 4c — dedicated DLT pipeline
   | "RUNNER_RULE"
-  | "USER" // ad-hoc spend only — job cost never defaults to the runner
+  // interactive spend (serverless-warehouse queries, AI serving) bills the
+  // mapped runner FIRST — before any tag; for everything else USER is the
+  // last-resort ad-hoc rule. Job cost never defaults to the runner.
+  | "USER"
   | "NONE";
 
 /** Azure waterfall (azure_cost_fact) — same idea, Azure nouns. */
@@ -43,6 +46,26 @@ export interface CoverageRow {
   attribution_method: AttributionMethod;
   cost: number;
   pct_of_month: number;
+}
+
+/** Spend source of the cross-source tagging scorecard. AI ⊂ DATABRICKS. */
+export type TaggingSource = "DATABRICKS" | "AI" | "AZURE";
+
+/**
+ * One month × source of the cross-source tagging scorecard (tagging_scorecard
+ * view): how much of the source's cost is tagged at source (TAG), carried by
+ * rules/bridges, or unallocated — the same standard applied to Databricks
+ * jobs, AI serving and Azure resources alike.
+ */
+export interface SourceTaggingScore {
+  source: TaggingSource;
+  total_cost: number;
+  /** cost attributed by the data_product tag itself (rule 1) */
+  tag_cost: number;
+  /** cost attributed by any other rule — bridges, tag/runner/scope rules, USER */
+  rule_cost: number;
+  /** cost nobody has claimed (method NONE) */
+  unallocated_cost: number;
 }
 
 export interface DomainRollup {
@@ -192,11 +215,23 @@ export interface JobMappingRow {
   mapped_at: string | null;
 }
 
-/** Tag rule (waterfall rule 3): any custom tag key=value → product. */
+/**
+ * Which tag namespace(s) a tag rule matches: Databricks custom tags,
+ * Azure resource tags, or both (for organisation-wide tags that mean the
+ * same thing in either namespace).
+ */
+export type TagRuleScope = "databricks" | "azure" | "both";
+
+/**
+ * Unified tag rule (rule 3 of BOTH waterfalls): any tag key=value → product.
+ * cost_fact applies rules with scope databricks/both to custom_tags,
+ * azure_cost_fact applies rules with scope azure/both to resource tags.
+ */
 export interface TagRuleRow {
   tag_key: string;
   tag_value: string;
   data_product: string;
+  scope: TagRuleScope;
   note: string | null;
   mapped_by: string | null;
   mapped_at: string | null;
@@ -280,15 +315,8 @@ export interface AzureResourceMappingRow {
   mapped_at: string | null;
 }
 
-/** Azure tag rule (Azure rule 3): any resource tag key=value → product. */
-export interface AzureTagRuleRow {
-  tag_key: string;
-  tag_value: string;
-  data_product: string;
-  note: string | null;
-  mapped_by: string | null;
-  mapped_at: string | null;
-}
+// Azure tag rules (Azure rule 3) live in the unified TagRuleRow above,
+// scope 'azure' or 'both' — one table drives rule 3 of both waterfalls.
 
 /** Resource-group rule (Azure rule 4): whole RG → product. */
 export interface AzureRgRuleRow {

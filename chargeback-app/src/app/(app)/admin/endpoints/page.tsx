@@ -70,7 +70,7 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
     <div>
       <PageTitle
         title="AI endpoints"
-        subtitle="endpoint_product_mapping — waterfall rule 4b: a dedicated serving endpoint bills ALL its spend (realtime + ai_query batch inference) to one product."
+        subtitle="endpoint_product_mapping — waterfall rule 4b: routes a dedicated endpoint's serving spend with no attributable user (realtime + ai_query batch inference) to one product; spend run by mapped users bills their desk first."
         info={PAGE_HELP.endpoints}
       />
 
@@ -174,7 +174,7 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
                       <EditDialog
                         trigger={<RowAction>Map to product</RowAction>}
                         title={`Map endpoint ${u.endpoint_name}`}
-                        description="Routes all of this endpoint's spend — past and future, batch inference included — to the selected product."
+                        description="Routes this endpoint's spend with no attributable user — past and future, batch inference included — to the selected product. Spend run by mapped users keeps billing their desk (user-first)."
                       >
                         <EndpointForm
                           productOptions={productOptions}
@@ -197,8 +197,9 @@ async function Endpoints({ searchParams }: { searchParams: SearchParams }) {
           <CardTitle>Endpoint bridge — endpoint_product_mapping</CardTitle>
           <CardDescription className="text-xs">
             Waterfall rule 4b: pins one (workspace, endpoint) to a product — the serving analogue
-            of a dedicated warehouse. A <code>data_product</code> tag on the endpoint (rule 1)
-            always wins; tag at source and prune the row.
+            of a dedicated warehouse. Serving run by a mapped user bills that user&apos;s desk
+            first; among the fallbacks a <code>data_product</code> tag on the endpoint beats
+            this bridge — tag at source and prune the row.
           </CardDescription>
         </CardHeader>
         <CardContent>

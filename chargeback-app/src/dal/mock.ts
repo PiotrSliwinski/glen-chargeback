@@ -4,7 +4,6 @@ import type {
   AzureResourceMappingRow,
   AzureRgRuleRow,
   AzureSubscriptionRuleRow,
-  AzureTagRuleRow,
   CoverageRow,
   DataProductRow,
   DbuDiscountRow,
@@ -63,7 +62,6 @@ export interface MockStore {
   unmappedRunners: UnmappedRunnerRow[];
   jobAttributions: JobAttributionRow[];
   azureResourceMappings: AzureResourceMappingRow[];
-  azureTagRules: AzureTagRuleRow[];
   azureRgRules: AzureRgRuleRow[];
   azureSubscriptionRules: AzureSubscriptionRuleRow[];
   azureAttributions: AzureResourceAttributionRow[];
@@ -109,10 +107,12 @@ function createStore(): MockStore {
     { workspace_id: "1111111111111111", job_id: "310", data_product: "var-engine", note: "nightly VaR batch", mapped_by: "steward@example.com", mapped_at: "2026-02-25T08:45:00Z" },
   ];
 
-  // Tag rules (waterfall rule 3): platform-created jobs carry team/project
-  // tags long before anyone adds a data_product tag — the rule routes them.
+  // Unified tag rules (rule 3 of both waterfalls): platform-created workloads
+  // carry team/application tags long before anyone adds a data_product tag —
+  // scope says which tag namespace(s) each rule matches.
   const tagRules: TagRuleRow[] = [
-    { tag_key: "team", tag_value: "market-data-eng", data_product: "ref-data-ingest", note: "platform ETL jobs tag team, not data_product", mapped_by: "steward@example.com", mapped_at: "2026-05-14T11:20:00Z" },
+    { tag_key: "team", tag_value: "market-data-eng", data_product: "ref-data-ingest", scope: "databricks", note: "platform ETL jobs tag team, not data_product", mapped_by: "steward@example.com", mapped_at: "2026-05-14T11:20:00Z" },
+    { tag_key: "application", tag_value: "curves", data_product: "pricing-curves", scope: "azure", note: "platform tags application, not data_product", mapped_by: "steward@example.com", mapped_at: "2026-05-20T11:20:00Z" },
   ];
 
   // Runner rules (waterfall rule 5): the explicit opt-in replacement for
@@ -142,17 +142,22 @@ function createStore(): MockStore {
   // monthFactor so the endpoint table stays consistent with the monthly
   // matrix above; first/last_seen carry base-month dates whose month part
   // the DAL rewrites to the requested month.
+  // AI is USER-FIRST (waterfall rule 0): serving spend run by a MAPPED user
+  // bills that user's desk as AD_HOC before any tag; tags/bridges catch the
+  // remainder (NULL or unmapped run_as, job-launched batch).
   // endpoint_name null = AI spend with no endpoint dimension (vector search).
   const aiEndpointUsage: Omit<AiEndpointUsageRow, "workspace_name">[] = [
-    { endpoint_name: "outage-alerts-extract-sonnet4", serving_type: "BATCH_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: "sara.subramaniam@example.com", runner_name: "Sara Subramaniam", data_product: "outage-extraction", desk: "risk", attribution_method: "TAG", first_seen: "2026-05-02", last_seen: "2026-05-28", dbus: 4400, cost: 4100 },
-    { endpoint_name: "outage-alerts-extract-sonnet4", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: "sara.subramaniam@example.com", runner_name: "Sara Subramaniam", data_product: "outage-extraction", desk: "risk", attribution_method: "TAG", first_seen: "2026-05-01", last_seen: "2026-05-27", dbus: 800, cost: 800 },
-    { endpoint_name: "pnl-anomaly-endpoint", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: "piotr.zielinski@example.com", runner_name: "Piotr Zieliński", data_product: "trade-pnl", desk: "credit", attribution_method: "TAG", first_seen: "2026-05-03", last_seen: "2026-05-26", dbus: 4100, cost: 2300 },
-    { endpoint_name: "curves-embedding-api", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: "9a1b2c3d-svc-etl", runner_name: "SP: etl-runner", data_product: "pricing-curves", desk: "rates", attribution_method: "ENDPOINT_MAPPING", first_seen: "2026-05-01", last_seen: "2026-05-28", dbus: 850, cost: 800 },
-    { endpoint_name: null, serving_type: null, usage_category: "VECTOR_SEARCH", workspace_id: "1111111111111111", runner: "maria.wisniewska@example.com", runner_name: "Maria Wiśniewska", data_product: "var-engine", desk: "risk", attribution_method: "TAG", first_seen: "2026-05-05", last_seen: "2026-05-24", dbus: 900, cost: 610 },
+    // system-emitted batch rows carry no run_as → the endpoint's tag wins
+    { endpoint_name: "outage-alerts-extract-sonnet4", serving_type: "BATCH_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: null, runner_name: null, data_product: "outage-extraction", desk: "risk", attribution_method: "TAG", first_seen: "2026-05-02", last_seen: "2026-05-28", dbus: 4400, cost: 4100 },
+    // interactive slices run by mapped users bill their desks (user-first)
+    { endpoint_name: "outage-alerts-extract-sonnet4", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: "sara.subramaniam@example.com", runner_name: "Sara Subramaniam", data_product: "AD_HOC", desk: "risk", attribution_method: "USER", first_seen: "2026-05-01", last_seen: "2026-05-27", dbus: 800, cost: 800 },
+    { endpoint_name: "pnl-anomaly-endpoint", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: "piotr.zielinski@example.com", runner_name: "Piotr Zieliński", data_product: "AD_HOC", desk: "credit", attribution_method: "USER", first_seen: "2026-05-03", last_seen: "2026-05-26", dbus: 4100, cost: 2300 },
+    // unmapped serving SP → user-first can't fire; the endpoint bridge routes it
+    { endpoint_name: "curves-embedding-api", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "1111111111111111", runner: "7c9e11f0-svc-serving", runner_name: null, data_product: "pricing-curves", desk: "rates", attribution_method: "ENDPOINT_MAPPING", first_seen: "2026-05-01", last_seen: "2026-05-28", dbus: 850, cost: 800 },
+    { endpoint_name: null, serving_type: null, usage_category: "VECTOR_SEARCH", workspace_id: "1111111111111111", runner: "maria.wisniewska@example.com", runner_name: "Maria Wiśniewska", data_product: "AD_HOC", desk: "risk", attribution_method: "USER", first_seen: "2026-05-05", last_seen: "2026-05-24", dbus: 900, cost: 610 },
     // experimental endpoint nobody claimed, run by an unmapped user — the
     // run-as column shows the raw identity; mapping karol would route this
-    // spend to his desk as AD_HOC via the USER rule (serving rows carry no
-    // job_id, so rule 6 applies exactly as it does for serverless ad-hoc)
+    // spend to his desk as AD_HOC via the USER-FIRST rule (rule 0)
     { endpoint_name: "ml-experiments-llm", serving_type: "REALTIME_INFERENCE", usage_category: "MODEL_SERVING", workspace_id: "3333333333333333", runner: "karol.adamski@example.com", runner_name: null, data_product: "UNALLOCATED", desk: "UNALLOCATED", attribution_method: "NONE", first_seen: "2026-05-09", last_seen: "2026-05-22", dbus: 700, cost: 520 },
   ];
 
@@ -176,13 +181,16 @@ function createStore(): MockStore {
     ["risk", "stress-testing", "risk", "JOBS", 1, 8330, 3780],
     ["risk", "stress-testing", "credit", "JOBS", 1, 3570, 1620],
     ["pnl", "trade-pnl", "credit", "JOBS", 3, 33400, 15200],
-    ["pnl", "trade-pnl", "credit", "MODEL_SERVING", 1, 4100, 2300],
-    // AI spend: ai_query batch extraction endpoint + realtime slice (outage-extraction),
-    // an embedding endpoint routed by the endpoint bridge (pricing-curves),
-    // vector search on var-engine, and one unmapped experimental endpoint
-    ["market-data", "outage-extraction", "risk", "MODEL_SERVING", 2, 5200, 4900],
+    // AI spend (USER-FIRST): the un-attributable batch slice stays on the
+    // endpoint's tag (outage-extraction), the endpoint bridge routes the
+    // unmapped serving SP (pricing-curves), and every slice run by a mapped
+    // user bills that user's desk as AD_HOC — plus one unmapped experimental
+    // endpoint
+    ["market-data", "outage-extraction", "risk", "MODEL_SERVING", 0, 4400, 4100],
     ["market-data", "pricing-curves", "rates", "MODEL_SERVING", 1, 850, 800],
-    ["risk", "var-engine", "risk", "VECTOR_SEARCH", 1, 900, 610],
+    ["UNALLOCATED", "AD_HOC", "risk", "MODEL_SERVING", 1, 800, 800],
+    ["UNALLOCATED", "AD_HOC", "credit", "MODEL_SERVING", 1, 4100, 2300],
+    ["UNALLOCATED", "AD_HOC", "risk", "VECTOR_SEARCH", 1, 900, 610],
     ["UNALLOCATED", "UNALLOCATED", "UNALLOCATED", "MODEL_SERVING", 1, 700, 520],
     ["UNALLOCATED", "AD_HOC", "rates", "SQL_WAREHOUSE", 9, 8900, 3900],
     ["UNALLOCATED", "AD_HOC", "risk", "SQL_WAREHOUSE", 5, 5200, 2400],
@@ -253,13 +261,13 @@ function createStore(): MockStore {
     // TAG grows ~1.5pp/month at NONE+JOB_MAPPING's expense
     const drift = i * 0.015;
     const adj: Record<string, number> = {
-      TAG: 0.6 + drift,
+      TAG: 0.57 + drift,
       JOB_MAPPING: 0.12 - drift / 2,
       TAG_RULE: 0.04,
       WAREHOUSE_MAPPING: 0.06,
-      ENDPOINT_MAPPING: 0.02, // dedicated AI/serving endpoints (rule 4b)
+      ENDPOINT_MAPPING: 0.01, // dedicated AI/serving endpoints (rule 4b)
       RUNNER_RULE: 0.03,
-      USER: 0.06, // ad-hoc only — job spend never lands here
+      USER: 0.1, // interactive spend (user-first) + remaining ad-hoc — never job spend
       NONE: 0.07 - drift / 2,
     };
     return (Object.keys(adj) as (keyof typeof adj)[]).map((method) => ({
@@ -278,7 +286,7 @@ function createStore(): MockStore {
       { usage_category: "JOBS", is_serverless: false, job_name: "curves-backfill", warehouse_id: null, endpoint_name: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 5200, cost: 2300 },
       { usage_category: "JOBS", is_serverless: true, job_name: "curves-cache-warm", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "RUNNER_RULE", dbus: 3400, cost: 1500 },
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", endpoint_name: null, runner_name: "Jan Nowak", attribution_method: "TAG", dbus: 4900, cost: 2100 },
-      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "curves-embedding-api", runner_name: "SP: etl-runner", attribution_method: "ENDPOINT_MAPPING", dbus: 850, cost: 800 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "curves-embedding-api", runner_name: null, attribution_method: "ENDPOINT_MAPPING", dbus: 850, cost: 800 },
     ],
     "ref-data-ingest": [
       { usage_category: "JOBS", is_serverless: false, job_name: "refdata-loader (job 845)", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "JOB_MAPPING", dbus: 20200, cost: 8900 },
@@ -291,24 +299,28 @@ function createStore(): MockStore {
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "WAREHOUSE_MAPPING", dbus: 11900, cost: 5400 },
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-risk-dedicated", endpoint_name: null, runner_name: "UNALLOCATED_IDLE", attribution_method: "WAREHOUSE_MAPPING", dbus: 3700, cost: 1700 },
       { usage_category: "JOBS", is_serverless: true, job_name: "var-scenario-expansion", warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 18400, cost: 8500 },
-      { usage_category: "VECTOR_SEARCH", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 900, cost: 610 },
     ],
     "stress-testing": [
       { usage_category: "JOBS", is_serverless: false, job_name: "stress-quarterly", warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "TAG", dbus: 11900, cost: 5400 },
     ],
     "outage-extraction": [
-      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "outage-alerts-extract-sonnet4", runner_name: "Sara Subramaniam", attribution_method: "TAG", dbus: 4400, cost: 4100 },
-      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "outage-alerts-extract-sonnet4", runner_name: "Sara Subramaniam", attribution_method: "TAG", dbus: 800, cost: 800 },
+      // the system batch slice (no run_as) — the endpoint's tag carries it;
+      // sara's interactive slice bills her desk (see AD_HOC below)
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "outage-alerts-extract-sonnet4", runner_name: null, attribution_method: "TAG", dbus: 4400, cost: 4100 },
     ],
     "trade-pnl": [
       { usage_category: "JOBS", is_serverless: false, job_name: "pnl-explain (job 1022)", warehouse_id: null, endpoint_name: null, runner_name: "Piotr Zieliński", attribution_method: "JOB_MAPPING", dbus: 20300, cost: 9200 },
       { usage_category: "JOBS", is_serverless: true, job_name: "pnl-eod-close", warehouse_id: null, endpoint_name: null, runner_name: "SP: etl-runner", attribution_method: "TAG", dbus: 13100, cost: 6000 },
-      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "pnl-anomaly-endpoint", runner_name: "Piotr Zieliński", attribution_method: "TAG", dbus: 4100, cost: 2300 },
     ],
+    // interactive spend is USER-FIRST: serverless-warehouse queries and AI
+    // serving run by mapped users land here, on the runner's desk
     AD_HOC: [
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", endpoint_name: null, runner_name: "Anna Kowalska", attribution_method: "USER", dbus: 5900, cost: 2600 },
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-main", endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "USER", dbus: 5200, cost: 2400 },
       { usage_category: "SQL_WAREHOUSE", is_serverless: null, job_name: null, warehouse_id: "wh-shared-adhoc", endpoint_name: null, runner_name: "Piotr Zieliński", attribution_method: "USER", dbus: 3800, cost: 1700 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "pnl-anomaly-endpoint", runner_name: "Piotr Zieliński", attribution_method: "USER", dbus: 4100, cost: 2300 },
+      { usage_category: "MODEL_SERVING", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: "outage-alerts-extract-sonnet4", runner_name: "Sara Subramaniam", attribution_method: "USER", dbus: 800, cost: 800 },
+      { usage_category: "VECTOR_SEARCH", is_serverless: true, job_name: null, warehouse_id: null, endpoint_name: null, runner_name: "Maria Wiśniewska", attribution_method: "USER", dbus: 900, cost: 610 },
     ],
     UNALLOCATED: [
       { usage_category: "JOBS", is_serverless: false, job_name: "unknown-batch-77", warehouse_id: null, endpoint_name: null, runner_name: null, attribution_method: "NONE", dbus: 7400, cost: 3300 },
@@ -366,6 +378,9 @@ function createStore(): MockStore {
     // unknown-runners queue radar.
     unmappedRunners: [
       { runner: "f3b825e2-6a10-4c4d-9d3f-8a51e2c4a0b7", cost_30d: 4150, serverless_cost_30d: 0, dbus_30d: 9200, rows_30d: 58, workspace_count: 1, top_category: "JOBS", last_seen: "2026-07-02" },
+      // serving SP behind curves-embedding-api — its spend routes via the
+      // endpoint bridge; mapping it would flip that spend to user-first AD_HOC
+      { runner: "7c9e11f0-svc-serving", cost_30d: 800, serverless_cost_30d: 800, dbus_30d: 850, rows_30d: 28, workspace_count: 1, top_category: "MODEL_SERVING", last_seen: "2026-07-01" },
       { runner: "9a1b2c3d-svc-legacy", cost_30d: 3300, serverless_cost_30d: 610, dbus_30d: 7300, rows_30d: 31, workspace_count: 1, top_category: "JOBS", last_seen: "2026-06-27" },
       { runner: "tomasz.lis@example.com", cost_30d: 2510, serverless_cost_30d: 1890, dbus_30d: 5480, rows_30d: 64, workspace_count: 2, top_category: "JOBS", last_seen: "2026-07-02" },
       { runner: "ewa.mazur@example.com", cost_30d: 940, serverless_cost_30d: 940, dbus_30d: 2050, rows_30d: 18, workspace_count: 1, top_category: "DLT", last_seen: "2026-07-01" },
@@ -403,9 +418,6 @@ function createStore(): MockStore {
       { resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-mktdata-prod/providers/microsoft.storage/storageaccounts/stmktdatarefprod", data_product: "ref-data-ingest", note: "legacy ADLS account, tagging ticket INFRA-2214", mapped_by: "steward@example.com", mapped_at: "2026-05-08T09:30:00Z" },
       // janitor demo: the ADF below is now tagged at source — bridge redundant
       { resource_id: "/subscriptions/1f2e3d4c-aaaa-4bbb-8ccc-111122223333/resourcegroups/rg-pnl-prod/providers/microsoft.datafactory/factories/adf-pnl-prod", data_product: "trade-pnl", note: "mapped before tags landed", mapped_by: "steward@example.com", mapped_at: "2026-04-15T14:12:00Z" },
-    ],
-    azureTagRules: [
-      { tag_key: "application", tag_value: "curves", data_product: "pricing-curves", note: "platform tags application, not data_product", mapped_by: "steward@example.com", mapped_at: "2026-05-20T11:20:00Z" },
     ],
     azureRgRules: [
       { subscription_id: "1f2e3d4c-aaaa-4bbb-8ccc-111122223333", resource_group: "rg-risk-var", data_product: "var-engine", note: "whole RG is the VaR grid", mapped_by: "steward@example.com", mapped_at: "2026-06-02T10:05:00Z" },

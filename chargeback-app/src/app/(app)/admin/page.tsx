@@ -15,9 +15,9 @@ import {
   listAzureResourceMappings,
   listAzureRgRules,
   listAzureSubscriptionRules,
-  listAzureTagRules,
 } from "@/dal/azure";
 import { getActiveDbuDiscount, listDbuDiscounts } from "@/dal/discounts";
+import { scopeCovers } from "@/lib/tag-rules";
 import { PAGE_HELP } from "@/lib/kpi-help";
 import { PageTitle } from "@/components/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,7 +50,6 @@ async function AdminIndex() {
     tagRules,
     runnerRules,
     azureResources,
-    azureTagRules,
     azureRgRules,
     azureSubRules,
     dbuDiscounts,
@@ -64,7 +63,6 @@ async function AdminIndex() {
     listTagRules(),
     listRunnerRules(),
     listAzureResourceMappings(),
-    listAzureTagRules(),
     listAzureRgRules(),
     listAzureSubscriptionRules(),
     listDbuDiscounts(),
@@ -73,6 +71,9 @@ async function AdminIndex() {
     catalogue.filter((r) => r.valid_to == null).map((r) => r.data_product),
   ).size;
   const activeDiscount = await getActiveDbuDiscount();
+  // one unified rule table — each screen counts the rules covering its side
+  const databricksTagRules = tagRules.filter((r) => scopeCovers(r.scope, "databricks")).length;
+  const azureTagRules = tagRules.filter((r) => scopeCovers(r.scope, "azure")).length;
 
   const items = [
     {
@@ -85,13 +86,13 @@ async function AdminIndex() {
       href: "/admin/jobs",
       title: "Job attribution",
       desc: "Bridge rows, tag rules and runner rules for jobs not tagged at source, plus a 30-day coverage audit of how every job actually attributed. Job spend never defaults to the runner's desk.",
-      stat: `${jobs.length} bridge rows · ${tagRules.length} tag rules · ${runnerRules.length} runner rules`,
+      stat: `${jobs.length} bridge rows · ${databricksTagRules} tag rules · ${runnerRules.length} runner rules`,
     },
     {
       href: "/admin/azure",
       title: "Azure attribution",
       desc: "Resource bridge, tag rules, resource-group and subscription rules routing Azure spend to the same product catalogue, plus a 30-day coverage audit. Only matched cost reaches a desk.",
-      stat: `${azureResources.length} bridge rows · ${azureTagRules.length} tag rules · ${azureRgRules.length + azureSubRules.length} scope rules`,
+      stat: `${azureResources.length} bridge rows · ${azureTagRules} tag rules · ${azureRgRules.length + azureSubRules.length} scope rules`,
     },
     {
       href: "/admin/discounts",
@@ -108,7 +109,7 @@ async function AdminIndex() {
     {
       href: "/admin/endpoints",
       title: "AI endpoints",
-      desc: "endpoint_product_mapping — dedicated model-serving endpoints (realtime + ai_query batch inference) routed to one product. Rule 4b, the serving analogue of a dedicated warehouse.",
+      desc: "endpoint_product_mapping — dedicated model-serving endpoints routed to one product for spend with no attributable user (AI serving is user-first). Rule 4b, the serving analogue of a dedicated warehouse.",
       stat: `${endpoints.length} mapped`,
     },
     {

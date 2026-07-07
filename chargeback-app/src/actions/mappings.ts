@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ActionResult } from "@/lib/action-result";
 import { formList, optionalText, parseForm, runAction } from "@/actions/run";
 import * as dal from "@/dal/mappings";
+import { SCOPE_LABELS, scopeCovers, scopesOverlap } from "@/lib/tag-rules";
 import { assertProductExists } from "@/services/productCatalogue";
 import { DomainError } from "@/services/errors";
 
@@ -80,6 +81,7 @@ const AddTagRule = z.object({
   tag_key: z.string().min(1),
   tag_value: z.string().min(1),
   data_product: z.string().min(1),
+  scope: z.enum(["databricks", "azure", "both"]),
   note: optionalText,
 });
 
@@ -91,21 +93,31 @@ export async function addTagRuleAction(
     const input = parseForm(formData, AddTagRule);
     await assertProductExists(input.data_product); // §7.4(b) before commit
     const existing = await dal.listTagRules();
-    if (existing.some((r) => r.tag_key === input.tag_key && r.tag_value === input.tag_value)) {
+    // rules whose scopes can match the same record are conflicting duplicates
+    const clash = existing.find(
+      (r) =>
+        r.tag_key === input.tag_key &&
+        r.tag_value === input.tag_value &&
+        scopesOverlap(r.scope, input.scope),
+    );
+    if (clash) {
       throw new DomainError(
         "DUPLICATE_KEY",
-        `a rule for tag ${input.tag_key}=${input.tag_value} already exists`,
+        `a ${SCOPE_LABELS[clash.scope]}-scoped rule for tag ${input.tag_key}=${input.tag_value} already exists`,
       );
     }
     await dal.insertTagRule(input, actor);
     invalidateMappings();
-    return `Rule created: tag ${input.tag_key}=${input.tag_value} → '${input.data_product}'. Applies to all past and future spend carrying that tag.`;
+    // azure-covering rules re-attribute azure_cost_fact too
+    if (scopeCovers(input.scope, "azure")) updateTag("azure");
+    return `Rule created: ${SCOPE_LABELS[input.scope]} tag ${input.tag_key}=${input.tag_value} → '${input.data_product}'. Applies to all past and future spend carrying that tag.`;
   });
 }
 
 const DeleteTagRule = z.object({
   tag_key: z.string().min(1),
   tag_value: z.string().min(1),
+  scope: z.enum(["databricks", "azure", "both"]),
 });
 
 export async function deleteTagRuleAction(
@@ -114,8 +126,9 @@ export async function deleteTagRuleAction(
 ): Promise<ActionResult> {
   return runAction("steward", async () => {
     const input = parseForm(formData, DeleteTagRule);
-    await dal.deleteTagRule(input.tag_key, input.tag_value);
+    await dal.deleteTagRule(input.tag_key, input.tag_value, input.scope);
     invalidateMappings();
+    if (scopeCovers(input.scope, "azure")) updateTag("azure");
     return `Rule removed for tag ${input.tag_key}=${input.tag_value}. Spend it carried falls back to later waterfall rules — or the work queue.`;
   });
 }
@@ -190,7 +203,7 @@ export async function mapEndpointAction(
     }
     await dal.insertEndpointMapping(input, actor);
     invalidateMappings();
-    return `Endpoint '${input.endpoint_name}' mapped to '${input.data_product}' — all its serving spend, batch inference included. Reminder: the durable fix is tagging the endpoint at source.`;
+    return `Endpoint '${input.endpoint_name}' mapped to '${input.data_product}' — its serving spend with no attributable user, batch inference included (spend run by mapped users bills their desk first). Reminder: the durable fix is tagging the endpoint at source.`;
   });
 }
 

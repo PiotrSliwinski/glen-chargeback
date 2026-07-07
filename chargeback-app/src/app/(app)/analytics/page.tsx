@@ -7,6 +7,7 @@ import {
   getCostHistory,
   getCoverageTrend,
   getMonthlyTotals,
+  getTaggingScorecard,
   productKpis,
 } from "@/dal/analytics";
 import { getDeskScorecard } from "@/dal/desks";
@@ -33,7 +34,7 @@ import { ReportFooter } from "@/components/report-footer";
 import { ReportSkeleton } from "@/components/loading-skeletons";
 import { SearchParamsSuspense } from "@/components/keyed-suspense";
 import type { DeskKpiRow, Insight, ProductKpiRow } from "@/dal/analytics";
-import type { ReportMode } from "@/dal/types";
+import type { ReportMode, SourceTaggingScore } from "@/dal/types";
 
 export const metadata = { title: "Analytics" };
 
@@ -67,17 +68,27 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
   const notPublished = mode === "published" && !publishedMonths.includes(month);
   const prevMonth = shiftMonth(month, -1);
 
-  const [curRows, prevRows, totals, coverageTrend, movers, productHistory, deskHistory, scorecard] =
-    await Promise.all([
-      getMonthlyRows(month, mode),
-      getMonthlyRows(prevMonth, "live"),
-      getMonthlyTotals(month),
-      getCoverageTrend(month),
-      getProductMovement(month, mode),
-      getCostHistory(month, "data_product"),
-      getCostHistory(month, "desk"),
-      getDeskScorecard(month),
-    ]);
+  const [
+    curRows,
+    prevRows,
+    totals,
+    coverageTrend,
+    movers,
+    productHistory,
+    deskHistory,
+    scorecard,
+    sourceScorecard,
+  ] = await Promise.all([
+    getMonthlyRows(month, mode),
+    getMonthlyRows(prevMonth, "live"),
+    getMonthlyTotals(month),
+    getCoverageTrend(month),
+    getProductMovement(month, mode),
+    getCostHistory(month, "data_product"),
+    getCostHistory(month, "desk"),
+    getDeskScorecard(month),
+    getTaggingScorecard(month),
+  ]);
 
   const products = productKpis(curRows, prevRows, productHistory);
   const desks = deskKpis(curRows, prevRows, deskHistory, scorecard);
@@ -298,6 +309,30 @@ async function Analytics({ searchParams }: { searchParams: SearchParams }) {
             <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle className="flex items-center gap-1.5">
+                  Tagging scorecard — all sources
+                  <InfoTip>{ANALYTICS_SECTION_HELP.sourceScorecard}</InfoTip>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {sourceScorecard.length === 0 ? (
+                  <EmptyState message="No cost in this month on any source." />
+                ) : (
+                  <SourceScorecardTable rows={sourceScorecard} />
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  One standard, three sources — with per-source policy: jobs and Azure are
+                  tag-first (tagged share should rise), AI serving and serverless warehouse
+                  queries are user-first (a mapped runner&apos;s spend deliberately lands under
+                  &quot;via rules&quot;; tags catch the userless remainder). AI is the
+                  model-serving slice of Databricks — compared, never summed. Goal: unallocated
+                  shrinking everywhere.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
                   Biggest movers month-over-month
                   <InfoTip>{ANALYTICS_SECTION_HELP.movers}</InfoTip>
                 </CardTitle>
@@ -352,6 +387,57 @@ function InsightList({ insights }: { insights: Insight[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+const SOURCE_LABELS: Record<SourceTaggingScore["source"], string> = {
+  DATABRICKS: "Databricks",
+  AI: "AI (slice of Databricks)",
+  AZURE: "Azure",
+};
+
+/** One row per spend source, the same tagged/rules/unallocated split for each. */
+function SourceScorecardTable({ rows }: { rows: SourceTaggingScore[] }) {
+  const pct = (part: number, total: number) => (total > 0 ? fmtPct(part / total) : "—");
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Source</TableHead>
+          <TableHead className="text-right">Cost</TableHead>
+          <TableHead className="text-right">Tagged at source</TableHead>
+          <TableHead className="text-right">Via rules</TableHead>
+          <TableHead className="text-right">Unallocated</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r) => (
+          <TableRow key={r.source}>
+            <TableCell className="font-medium">{SOURCE_LABELS[r.source]}</TableCell>
+            <TableCell className="text-right tabular-nums">{fmtMoney(r.total_cost)}</TableCell>
+            <TableCell className="text-right tabular-nums text-emerald-700">
+              {pct(r.tag_cost, r.total_cost)}
+              <span className="ml-1 text-xs text-muted-foreground">
+                ({fmtMoney(r.tag_cost)})
+              </span>
+            </TableCell>
+            <TableCell className="text-right tabular-nums">
+              {pct(r.rule_cost, r.total_cost)}
+            </TableCell>
+            <TableCell
+              className={cn("text-right tabular-nums", {
+                "text-amber-700": r.unallocated_cost > 0,
+              })}
+            >
+              {pct(r.unallocated_cost, r.total_cost)}
+              <span className="ml-1 text-xs text-muted-foreground">
+                ({fmtMoney(r.unallocated_cost)})
+              </span>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 

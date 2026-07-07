@@ -7,7 +7,12 @@ import {
   getMonthlyRows,
 } from "@/dal/reports";
 import { getDeskScorecard } from "@/dal/desks";
-import { getCostHistory, getCoverageTrend, getMonthlyTotals } from "@/dal/analytics";
+import {
+  getCostHistory,
+  getCoverageTrend,
+  getMonthlyTotals,
+  getTaggingScorecard,
+} from "@/dal/analytics";
 import { getAiEndpointUsage, getAiTrend, getUnmappedEndpoints } from "@/dal/ai";
 import {
   getAzureDeskTotals,
@@ -21,7 +26,6 @@ import {
   listAzureRgRules,
   listAzureResourceMappings,
   listAzureSubscriptionRules,
-  listAzureTagRules,
 } from "@/dal/azure";
 import {
   getQueueSummary,
@@ -120,6 +124,7 @@ export async function warmWarehouseCache(): Promise<WarmResult> {
     ["desk scorecard", () => getDeskScorecard(month)],
     ["monthly totals", () => getMonthlyTotals(month)],
     ["coverage trend", () => getCoverageTrend(month)],
+    ["tagging scorecard", () => getTaggingScorecard(month)],
     ["product cost history", () => getCostHistory(month, "data_product")],
     ["desk cost history", () => getCostHistory(month, "desk")],
     ["desks live", () => getDesks(month, "live")],
@@ -166,7 +171,6 @@ export async function warmWarehouseCache(): Promise<WarmResult> {
     ["job attributions", () => getJobAttributions()],
     ["unmapped runners", () => getUnmappedRunners()],
     ["azure resource mappings", () => listAzureResourceMappings()],
-    ["azure tag rules", () => listAzureTagRules()],
     ["azure rg rules", () => listAzureRgRules()],
     ["azure subscription rules", () => listAzureSubscriptionRules()],
     ["azure attributions", () => getAzureResourceAttributions()],

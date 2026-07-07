@@ -4,6 +4,7 @@ import { env } from "@/lib/env";
 import { query, T } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
 import { zDateOrNull, zId, zMonth, zNum, zStr, zStrOrNull } from "@/dal/parse";
+import { scopesOverlap } from "@/lib/tag-rules";
 import type { HealthReport, IntegrityViolation, ReconRow } from "@/dal/types";
 
 /**
@@ -272,13 +273,20 @@ export async function getIntegrityViolationsLive(
       });
     }
 
-    // conflicting rules: same tag key=value (or runner) pointing at several
-    // products — cost_fact resolves them deterministically, but the intent
-    // is ambiguous and must be fixed before publication
+    // conflicting rules: same tag key=value with OVERLAPPING scopes (same
+    // scope twice, or a scoped rule next to a 'both' rule — they can match
+    // the same record), or the same runner twice — the facts resolve them
+    // deterministically, but the intent is ambiguous and must be fixed
+    // before publication. One databricks + one azure rule on the same
+    // key=value is fine: they can never match the same record.
     const ruleDupes = await query(
       `SELECT CONCAT('tag ', tag_key, '=', tag_value) AS rule_key, COUNT(*) AS c
        FROM ${T("tag_product_mapping")}
-       GROUP BY tag_key, tag_value HAVING COUNT(*) > 1
+       GROUP BY tag_key, tag_value
+       HAVING COUNT(*) > 1
+          AND NOT (SUM(CASE WHEN scope = 'both' THEN 1 ELSE 0 END) = 0
+               AND SUM(CASE WHEN scope = 'databricks' THEN 1 ELSE 0 END) <= 1
+               AND SUM(CASE WHEN scope = 'azure' THEN 1 ELSE 0 END) <= 1)
        UNION ALL
        SELECT CONCAT('runner ', user_id), COUNT(*)
        FROM ${T("runner_product_mapping")}
@@ -416,15 +424,27 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
           detail: `runner_product_mapping references unknown product '${r.data_product}'`,
         });
     }
-    const seenTagRules = new Set<string>();
-    for (const r of mockStore.tagRules) {
-      const key = `${r.tag_key}=${r.tag_value}`;
-      if (seenTagRules.has(key))
-        violations.push({
-          check: "duplicate_rule_key",
-          detail: `several rules for tag ${key} — ambiguous, deterministic tie-break applies until fixed`,
-        });
-      seenTagRules.add(key);
+    // same key=value with overlapping scopes = conflict (a databricks rule
+    // next to an azure rule is fine — they can never match the same record)
+    const flaggedTagRules = new Set<string>();
+    for (let i = 0; i < mockStore.tagRules.length; i++) {
+      for (let j = i + 1; j < mockStore.tagRules.length; j++) {
+        const a = mockStore.tagRules[i];
+        const b = mockStore.tagRules[j];
+        const key = `${a.tag_key}=${a.tag_value}`;
+        if (
+          a.tag_key === b.tag_key &&
+          a.tag_value === b.tag_value &&
+          scopesOverlap(a.scope, b.scope) &&
+          !flaggedTagRules.has(key)
+        ) {
+          flaggedTagRules.add(key);
+          violations.push({
+            check: "duplicate_rule_key",
+            detail: `several rules for tag ${key} with overlapping scopes — ambiguous, deterministic tie-break applies until fixed`,
+          });
+        }
+      }
     }
     const seenRunnerRules = new Set<string>();
     for (const r of mockStore.runnerRules) {

@@ -59,16 +59,17 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.job_product_mapping (
 )
 COMMENT 'Manual bridge: (workspace, job) -> data product, for jobs not yet tagged at source. Rule 2 of the attribution waterfall. Target state is to empty this table by tagging jobs directly.';
 
--- §4.5 Tag rules (waterfall rule 3)
+-- §4.5 Tag rules (waterfall rule 3 — Databricks AND Azure)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.tag_product_mapping (
-  tag_key        STRING NOT NULL,     -- custom tag key, exactly as in system.billing.usage.custom_tags
-  tag_value      STRING NOT NULL,     -- composite key with tag_key
+  tag_key        STRING NOT NULL,     -- tag key, exactly as in the source (custom_tags / Azure resource tags)
+  tag_value      STRING NOT NULL,     -- composite key with tag_key + scope
   data_product   STRING NOT NULL,
   note           STRING,              -- optional: why this rule exists
   mapped_by      STRING,              -- audit: who created the rule
-  mapped_at      TIMESTAMP            -- audit: when
+  mapped_at      TIMESTAMP,           -- audit: when
+  scope          STRING NOT NULL      -- 'databricks' | 'azure' | 'both': which tag namespace(s) the rule matches
 )
-COMMENT 'Tag rule: any custom tag key=value on a usage record -> data product. Rule 3 of the attribution waterfall - catches workloads tagged with team/project/etc. tags but no data_product tag. If several rules match one record, the alphabetically first key=value wins (deterministic); the health page flags conflicting rules.';
+COMMENT 'Unified tag rule: any tag key=value on a usage record -> data product. Rule 3 of BOTH attribution waterfalls - cost_fact matches rules with scope databricks/both against Databricks custom_tags, azure_cost_fact matches rules with scope azure/both against Azure resource tags. Catches workloads tagged with team/project/etc. tags but no data_product tag. scope both is for organisation-wide tags that mean the same thing in either namespace; keys like team that differ per namespace get one scoped rule each. If several rules match one record, the alphabetically first key=value wins (deterministic); the health page flags rules whose scopes overlap on the same key=value.';
 
 -- §4.6 Dedicated warehouses (waterfall rule 4)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.warehouse_product_mapping (
@@ -97,7 +98,7 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.endpoint_product_mapping (
   mapped_by      STRING,              -- audit: who created the mapping
   mapped_at      TIMESTAMP            -- audit: when
 )
-COMMENT 'Dedicated AI/model-serving endpoint -> data product. Rule 4b of the attribution waterfall (the serving analogue of a dedicated warehouse): ALL spend of the endpoint - realtime and ai_query batch inference alike - bills to that product. endpoint_name must match usage_metadata.endpoint_name exactly; names are only unique per workspace. Prefer tagging the endpoint at source with data_product (rule 1) - this bridge is for endpoints not yet tagged.';
+COMMENT 'Dedicated AI/model-serving endpoint -> data product. Rule 4b of the attribution waterfall (the serving analogue of a dedicated warehouse). NOTE: AI serving is USER-FIRST (rule 0) - spend run by a mapped user bills that user''s desk; this bridge (like endpoint tags) catches the remainder: NULL or unmapped run_as, realtime and ai_query batch alike. endpoint_name must match usage_metadata.endpoint_name exactly; names are only unique per workspace. Prefer tagging the endpoint at source with data_product - this bridge is for endpoints not yet tagged.';
 
 -- §4.8b Dedicated DLT pipelines (waterfall rule 4c)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.pipeline_product_mapping (
@@ -145,15 +146,9 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.azure_resource_product_mappin
 COMMENT 'Manual bridge: one Azure resource -> data product, for resources not yet tagged at source. Rule 2 of the Azure attribution waterfall. resource_id is the full ARM ID, lowercase. Target state is to empty this table by tagging resources directly.';
 
 -- §4A.2 Azure tag rules (Azure waterfall rule 3)
-CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.azure_tag_product_mapping (
-  tag_key        STRING NOT NULL,     -- Azure resource tag key, exact case
-  tag_value      STRING NOT NULL,     -- composite key with tag_key
-  data_product   STRING NOT NULL,
-  note           STRING,
-  mapped_by      STRING,
-  mapped_at      TIMESTAMP
-)
-COMMENT 'Azure tag rule: any resource tag key=value -> data product. Rule 3 of the Azure waterfall. Kept separate from tag_product_mapping (Databricks custom tags) — the two tag namespaces are unrelated and a key like team can mean different things in each. Conflicting rules resolve to the alphabetically first key=value.';
+-- Unified into tag_product_mapping (§4.5): rules with scope 'azure' or
+-- 'both' drive rule 3 of the Azure waterfall. The former separate
+-- azure_tag_product_mapping table is retired — see the migration note in §9.
 
 -- §4A.3 Resource-group rules (Azure waterfall rule 4)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.azure_rg_product_mapping (
@@ -599,9 +594,24 @@ GROUP BY 1, 2, 3;
 --   * UNION of query_view (SQL warehouse, per-query) and usage_view
 --     (all other spend, per runner/job/day).
 --   * Attribution waterfall:
+--       0 USER-FIRST         interactive spend bills the person, not a tag:
+--                            serverless SQL-warehouse queries and AI serving
+--                            (MODEL_SERVING, VECTOR_SEARCH,
+--                            FOUNDATION_MODEL_TRAINING, AGENT_EVALUATION —
+--                            keep in sync with dal/ai AI_CATEGORIES) whose
+--                            run_as is a mapped user go to that user's desk
+--                            as AD_HOC BEFORE any tag. People consume
+--                            interactive capacity; products consume
+--                            automated capacity. Falls through to the tag
+--                            chain when run_as is NULL, unmapped
+--                            (system/batch emissions, idle hours) or the
+--                            row carries a job_id — job-launched spend,
+--                            ai_query batch included, is a job and follows
+--                            the tag rules below.
 --       1 TAG                custom_tags.data_product on the record
 --       2 JOB_MAPPING        (workspace_id, job_id) in job_product_mapping
---       3 TAG_RULE           any custom tag matches tag_product_mapping
+--       3 TAG_RULE           any custom tag matches a tag_product_mapping
+--                            rule with scope databricks/both
 --       4 WAREHOUSE_MAPPING  dedicated warehouse (is_shared = false)
 --       4b ENDPOINT_MAPPING  dedicated AI/serving endpoint in
 --                            endpoint_product_mapping (the serving analogue
@@ -612,12 +622,13 @@ GROUP BY 1, 2, 3;
 --                            pipeline_product_mapping (the pipeline analogue
 --                            of a dedicated warehouse)
 --       5 RUNNER_RULE        runner in runner_product_mapping
---       6 USER               ad-hoc spend ONLY (job_id IS NULL): known
---                            runner -> AD_HOC, desk = runner's desk.
---                            Job cost NEVER defaults to the runner - jobs
---                            are run by platform identities but consumed
---                            by desks, so unresolved job spend falls to
---                            NONE and surfaces in the work queue.
+--       6 USER               remaining ad-hoc spend (job_id IS NULL, e.g.
+--                            classic-warehouse queries): known runner ->
+--                            AD_HOC, desk = runner's desk. Job cost NEVER
+--                            defaults to the runner - jobs are run by
+--                            platform identities but consumed by desks, so
+--                            unresolved job spend falls to NONE and
+--                            surfaces in the work queue.
 --       7 NONE               UNALLOCATED
 --   * data_domain and desk derived from data_product_mapping with a
 --     validity-period join on usage_date - historical months never
@@ -636,7 +647,7 @@ GROUP BY 1, 2, 3;
 -- page checks (§7.4).
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.cost_fact
-COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > ENDPOINT_MAPPING > PIPELINE_MAPPING > RUNNER_RULE > USER > NONE; USER applies to ad-hoc spend only - job cost never defaults to the runner) and domain/desk derived from validity-versioned data_product_mapping. Warehouse rows carry their custom tags, so TAG/TAG_RULE apply to warehouse spend too. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Exposes sku_name, usage_unit + usage_quantity (dbus = DBU-metered quantity only, 0 otherwise), cluster_id, pipeline_id, app_name, endpoint_name + serving_type. Source of truth for monthly chargeback.'
+COMMENT 'Unified cost fact: per-query warehouse allocations + all other usage, with data_product attribution waterfall (USER-FIRST for interactive spend > TAG > JOB_MAPPING > TAG_RULE > WAREHOUSE_MAPPING > ENDPOINT_MAPPING > PIPELINE_MAPPING > RUNNER_RULE > USER > NONE). Interactive spend - serverless SQL-warehouse queries and AI serving (MODEL_SERVING/VECTOR_SEARCH/FOUNDATION_MODEL_TRAINING/AGENT_EVALUATION), never job-run - bills the mapped runner as AD_HOC BEFORE any tag; tags catch the remainder (NULL/unmapped run_as, job-launched ai_query). Jobs and all other automated spend stay tag-first, and job cost never defaults to the runner. domain/desk derive from validity-versioned data_product_mapping. Warehouse rows carry their custom tags, so TAG/TAG_RULE apply to warehouse spend too. Products split between desks (several mapping rows, cost_split_pct summing to 1.0) fan out into one row per desk with measures scaled by the share. Exposes sku_name, usage_unit + usage_quantity (dbus = DBU-metered quantity only, 0 otherwise), cluster_id, pipeline_id, app_name, endpoint_name + serving_type. Source of truth for monthly chargeback.'
 AS
 WITH unified AS (
 
@@ -705,6 +716,7 @@ tag_rule_matches AS (
   JOIN main_dev.cost_reporting.tag_product_mapping r
     ON element_at(from_json(t.tags_json, 'map<string,string>'), r.tag_key)
        = r.tag_value
+  WHERE r.scope IN ('databricks', 'both')   -- azure-only rules never match Databricks tags
   GROUP BY t.tags_json
 ),
 
@@ -732,10 +744,26 @@ pipeline_rules AS (
   GROUP BY workspace_id, pipeline_id
 ),
 
+-- Interactive-first rows (waterfall rule 0): serverless warehouse queries
+-- and AI serving, never job-run. Computed once so the attribution COALESCE
+-- and the method label can't drift apart.
+classified AS (
+  SELECT
+    u.*,
+    (u.job_id IS NULL
+     AND ((u.usage_category = 'SQL_WAREHOUSE' AND u.is_serverless = true)
+          OR u.usage_category IN ('MODEL_SERVING', 'VECTOR_SEARCH',
+                                  'FOUNDATION_MODEL_TRAINING',
+                                  'AGENT_EVALUATION')))       AS interactive_first
+  FROM unified u
+),
+
 attributed AS (
   SELECT
     u.*,
     COALESCE(
+      CASE WHEN u.interactive_first                           -- rule 0: USER-FIRST (interactive
+            AND um.user_id IS NOT NULL THEN 'AD_HOC' END,     --   spend bills the mapped runner)
       u.tag_data_product,                                     -- rule 1: TAG
       jm.data_product,                                        -- rule 2: JOB_MAPPING
       tr.data_product,                                        -- rule 3: TAG_RULE
@@ -743,11 +771,13 @@ attributed AS (
       em.data_product,                                        -- rule 4b: ENDPOINT_MAPPING
       pm.data_product,                                        -- rule 4c: PIPELINE_MAPPING
       rr.data_product,                                        -- rule 5: RUNNER_RULE
-      CASE WHEN u.job_id IS NULL                              -- rule 6: USER (ad-hoc only,
+      CASE WHEN u.job_id IS NULL                              -- rule 6: USER (remaining ad-hoc,
             AND um.user_id IS NOT NULL THEN 'AD_HOC' END,     --   never job spend)
       'UNALLOCATED'                                           -- rule 7: NONE
     )                                            AS data_product,
     CASE
+      WHEN u.interactive_first
+       AND um.user_id         IS NOT NULL THEN 'USER'
       WHEN u.tag_data_product IS NOT NULL THEN 'TAG'
       WHEN jm.data_product    IS NOT NULL THEN 'JOB_MAPPING'
       WHEN tr.data_product    IS NOT NULL THEN 'TAG_RULE'
@@ -761,7 +791,7 @@ attributed AS (
     END                                          AS attribution_method,
     um.desk                                      AS runner_desk,
     um.user_name                                 AS runner_name
-  FROM unified u
+  FROM classified u
   LEFT JOIN main_dev.cost_reporting.job_product_mapping jm
     ON  u.workspace_id = jm.workspace_id
     AND u.job_id       = jm.job_id
@@ -909,9 +939,16 @@ GROUP BY 1, 2, 3, 4;
 --     from_json. tags_json is re-serialized key-sorted, exactly like
 --     usage_view.tags_json, so identical tag sets group together and
 --     tag rules resolve once per DISTINCT set.
+--   * The CANONICAL TAG SET (the cross-source tagging contract) is
+--     extracted exactly like usage_view extracts it from custom_tags:
+--     data_product (attribution, rule 1), provider, domain, desk and
+--     Environment (informational — domain/desk on reports always derive
+--     from data_product_mapping, never from tags). tag_environment is
+--     the Environment TAG; the export's own environment column keeps its
+--     name.
 
 CREATE OR REPLACE VIEW main_dev.cost_reporting.azure_usage_view
-COMMENT 'Daily Azure amortized cost per resource from azure_cleaned.amortized_costs, in USD. ARM ids lowercased; resource tags parsed (outer braces restored when the export omits them) and exposed as tag_data_product + key-sorted tags_json — the inputs of the Azure attribution waterfall in azure_cost_fact.'
+COMMENT 'Daily Azure amortized cost per resource from azure_cleaned.amortized_costs, in USD. ARM ids lowercased; resource tags parsed (outer braces restored when the export omits them) and exposed as tag_data_product, the canonical tag set shared with usage_view (provider, domain, tag_desk, tag_environment) and key-sorted tags_json — the inputs of the Azure attribution waterfall in azure_cost_fact.'
 AS
 WITH src AS (
   SELECT
@@ -946,6 +983,11 @@ SELECT
   application_name,
   environment,
   element_at(tag_map, 'data_product')             AS tag_data_product,
+  -- canonical tag set, same keys usage_view extracts from custom_tags
+  element_at(tag_map, 'provider')                 AS provider,
+  element_at(tag_map, 'domain')                   AS domain,
+  element_at(tag_map, 'desk')                     AS tag_desk,
+  element_at(tag_map, 'Environment')              AS tag_environment,
   -- all resource tags, key-sorted so identical tag sets group together
   to_json(map_from_entries(array_sort(map_entries(tag_map)))) AS tags_json,
   SUM(cost_in_usd)                                AS total_cost
@@ -953,14 +995,15 @@ FROM parsed
 GROUP BY
   usage_date, subscription_id, resource_group, resource_id, resource_name,
   meter_category, consumed_service, application_name, environment,
-  tag_data_product, tags_json;
+  tag_data_product, provider, domain, tag_desk, tag_environment, tags_json;
 
 -- §6A.2 azure_cost_fact — Azure attribution waterfall
 --
 --   * Waterfall (mirrors cost_fact, Azure nouns):
 --       1 TAG               data_product tag on the resource itself
 --       2 RESOURCE_MAPPING  resource_id in azure_resource_product_mapping
---       3 TAG_RULE          any resource tag matches azure_tag_product_mapping
+--       3 TAG_RULE          any resource tag matches a tag_product_mapping
+--                           rule with scope azure/both (unified table, §4.5)
 --       4 RESOURCE_GROUP    (subscription, resource group) rule
 --       5 SUBSCRIPTION      subscription rule
 --       6 NONE              UNALLOCATED — visible in coverage, never billed
@@ -980,9 +1023,10 @@ WITH tag_rule_matches AS (
     MIN_BY(r.data_product, CONCAT(r.tag_key, '=', r.tag_value)) AS data_product
   FROM (SELECT DISTINCT tags_json FROM main_dev.cost_reporting.azure_usage_view
         WHERE tags_json IS NOT NULL) t
-  JOIN main_dev.cost_reporting.azure_tag_product_mapping r
+  JOIN main_dev.cost_reporting.tag_product_mapping r
     ON element_at(from_json(t.tags_json, 'map<string,string>'), r.tag_key)
        = r.tag_value
+  WHERE r.scope IN ('azure', 'both')   -- databricks-only rules never match resource tags
   GROUP BY t.tags_json
 ),
 resource_rules AS (
@@ -1073,6 +1117,50 @@ FROM main_dev.cost_reporting.azure_cost_fact
 GROUP BY 1, 2, 3, 4, 5;
 
 -- =====================================================================
+-- §6B tagging_scorecard — the cross-source tagging KPI
+--
+-- One tagging standard, measured identically everywhere: monthly cost per
+-- attribution method for each spend source. DATABRICKS covers all of
+-- cost_fact; AI is the model-serving/vector-search/foundation-model slice
+-- of the SAME fact (a subset of DATABRICKS, broken out because AI spend
+-- has its own tagging owners); AZURE covers azure_cost_fact. TAG share
+-- rising and NONE shrinking on every source is the goal — the same
+-- data_product tag drives rule 1 of both waterfalls.
+-- =====================================================================
+
+CREATE OR REPLACE VIEW main_dev.cost_reporting.tagging_scorecard
+COMMENT 'Monthly cost per attribution method per spend source (DATABRICKS, AI, AZURE) — the cross-source tagging scorecard. AI is the AI-category slice of cost_fact and therefore a subset of DATABRICKS, never added to it. Publish alongside the chargeback report to drive data_product tagging adoption on every source with one standard.'
+AS
+WITH per_source AS (
+  SELECT 'DATABRICKS' AS source,
+         DATE_TRUNC('month', usage_date) AS billing_month,
+         attribution_method, SUM(cost) AS cost
+  FROM main_dev.cost_reporting.cost_fact
+  GROUP BY 2, 3
+  UNION ALL
+  SELECT 'AI',
+         DATE_TRUNC('month', usage_date),
+         attribution_method, SUM(cost)
+  FROM main_dev.cost_reporting.cost_fact
+  WHERE usage_category IN ('MODEL_SERVING', 'VECTOR_SEARCH',
+                           'FOUNDATION_MODEL_TRAINING', 'AGENT_EVALUATION')
+  GROUP BY 2, 3
+  UNION ALL
+  SELECT 'AZURE',
+         DATE_TRUNC('month', usage_date),
+         attribution_method, SUM(cost)
+  FROM main_dev.cost_reporting.azure_cost_fact
+  GROUP BY 2, 3
+)
+SELECT
+  source,
+  billing_month,
+  attribution_method,
+  cost,
+  cost / SUM(cost) OVER (PARTITION BY source, billing_month) AS pct_of_month
+FROM per_source;
+
+-- =====================================================================
 -- §9 Materialization targets (empty on creation; filled by the daily
 --    refresh job and the monthly publication step — see methodology §9)
 --
@@ -1092,6 +1180,28 @@ GROUP BY 1, 2, 3, 4, 5;
 --   DROP TABLE main_dev.cost_reporting.query_fact_tbl;
 --   DROP TABLE main_dev.cost_reporting.usage_fact_tbl;
 -- then rerun this script; the next refresh run refills them.
+--
+-- MIGRATION NOTE (unified tag rules): tag_product_mapping gained a scope
+-- column ('databricks' | 'azure' | 'both') and absorbed the former
+-- azure_tag_product_mapping — both waterfalls now read ONE rule table,
+-- filtered by scope. CREATE TABLE IF NOT EXISTS does not alter existing
+-- tables, so on deployments created before this change run once:
+--   ALTER TABLE main_dev.cost_reporting.tag_product_mapping
+--     ADD COLUMN scope STRING;
+--   UPDATE main_dev.cost_reporting.tag_product_mapping
+--     SET scope = 'databricks' WHERE scope IS NULL;
+--   ALTER TABLE main_dev.cost_reporting.tag_product_mapping
+--     ALTER COLUMN scope SET NOT NULL;
+--   INSERT INTO main_dev.cost_reporting.tag_product_mapping
+--     (tag_key, tag_value, data_product, note, mapped_by, mapped_at, scope)
+--   SELECT tag_key, tag_value, data_product, note, mapped_by, mapped_at,
+--          'azure'
+--   FROM main_dev.cost_reporting.azure_tag_product_mapping;
+--   DROP TABLE main_dev.cost_reporting.azure_tag_product_mapping;
+-- then rerun this script (the views must be recreated AFTER the ALTER —
+-- until then cost_fact fails on the missing scope column). Attribution is
+-- unchanged by the migration: every rule keeps matching exactly the
+-- namespace it matched before.
 -- =====================================================================
 
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.query_fact_tbl

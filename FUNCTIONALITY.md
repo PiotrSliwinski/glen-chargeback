@@ -34,9 +34,10 @@ rule, and known gap.
 
 | Area | What you can do |
 |---|---|
-| **Reference data** | Full CRUD (within the methodology's rules) on all eight Databricks mapping tables — product catalogue (versioned), job bridge, tag rules, warehouse classification, AI endpoint bridge, runner rules, users, workspaces — plus the four Azure attribution rule tables (resource bridge, Azure tag rules, resource-group rules, subscription rules) and DBU reservation-discount windows (`dbu_discount_plan`) |
+| **Reference data** | Full CRUD (within the methodology's rules) on all eight Databricks mapping tables — product catalogue (versioned), job bridge, unified tag rules (one scoped table serving Databricks AND Azure), warehouse classification, AI endpoint bridge, runner rules, users, workspaces — plus the three Azure-specific attribution rule tables (resource bridge, resource-group rules, subscription rules) and DBU reservation-discount windows (`dbu_discount_plan`) |
 | **Azure attribution** | Route Azure spend (`azure_cleaned.amortized_costs`) to the same product catalogue via an allowlist waterfall (TAG → resource bridge → tag rule → RG rule → subscription rule), with a 30-day coverage audit, per-desk rollup and a dedicated monthly Azure cost-monitoring screen (`/azure`) — only matched cost reaches a desk |
 | **Work queue** | Five actionable queues of unattributed/unmapped cost with inline, pre-filled fix forms |
+| **Attribution policy** | Category-aware waterfall in `cost_fact`: **interactive spend is user-first** — serverless SQL-warehouse queries and AI serving run by a mapped user bill that user's desk (AD_HOC) BEFORE any tag; **automated spend is tag-first** — jobs (and job-launched `ai_query` batch) and Azure resources attribute by tags/rules, and job cost never defaults to the runner. AI spend with no attributable user (NULL/unmapped `run_as`) falls to tags and the endpoint bridge |
 | **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, an AI-costs page (model serving incl. `ai_query` batch inference, per-endpoint spend), printable desk invoices, per-desk self-service pages, tagging scorecard |
 | **Exports** | 13 CSV reports + a 6-sheet XLSX report workbook |
 | **Governance** | One-click health checks (reconciliation + integrity), publication diff, gated monthly publication with typed confirmation |
@@ -155,7 +156,9 @@ badges, and the three operation forms. Every write runs the scoped §7.4 checks 
 One page for the three explicit mechanisms that route job spend to a product. **Job spend never
 defaults to the runner's home desk** — jobs are created by the data platform but their output is
 consumed by desks, so an unresolved job goes to the work queue instead of silently billing the
-platform team (the `USER` rule applies to ad-hoc spend only).
+platform team. The `USER` rule applies to non-job spend only: it fires FIRST for interactive
+spend (serverless warehouse queries, AI serving run by a mapped user) and last-resort for other
+ad-hoc spend.
 
 **Job bridge (rule 2):**
 
@@ -166,12 +169,19 @@ platform team (the `USER` rule applies to ad-hoc spend only).
   flagged "safe to remove — now tagged at source" with one-click removal (Methodology §8.3 /
   Phase 4 pruning made continuous).
 
-**Tag rules (rule 3):**
+**Tag rules (rule 3, unified):**
 
-- Any custom tag `key=value` → product; catches jobs tagged with team/project tags but no
-  `data_product` tag. One rule covers every current and future job carrying the tag.
-- Duplicate `(key, value)` rejected; conflicting rules resolve deterministically in `cost_fact`
-  (alphabetically first `key=value`) and are flagged on the health page.
+- Any tag `key=value` → product; catches workloads tagged with team/project tags but no
+  `data_product` tag. One rule covers every current and future item carrying the tag.
+- **One table for both clouds**: `tag_product_mapping` carries a `scope` column
+  (`databricks` | `azure` | `both`) and drives rule 3 of the Databricks AND the Azure
+  waterfall — the same card (with the full rule list) appears on `/admin/jobs` and
+  `/admin/azure`, only the add-form's default scope differs. `both` is for
+  organisation-wide tags that mean the same thing in either namespace.
+- Duplicate `(key, value)` with **overlapping scopes** rejected (a `databricks` rule next to
+  an `azure` rule on the same key is fine — they can never match the same record);
+  conflicting rules resolve deterministically in the facts (alphabetically first
+  `key=value`) and are flagged on the health page.
 
 **Runner rules (rule 5):**
 
@@ -206,9 +216,9 @@ platform team (the `USER` rule applies to ad-hoc spend only).
 - `user_id` is **read-only in edit forms** — it must match `executed_by` /
   `identity_metadata.run_as` byte-for-byte; wrong identity = remove + re-add from the work queue
   where the value is pre-filled from system tables.
-- Remove warns in waterfall terms: the runner's AD_HOC spend loses its desk (rule 6 stops
-  matching) and the runner resurfaces in the queue if they keep spending. The rule only ever
-  applies to ad-hoc (non-job) spend.
+- Remove warns in waterfall terms: the runner's AD_HOC spend loses its desk (the user-first
+  and rule-6 branches stop matching) and the runner resurfaces in the queue if they keep
+  spending. The rule only ever applies to non-job spend.
 
 ### 5.5 Workspaces — `/admin/workspaces` (`workspace_mapping`)
 
@@ -217,7 +227,7 @@ platform team (the `USER` rule applies to ad-hoc spend only).
 - **Schema note:** the deployed table has `workspace_id BIGINT` (methodology DDL says STRING);
   writes cast explicitly and all ID reads coerce via a shared `zId` parser.
 
-### 5.6 Azure attribution — `/admin/azure` (`azure_resource_product_mapping`, `azure_tag_product_mapping`, `azure_rg_product_mapping`, `azure_subscription_product_mapping`)
+### 5.6 Azure attribution — `/admin/azure` (`azure_resource_product_mapping`, `tag_product_mapping` scope azure/both, `azure_rg_product_mapping`, `azure_subscription_product_mapping`)
 
 Attributes Azure spend from `main_dev.azure_cleaned.amortized_costs` to **the same product
 catalogue** as Databricks spend — domain, desk, validity versioning and multi-desk % splits all
@@ -229,7 +239,7 @@ derive from `data_product_mapping`. Two views, mirroring the jobs screen:
 |---|---|---|
 | 1 `TAG` | `data_product` tag on the resource itself — always wins | tag at source |
 | 2 `RESOURCE_MAPPING` | resource bridge: one ARM resource ID → product (tech debt; janitor panel flags rows whose resource is now tagged at source; bulk re-map / bulk delete) | job bridge |
-| 3 `TAG_RULE` | any Azure resource tag `key=value` → product (separate table from the Databricks tag rules — different tag namespace) | tag rule |
+| 3 `TAG_RULE` | any Azure resource tag `key=value` → product (the UNIFIED `tag_product_mapping`, rules with scope `azure`/`both` — same table as the Databricks tag rules) | tag rule |
 | 4 `RESOURCE_GROUP` | whole (subscription, resource group) → product | dedicated warehouse |
 | 5 `SUBSCRIPTION` | whole subscription → product | runner rule |
 | 6 `NONE` | stays `UNALLOCATED` — visible in coverage, **never billed to a desk** | work queue |

@@ -1,25 +1,24 @@
 import Link from "next/link";
-import { listActiveProducts } from "@/dal/mappings";
+import { listActiveProducts, listTagRules } from "@/dal/mappings";
 import {
   getAzureDeskTotals,
   getTaggedAzureBridgeResources,
   listAzureResourceMappings,
   listAzureRgRules,
   listAzureSubscriptionRules,
-  listAzureTagRules,
 } from "@/dal/azure";
 import {
   addAzureRgRuleAction,
   addAzureSubscriptionRuleAction,
-  addAzureTagRuleAction,
   bulkDeleteAzureResourceMappingsAction,
   bulkRemapAzureResourcesAction,
   deleteAzureResourceMappingAction,
   deleteAzureRgRuleAction,
   deleteAzureSubscriptionRuleAction,
-  deleteAzureTagRuleAction,
   mapAzureResourceAction,
 } from "@/actions/azure";
+import { TagRulesCard } from "@/components/tag-rules-card";
+import { scopeCovers } from "@/lib/tag-rules";
 import { ArrowRightLeft, Plus, Sparkles, Trash2 } from "lucide-react";
 import { ActionForm, Field, SelectField } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
@@ -78,13 +77,14 @@ export async function MappingsView({
       listAzureResourceMappings(),
       listActiveProducts(),
       getTaggedAzureBridgeResources(),
-      listAzureTagRules(),
+      listTagRules(), // unified table — the same rules /admin/jobs shows
       listAzureRgRules(),
       listAzureSubscriptionRules(),
       getAzureDeskTotals(),
     ]);
   const productOptions = toProductOptions(products);
   const unmatchedCost = deskTotals.find((d) => d.desk === "UNALLOCATED")?.cost_30d ?? 0;
+  const azureRules = tagRules.filter((r) => scopeCovers(r.scope, "azure")).length;
 
   const query = q.toLowerCase();
   const shown = rows.filter(
@@ -95,7 +95,6 @@ export async function MappingsView({
         .includes(query),
   );
   const { rows: pageRows, ...bridgePaged } = paginate(shown, pages.bridge);
-  const { rows: tagRulePage, ...tagsPaged } = paginate(tagRules, pages.tags);
   const { rows: rgRulePage, ...rgsPaged } = paginate(rgRules, pages.rgs);
   const { rows: subRulePage, ...subsPaged } = paginate(subRules, pages.subs);
 
@@ -116,8 +115,8 @@ export async function MappingsView({
         />
         <KpiTile
           label="Scope rules"
-          value={`${tagRules.length} tag · ${rgRules.length} RG · ${subRules.length} sub`}
-          hint="tag, resource-group and subscription rules"
+          value={`${azureRules} tag · ${rgRules.length} RG · ${subRules.length} sub`}
+          hint="tag rules covering Azure, resource-group and subscription rules"
         />
         <KpiTile
           label="Unallocated Azure cost 30d"
@@ -356,89 +355,13 @@ export async function MappingsView({
         </BulkActionBar>
       </BulkSelect>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Tag rules — azure_tag_product_mapping</CardTitle>
-          <CardDescription className="text-xs">
-            Waterfall rule 3: any Azure resource tag key=value → product. Catches resources that
-            carry application/team tags but no data_product tag — one rule covers every resource
-            with the tag, present and future. Each resource&apos;s actual tags are visible in{" "}
-            <Link href="/admin/azure?view=coverage" className="text-indigo-600 hover:underline">
-              coverage
-            </Link>
-            . Separate from the Databricks tag rules — the two tag namespaces are unrelated.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="no-print mb-4">
-            <EditDialog
-              trigger={
-                <Button size="sm" variant="outline">
-                  <Plus aria-hidden /> Add tag rule
-                </Button>
-              }
-              title="Add Azure tag rule"
-              description="Key and value must match the resource tags in the cost export exactly (case-sensitive)."
-            >
-              <ActionForm action={addAzureTagRuleAction} submitLabel="Add rule" resetOnSuccess>
-                <Field label="Tag key" name="tag_key" placeholder="application" />
-                <Field label="Tag value" name="tag_value" placeholder="curves" />
-                <SelectField label="Data product" name="data_product" options={productOptions} />
-                <Field label="Note (why this rule)" name="note" required={false} />
-              </ActionForm>
-            </EditDialog>
-          </div>
-          {tagRules.length === 0 ? (
-            <EmptyState message="No tag rules. Add one to route cost by application/team tags when the data_product tag is missing." />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tag</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead>Note</TableHead>
-                  <TableHead>Mapped by / at</TableHead>
-                  <TableHead>
-                    <span className="sr-only">Actions</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tagRulePage.map((r) => (
-                  <TableRow key={`${r.tag_key}|${r.tag_value}`}>
-                    <TableCell className="font-mono text-xs">
-                      {r.tag_key}={r.tag_value}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{r.data_product}</TableCell>
-                    <TableCell className="text-xs">{r.note ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {r.mapped_by ?? "—"}
-                      {r.mapped_at && <> · {r.mapped_at.slice(0, 10)}</>}
-                    </TableCell>
-                    <TableCell>
-                      <EditDialog
-                        trigger={<RowAction danger>Remove</RowAction>}
-                        title={`Remove rule ${r.tag_key}=${r.tag_value}?`}
-                        description="Cost carried by this rule falls back to scope rules — or stays unallocated."
-                      >
-                        <ActionForm
-                          action={deleteAzureTagRuleAction}
-                          submitLabel="Remove rule"
-                          danger
-                        >
-                          <input type="hidden" name="tag_key" value={r.tag_key} />
-                          <input type="hidden" name="tag_value" value={r.tag_value} />
-                        </ActionForm>
-                      </EditDialog>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-          <TablePagination {...tagsPaged} noun="tag rule" paramName="tagsPage" />
-        </CardContent>
-      </Card>
+      <TagRulesCard
+        rules={tagRules}
+        productOptions={productOptions}
+        defaultScope="azure"
+        pageCursor={pages.tags}
+        coverageHref="/admin/azure?view=coverage"
+      />
 
       <Card className="mt-6">
         <CardHeader>

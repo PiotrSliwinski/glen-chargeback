@@ -100,51 +100,9 @@ export async function bulkRemapAzureResourcesAction(
   });
 }
 
-// ============================== tag rules ==============================
-
-const AddTagRule = z.object({
-  tag_key: z.string().min(1),
-  tag_value: z.string().min(1),
-  data_product: z.string().min(1),
-  note: optionalText,
-});
-
-export async function addAzureTagRuleAction(
-  _prev: ActionResult | null,
-  formData: FormData,
-): Promise<ActionResult> {
-  return runAction("steward", async (actor) => {
-    const input = parseForm(formData, AddTagRule);
-    await assertProductExists(input.data_product);
-    const existing = await dal.listAzureTagRules();
-    if (existing.some((r) => r.tag_key === input.tag_key && r.tag_value === input.tag_value)) {
-      throw new DomainError(
-        "DUPLICATE_KEY",
-        `a rule for Azure tag ${input.tag_key}=${input.tag_value} already exists`,
-      );
-    }
-    await dal.insertAzureTagRule(input, actor);
-    invalidateAzure();
-    return `Rule created: Azure tag ${input.tag_key}=${input.tag_value} → '${input.data_product}'. Applies to all past and future cost carrying that tag.`;
-  });
-}
-
-const DeleteTagRule = z.object({
-  tag_key: z.string().min(1),
-  tag_value: z.string().min(1),
-});
-
-export async function deleteAzureTagRuleAction(
-  _prev: ActionResult | null,
-  formData: FormData,
-): Promise<ActionResult> {
-  return runAction("steward", async () => {
-    const input = parseForm(formData, DeleteTagRule);
-    await dal.deleteAzureTagRule(input.tag_key, input.tag_value);
-    invalidateAzure();
-    return `Rule removed for Azure tag ${input.tag_key}=${input.tag_value}. Cost it carried falls back to scope rules — or stays unallocated.`;
-  });
-}
+// Tag rules are unified — addTagRuleAction / deleteTagRuleAction in
+// actions/mappings handle Azure-scoped rules too (they invalidate the
+// 'azure' cache whenever the rule's scope covers Azure).
 
 // ============================== resource-group rules ==============================
 

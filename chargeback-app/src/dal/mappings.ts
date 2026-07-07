@@ -4,12 +4,14 @@ import { env } from "@/lib/env";
 import { exec, query, T, type SqlParam } from "@/dal/client";
 import { mockStore } from "@/dal/mock";
 import { zDate, zDateOrNull, zId, zNum, zStr, zStrOrNull, zTimestampOrNull } from "@/dal/parse";
+import { scopeCovers } from "@/lib/tag-rules";
 import type {
   DataProductRow,
   EndpointMappingRow,
   JobMappingRow,
   RunnerRuleRow,
   TagRuleRow,
+  TagRuleScope,
   UserMappingRow,
   WarehouseMappingRow,
   WorkspaceMappingRow,
@@ -88,19 +90,21 @@ export async function listJobMappings(): Promise<JobMappingRow[]> {
   );
 }
 
+/** ALL unified tag rules — Databricks, Azure and both-scoped alike. */
 export async function listTagRules(): Promise<TagRuleRow[]> {
   "use cache";
   cacheLife("warehouse");
   cacheTag("mappings");
   if (env.DAL_MOCK) return [...mockStore.tagRules];
   return query(
-    `SELECT tag_key, tag_value, data_product, note, mapped_by, mapped_at
-     FROM ${T("tag_product_mapping")} ORDER BY tag_key, tag_value`,
+    `SELECT tag_key, tag_value, data_product, scope, note, mapped_by, mapped_at
+     FROM ${T("tag_product_mapping")} ORDER BY tag_key, tag_value, scope`,
     {},
     z.object({
       tag_key: zStr,
       tag_value: zStr,
       data_product: zStr,
+      scope: z.enum(["databricks", "azure", "both"]),
       note: zStrOrNull,
       mapped_by: zStrOrNull,
       mapped_at: zTimestampOrNull,
@@ -528,64 +532,105 @@ function mockActiveDesk(data_product: string): string {
 }
 
 export async function insertTagRule(
-  row: { tag_key: string; tag_value: string; data_product: string; note: string | null },
+  row: {
+    tag_key: string;
+    tag_value: string;
+    data_product: string;
+    scope: TagRuleScope;
+    note: string | null;
+  },
   actor: string,
 ): Promise<void> {
   if (env.DAL_MOCK) {
     mockStore.tagRules.push({ ...row, mapped_by: actor, mapped_at: now() });
-    // cost_fact is a view — NONE rows whose tags carry key=value re-attribute
     const desk = mockActiveDesk(row.data_product);
-    const matched = new Set<string>();
-    for (const a of mockStore.jobAttributions) {
-      if (a.attribution_method !== "NONE" || !a.tags_json) continue;
-      let tags: Record<string, string>;
-      try {
-        tags = JSON.parse(a.tags_json);
-      } catch {
-        continue;
+    // both facts are views — NONE rows whose tags carry key=value
+    // re-attribute on every side the rule's scope covers
+    if (scopeCovers(row.scope, "databricks")) {
+      const matched = new Set<string>();
+      for (const a of mockStore.jobAttributions) {
+        if (a.attribution_method !== "NONE" || !a.tags_json) continue;
+        let tags: Record<string, string>;
+        try {
+          tags = JSON.parse(a.tags_json);
+        } catch {
+          continue;
+        }
+        if (tags[row.tag_key] === row.tag_value) {
+          a.attribution_method = "TAG_RULE";
+          a.data_product = row.data_product;
+          a.desk = desk;
+          matched.add(`${a.workspace_id}|${a.job_id}`);
+        }
       }
-      if (tags[row.tag_key] === row.tag_value) {
-        a.attribution_method = "TAG_RULE";
-        a.data_product = row.data_product;
-        a.desk = desk;
-        matched.add(`${a.workspace_id}|${a.job_id}`);
+      mockStore.queueUntaggedJobs = mockStore.queueUntaggedJobs.filter(
+        (q) => !matched.has(`${q.workspace_id}|${q.job_id}`),
+      );
+    }
+    if (scopeCovers(row.scope, "azure")) {
+      for (const a of mockStore.azureAttributions) {
+        if (a.attribution_method !== "NONE" || !a.tags_json) continue;
+        let tags: Record<string, string>;
+        try {
+          tags = JSON.parse(a.tags_json);
+        } catch {
+          continue;
+        }
+        if (tags[row.tag_key] === row.tag_value) {
+          a.attribution_method = "TAG_RULE";
+          a.data_product = row.data_product;
+          a.desk = desk;
+        }
       }
     }
-    mockStore.queueUntaggedJobs = mockStore.queueUntaggedJobs.filter(
-      (q) => !matched.has(`${q.workspace_id}|${q.job_id}`),
-    );
     return;
   }
   await exec(
     `INSERT INTO ${T("tag_product_mapping")}
-       (tag_key, tag_value, data_product, note, mapped_by, mapped_at)
-     VALUES (:tag_key, :tag_value, :data_product, :note, :actor, current_timestamp())`,
+       (tag_key, tag_value, data_product, note, mapped_by, mapped_at, scope)
+     VALUES (:tag_key, :tag_value, :data_product, :note, :actor, current_timestamp(), :scope)`,
     { ...row, actor },
   );
 }
 
-export async function deleteTagRule(tag_key: string, tag_value: string): Promise<void> {
+export async function deleteTagRule(
+  tag_key: string,
+  tag_value: string,
+  scope: TagRuleScope,
+): Promise<void> {
   if (env.DAL_MOCK) {
     const rule = mockStore.tagRules.find(
-      (r) => r.tag_key === tag_key && r.tag_value === tag_value,
+      (r) => r.tag_key === tag_key && r.tag_value === tag_value && r.scope === scope,
     );
     mockStore.tagRules = mockStore.tagRules.filter(
-      (r) => !(r.tag_key === tag_key && r.tag_value === tag_value),
+      (r) => !(r.tag_key === tag_key && r.tag_value === tag_value && r.scope === scope),
     );
-    // rows the rule carried fall back to NONE
-    for (const a of mockStore.jobAttributions) {
-      if (a.attribution_method === "TAG_RULE" && a.data_product === rule?.data_product) {
-        a.attribution_method = "NONE";
-        a.data_product = "UNALLOCATED";
-        a.desk = "UNALLOCATED";
+    if (!rule) return;
+    // rows the rule carried fall back to NONE, on every side it covered
+    if (scopeCovers(rule.scope, "databricks")) {
+      for (const a of mockStore.jobAttributions) {
+        if (a.attribution_method === "TAG_RULE" && a.data_product === rule.data_product) {
+          a.attribution_method = "NONE";
+          a.data_product = "UNALLOCATED";
+          a.desk = "UNALLOCATED";
+        }
+      }
+    }
+    if (scopeCovers(rule.scope, "azure")) {
+      for (const a of mockStore.azureAttributions) {
+        if (a.attribution_method === "TAG_RULE" && a.data_product === rule.data_product) {
+          a.attribution_method = "NONE";
+          a.data_product = "UNALLOCATED";
+          a.desk = "UNALLOCATED";
+        }
       }
     }
     return;
   }
   await exec(
     `DELETE FROM ${T("tag_product_mapping")}
-     WHERE tag_key = :tag_key AND tag_value = :tag_value`,
-    { tag_key, tag_value },
+     WHERE tag_key = :tag_key AND tag_value = :tag_value AND scope = :scope`,
+    { tag_key, tag_value, scope },
   );
 }
 
@@ -747,6 +792,21 @@ export async function upsertUsers(rows: UserMappingRow[]): Promise<void> {
       (q) => !ids.has(q.runner),
     );
     mockStore.unmappedRunners = mockStore.unmappedRunners.filter((g) => !ids.has(g.runner));
+    // AI serving is user-first — mapping a runner claims their unattributed
+    // serving rows, and a desk move re-routes their USER rows
+    for (const row of rows) {
+      for (const a of mockStore.aiEndpointUsage) {
+        if (a.runner !== row.user_id) continue;
+        if (a.attribution_method === "NONE") {
+          a.attribution_method = "USER";
+          a.data_product = "AD_HOC";
+        }
+        if (a.attribution_method === "USER") {
+          a.desk = row.desk;
+          a.runner_name = row.user_name;
+        }
+      }
+    }
     return;
   }
   // One MERGE for the whole batch: every statement is a full warehouse round

@@ -7,7 +7,7 @@ import { mockStore } from "@/dal/mock";
 import { zMonth, zNum, zStr } from "@/dal/parse";
 import type { DeskScorecardRow } from "@/dal/desks";
 import type { ProductMovementRow } from "@/dal/movement";
-import type { CoverageRow, MonthlyChargebackRow } from "@/dal/types";
+import type { CoverageRow, MonthlyChargebackRow, SourceTaggingScore } from "@/dal/types";
 
 /**
  * Advanced-analytics layer: trailing-12-month reads (always live — trends
@@ -77,6 +77,75 @@ export async function getCoverageTrend(month: string): Promise<CoverageRow[]> {
       pct_of_month: zNum,
     }) as z.ZodType<CoverageRow>,
   );
+}
+
+/**
+ * The month's tagging scorecard across ALL spend sources (tagging_scorecard
+ * view): Databricks, its AI slice, and Azure measured against the same
+ * standard — cost tagged at source (TAG) vs carried by rules vs unallocated.
+ * AI ⊂ DATABRICKS, so the rows are compared, never summed. Cached under both
+ * report tags: tag-rule edits re-attribute either side.
+ */
+export async function getTaggingScorecard(month: string): Promise<SourceTaggingScore[]> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("reports-live", "azure");
+  if (env.DAL_MOCK) {
+    const f = mockStore.monthFactor[month] ?? 0;
+    const bucket = (method: string): keyof Omit<SourceTaggingScore, "source" | "total_cost"> =>
+      method === "TAG" ? "tag_cost" : method === "NONE" ? "unallocated_cost" : "rule_cost";
+    const empty = (source: SourceTaggingScore["source"]): SourceTaggingScore => ({
+      source,
+      total_cost: 0,
+      tag_cost: 0,
+      rule_cost: 0,
+      unallocated_cost: 0,
+    });
+    const databricks = empty("DATABRICKS");
+    for (const c of mockStore.coverage) {
+      if (c.billing_month !== month) continue;
+      databricks[bucket(c.attribution_method)] += c.cost;
+      databricks.total_cost += c.cost;
+    }
+    const ai = empty("AI");
+    for (const r of mockStore.aiEndpointUsage) {
+      const cost = Math.round(r.cost * f * 100) / 100;
+      ai[bucket(r.attribution_method)] += cost;
+      ai.total_cost += cost;
+    }
+    const azure = empty("AZURE");
+    for (const a of mockStore.azureAttributions) {
+      const cost = Math.round(a.cost_30d * f * 100) / 100;
+      azure[bucket(a.attribution_method)] += cost;
+      azure.total_cost += cost;
+    }
+    return [databricks, ai, azure].filter((s) => s.total_cost > 0);
+  }
+  const rows = await query(
+    `SELECT source, attribution_method, SUM(cost) AS cost
+     FROM ${T("tagging_scorecard")}
+     WHERE billing_month = :month
+     GROUP BY 1, 2`,
+    { month: monthStart(month) },
+    z.object({ source: zStr, attribution_method: zStr, cost: zNum }),
+  );
+  const order: SourceTaggingScore["source"][] = ["DATABRICKS", "AI", "AZURE"];
+  const bySource = new Map<string, SourceTaggingScore>();
+  for (const r of rows) {
+    const s = bySource.get(r.source) ?? {
+      source: r.source as SourceTaggingScore["source"],
+      total_cost: 0,
+      tag_cost: 0,
+      rule_cost: 0,
+      unallocated_cost: 0,
+    };
+    s.total_cost += r.cost;
+    if (r.attribution_method === "TAG") s.tag_cost += r.cost;
+    else if (r.attribution_method === "NONE") s.unallocated_cost += r.cost;
+    else s.rule_cost += r.cost;
+    bySource.set(r.source, s);
+  }
+  return order.flatMap((s) => bySource.get(s) ?? []);
 }
 
 /** Cost per (month, entity) over the trailing 12 months — sparkline feed. */

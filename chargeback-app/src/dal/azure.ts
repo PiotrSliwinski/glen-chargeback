@@ -15,16 +15,17 @@ import type {
   AzureResourceMappingRow,
   AzureRgRuleRow,
   AzureSubscriptionRuleRow,
-  AzureTagRuleRow,
   AzureTrendPoint,
 } from "@/dal/types";
 
 /**
- * Azure attribution: the four Azure rule tables (setup.sql §4A) and the
+ * Azure attribution: the Azure-specific rule tables (setup.sql §4A) and the
  * coverage reads over azure_cost_fact (§6A). Same shape as dal/mappings —
  * plain persistence, cached under 'azure'; every write stamps mapped_by /
  * mapped_at. Rules point at the SHARED product catalogue, so desk/domain
  * and multi-desk splits derive from data_product_mapping like everywhere.
+ * Tag rules (Azure rule 3) live in the UNIFIED tag_product_mapping —
+ * dal/mappings owns them; rules with scope azure/both apply here.
  * ARM identifiers are lowercased at the write boundary — azure_usage_view
  * lowercases the fact side, so the join only works if rules match.
  */
@@ -52,26 +53,6 @@ export async function listAzureResourceMappings(): Promise<AzureResourceMappingR
       mapped_by: zStrOrNull,
       mapped_at: zTimestampOrNull,
     }) as z.ZodType<AzureResourceMappingRow>,
-  );
-}
-
-export async function listAzureTagRules(): Promise<AzureTagRuleRow[]> {
-  "use cache";
-  cacheLife("warehouse");
-  cacheTag("azure");
-  if (env.DAL_MOCK) return [...mockStore.azureTagRules];
-  return query(
-    `SELECT tag_key, tag_value, data_product, note, mapped_by, mapped_at
-     FROM ${T("azure_tag_product_mapping")} ORDER BY tag_key, tag_value`,
-    {},
-    z.object({
-      tag_key: zStr,
-      tag_value: zStr,
-      data_product: zStr,
-      note: zStrOrNull,
-      mapped_by: zStrOrNull,
-      mapped_at: zTimestampOrNull,
-    }) as z.ZodType<AzureTagRuleRow>,
   );
 }
 
@@ -585,62 +566,9 @@ export async function remapAzureResources(
   );
 }
 
-export async function insertAzureTagRule(
-  row: { tag_key: string; tag_value: string; data_product: string; note: string | null },
-  actor: string,
-): Promise<void> {
-  if (env.DAL_MOCK) {
-    mockStore.azureTagRules.push({ ...row, mapped_by: actor, mapped_at: now() });
-    // NONE rows whose resource tags carry key=value re-attribute
-    const desk = mockActiveDesk(row.data_product);
-    for (const a of mockStore.azureAttributions) {
-      if (a.attribution_method !== "NONE" || !a.tags_json) continue;
-      let tags: Record<string, string>;
-      try {
-        tags = JSON.parse(a.tags_json);
-      } catch {
-        continue;
-      }
-      if (tags[row.tag_key] === row.tag_value) {
-        a.attribution_method = "TAG_RULE";
-        a.data_product = row.data_product;
-        a.desk = desk;
-      }
-    }
-    return;
-  }
-  await exec(
-    `INSERT INTO ${T("azure_tag_product_mapping")}
-       (tag_key, tag_value, data_product, note, mapped_by, mapped_at)
-     VALUES (:tag_key, :tag_value, :data_product, :note, :actor, current_timestamp())`,
-    { ...row, actor },
-  );
-}
-
-export async function deleteAzureTagRule(tag_key: string, tag_value: string): Promise<void> {
-  if (env.DAL_MOCK) {
-    const rule = mockStore.azureTagRules.find(
-      (r) => r.tag_key === tag_key && r.tag_value === tag_value,
-    );
-    mockStore.azureTagRules = mockStore.azureTagRules.filter(
-      (r) => !(r.tag_key === tag_key && r.tag_value === tag_value),
-    );
-    // rows the rule carried fall back to NONE
-    for (const a of mockStore.azureAttributions) {
-      if (a.attribution_method === "TAG_RULE" && a.data_product === rule?.data_product) {
-        a.attribution_method = "NONE";
-        a.data_product = "UNALLOCATED";
-        a.desk = "UNALLOCATED";
-      }
-    }
-    return;
-  }
-  await exec(
-    `DELETE FROM ${T("azure_tag_product_mapping")}
-     WHERE tag_key = :tag_key AND tag_value = :tag_value`,
-    { tag_key, tag_value },
-  );
-}
+// Azure tag rules (rule 3) are unified into tag_product_mapping —
+// insertTagRule / deleteTagRule in dal/mappings handle them (scope
+// azure/both), including the mock re-attribution of azureAttributions.
 
 export async function insertAzureRgRule(
   row: {
