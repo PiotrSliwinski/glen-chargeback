@@ -2,6 +2,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { query, T } from "@/dal/client";
+import { getRunnerActivity30d } from "@/dal/insights";
 import { listUsers } from "@/dal/mappings";
 import { mockStore } from "@/dal/mock";
 import { zId, zIdOrNull, zNum, zStr, zStrOrNull } from "@/dal/parse";
@@ -44,40 +45,21 @@ export async function getUntaggedJobs(): Promise<UntaggedJobRow[]> {
   );
 }
 
-/**
- * Inner scan behind getUnknownRunners, deliberately independent of
- * user_mapping membership: top runner spend of the last 30 days, mapped or
- * not. Saving a user must not re-run this scan inline (it froze the save
- * dialog), so membership filtering lives in the cheap "mappings"-tagged
- * wrapper below. LIMIT 500 leaves headroom for that filter to still fill a
- * top-50 unknown list even when the biggest spenders are already mapped.
- */
-async function getRunnerSpend30d(): Promise<UnknownRunnerRow[]> {
-  "use cache";
-  cacheLife("warehouse");
-  cacheTag("queue");
-  return query(
-    `SELECT runner, SUM(cost) AS cost_30d, COUNT(*) AS rows_30d
-     FROM ${T("cost_fact")}
-     WHERE usage_date >= current_date() - INTERVAL 30 DAYS
-       AND runner IS NOT NULL
-       AND runner <> 'UNALLOCATED_IDLE'
-     GROUP BY 1 ORDER BY 2 DESC LIMIT 500`,
-    {},
-    z.object({ runner: zStr, cost_30d: zNum, rows_30d: zNum }) as z.ZodType<UnknownRunnerRow>,
-  );
-}
-
 export async function getUnknownRunners(): Promise<UnknownRunnerRow[]> {
   "use cache";
   cacheLife("warehouse");
   // Also "mappings"-tagged: a user save recomputes this instantly from the
-  // cached spend scan + one user_mapping read instead of a cost_fact scan.
+  // cached shared activity scan + one user_mapping read instead of a
+  // cost_fact scan (the scan itself must not re-run inline — it froze the
+  // save dialog).
   cacheTag("queue", "mappings");
   if (env.DAL_MOCK) return [...mockStore.queueUnknownRunners];
-  const [spend, users] = await Promise.all([getRunnerSpend30d(), listUsers()]);
+  const [activity, users] = await Promise.all([getRunnerActivity30d(), listUsers()]);
   const mapped = new Set(users.map((u) => u.user_id));
-  return spend.filter((r) => !mapped.has(r.runner)).slice(0, 50);
+  return activity
+    .filter((r) => !mapped.has(r.runner))
+    .slice(0, 50)
+    .map((r) => ({ runner: r.runner, cost_30d: r.cost_30d, rows_30d: r.rows_30d }));
 }
 
 export async function getUnknownWorkspaces(): Promise<UnknownWorkspaceRow[]> {

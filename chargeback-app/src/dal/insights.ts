@@ -2,6 +2,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { query, T } from "@/dal/client";
+import { listUsers } from "@/dal/mappings";
 import { mockStore } from "@/dal/mock";
 import { zDate, zId, zNum, zStr, zStrOrNull } from "@/dal/parse";
 import type { JobAttributionRow, UnmappedRunnerRow } from "@/dal/types";
@@ -13,19 +14,17 @@ import type { JobAttributionRow, UnmappedRunnerRow } from "@/dal/types";
  */
 
 /**
- * ALL runners with spend in the trailing 30 days who are NOT in user_mapping —
- * humans and service principals (GUID application ids) alike. No is_serverless
- * filter: SPNs mostly run classic job compute (is_serverless = false, or NULL
- * on per-query warehouse rows), so a serverless-only scan silently hides them.
- * Serverless spend is broken out as a column instead, because that slice is
- * the one the USER rule (waterfall rule 6) can never catch while unmapped.
+ * Inner scan shared by getUnmappedRunners and the work queue's unknown
+ * runners: per-runner 30-day activity regardless of user_mapping membership.
+ * Deliberately membership-independent so user saves never re-run it — the
+ * membership filter lives in the cheap "mappings"-tagged wrappers. LIMIT 500
+ * leaves headroom for those filters to still fill their lists even when the
+ * biggest spenders are already mapped.
  */
-export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
+export async function getRunnerActivity30d(): Promise<UnmappedRunnerRow[]> {
   "use cache";
   cacheLife("warehouse");
   cacheTag("queue");
-  cacheTag("mappings");
-  if (env.DAL_MOCK) return [...mockStore.unmappedRunners];
   return query(
     `SELECT runner,
             SUM(cost)                    AS cost_30d,
@@ -39,8 +38,7 @@ export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
      WHERE usage_date >= current_date() - INTERVAL 30 DAYS
        AND runner IS NOT NULL
        AND runner <> 'UNALLOCATED_IDLE'
-       AND runner NOT IN (SELECT user_id FROM ${T("user_mapping")})
-     GROUP BY runner ORDER BY cost_30d DESC LIMIT 100`,
+     GROUP BY runner ORDER BY cost_30d DESC LIMIT 500`,
     {},
     z.object({
       runner: zStr,
@@ -53,6 +51,26 @@ export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
       last_seen: zDate,
     }) as z.ZodType<UnmappedRunnerRow>,
   );
+}
+
+/**
+ * ALL runners with spend in the trailing 30 days who are NOT in user_mapping —
+ * humans and service principals (GUID application ids) alike. No is_serverless
+ * filter: SPNs mostly run classic job compute (is_serverless = false, or NULL
+ * on per-query warehouse rows), so a serverless-only scan silently hides them.
+ * Serverless spend is broken out as a column instead, because that slice is
+ * the one the USER rule (waterfall rule 6) can never catch while unmapped.
+ */
+export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
+  "use cache";
+  cacheLife("warehouse");
+  // Also "mappings"-tagged: a user save (or panel re-scan right after one)
+  // recomputes this from the cached activity scan + one user_mapping read.
+  cacheTag("queue", "mappings");
+  if (env.DAL_MOCK) return [...mockStore.unmappedRunners];
+  const [activity, users] = await Promise.all([getRunnerActivity30d(), listUsers()]);
+  const mapped = new Set(users.map((u) => u.user_id));
+  return activity.filter((r) => !mapped.has(r.runner)).slice(0, 100);
 }
 
 /**
