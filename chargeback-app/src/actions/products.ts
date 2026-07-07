@@ -3,8 +3,10 @@
 import { updateTag } from "next/cache";
 import { z } from "zod";
 import type { ActionResult } from "@/lib/action-result";
-import { dateString, optionalText, parseForm, runAction } from "@/actions/run";
+import { dateString, formList, optionalText, parseForm, runAction } from "@/actions/run";
 import * as catalogue from "@/services/productCatalogue";
+import { listActiveProducts } from "@/dal/mappings";
+import { DomainError } from "@/services/errors";
 
 function invalidateCatalogue() {
   updateTag("catalogue");
@@ -64,6 +66,54 @@ export async function createProductAction(
     await catalogue.createProduct(input, actor);
     invalidateCatalogue();
     return `Product '${input.data_product}' registered on ${describeSplits(input.splits)} (valid from ${input.valid_from}).`;
+  });
+}
+
+const BulkCreateProducts = z.object({
+  data_domain: z.string().min(1),
+  splits: splitsField,
+  valid_from: dateString,
+});
+
+/**
+ * Work-queue bulk fix: register several rogue tags as products under one
+ * domain and desk split. The whole batch is validated before the first
+ * insert (key format, no active duplicates), so a bad tag rejects the batch
+ * instead of committing half of it.
+ */
+export async function bulkCreateProductsAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async (actor) => {
+    const keys = [...new Set(formList(formData, "data_products"))];
+    const input = parseForm(formData, BulkCreateProducts);
+    const badKeys = keys.filter((k) => !catalogue.PRODUCT_KEY_RE.test(k));
+    if (badKeys.length > 0) {
+      throw new DomainError(
+        "BAD_KEY_FORMAT",
+        `not a valid product key (likely a typo to fix at source instead): ${badKeys.join(", ")}`,
+      );
+    }
+    const active = new Set((await listActiveProducts()).map((p) => p.data_product));
+    const dupes = keys.filter((k) => active.has(k));
+    if (dupes.length > 0) {
+      throw new DomainError("DUPLICATE_KEY", `already in the catalogue: ${dupes.join(", ")}`);
+    }
+    for (const data_product of keys) {
+      await catalogue.createProduct(
+        {
+          data_product,
+          data_domain: input.data_domain,
+          splits: input.splits,
+          product_owner: null,
+          valid_from: input.valid_from,
+        },
+        actor,
+      );
+    }
+    invalidateCatalogue();
+    return `${keys.length} product${keys.length > 1 ? "s" : ""} registered in ${input.data_domain} on ${describeSplits(input.splits)} (valid from ${input.valid_from}).`;
   });
 }
 

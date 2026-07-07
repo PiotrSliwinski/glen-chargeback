@@ -17,14 +17,16 @@ import {
 import { listActiveProducts, listUsers, listWorkspaces } from "@/dal/mappings";
 import {
   assignWarehouseAction,
+  bulkAddUsersAction,
   bulkAssignWarehousesAction,
   bulkMapJobsAction,
   mapJobAction,
   upsertUserAction,
   upsertWorkspaceAction,
 } from "@/actions/mappings";
-import { createProductAction } from "@/actions/products";
-import { ArrowRightLeft, Download, Tags } from "lucide-react";
+import { bulkCreateProductsAction, createProductAction } from "@/actions/products";
+import { PRODUCT_KEY_RE } from "@/services/productCatalogue";
+import { ArrowRightLeft, Download, PackagePlus, Tags, UserPlus } from "lucide-react";
 import { ActionForm, DatalistField, Field, SelectField } from "@/components/action-form";
 import {
   BulkActionBar,
@@ -35,6 +37,7 @@ import {
   BulkSelectedInputs,
 } from "@/components/bulk-select";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
+import { SplitEditor } from "@/components/split-editor";
 import { SpNameField } from "@/components/unmapped-runners-body";
 import { EmptyState, KpiTile, PageTitle } from "@/components/ui";
 import { Badge } from "@/components/ui/badge";
@@ -349,11 +352,15 @@ async function UnknownRunnersTab({
   if (all.length === 0) return <EmptyState message="Every spending runner is mapped." />;
   const { rows, ...paged } = paginate(all, page);
   return (
+    <BulkSelect values={rows.map((r) => r.runner)}>
     <Card>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <BulkCheckboxAll label="Select all runners on this page" />
+              </TableHead>
               <TableHead>Runner (as in system tables)</TableHead>
               <TableHead className="text-right">Cost 30d</TableHead>
               <TableHead className="text-right">Rows 30d</TableHead>
@@ -365,6 +372,9 @@ async function UnknownRunnersTab({
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.runner}>
+                <TableCell>
+                  <BulkCheckbox value={r.runner} label={`Select runner ${r.runner}`} />
+                </TableCell>
                 <TableCell>
                   <span className="font-mono text-xs">{r.runner}</span>
                   {isServicePrincipal(r.runner) && (
@@ -399,6 +409,24 @@ async function UnknownRunnersTab({
         <TablePagination {...paged} noun="unknown runner" />
       </CardContent>
     </Card>
+    <BulkActionBar noun="runner">
+      <EditDialog
+        trigger={
+          <Button variant="outline" size="sm">
+            <UserPlus aria-hidden /> Add selected to desk
+          </Button>
+        }
+        title="Add selected runners to one desk"
+        description="Registers every selected runner on the chosen desk. Display names default to the raw identity — refine them under Reference data → Users."
+      >
+        <ActionForm action={bulkAddUsersAction} submitLabel="Add to desk">
+          <BulkSelectedInputs name="user_ids" />
+          <DatalistField label="Desk" name="desk" options={deskOptions} />
+          <BulkAppliesTo noun="runner" />
+        </ActionForm>
+      </EditDialog>
+    </BulkActionBar>
+    </BulkSelect>
   );
 }
 
@@ -462,7 +490,13 @@ async function RogueTagsTab({
   if (all.length === 0)
     return <EmptyState message="Every tag in use matches the product catalogue." />;
   const { rows, ...paged } = paginate(all, page);
+  // Only tags that are valid product keys can be registered; the rest are
+  // typos to fix at source and must not enter a bulk batch.
+  const registrableTags = rows
+    .map((r) => r.raw_tag_data_product)
+    .filter((t) => PRODUCT_KEY_RE.test(t));
   return (
+    <BulkSelect values={registrableTags}>
     <Card>
       <CardContent>
         <p className="mb-3 text-xs text-muted-foreground">
@@ -472,6 +506,9 @@ async function RogueTagsTab({
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8">
+                <BulkCheckboxAll label="Select all registrable tags on this page" />
+              </TableHead>
               <TableHead>Tag value</TableHead>
               <TableHead className="text-right">Cost 30d</TableHead>
               <TableHead className="text-right">Rows 30d</TableHead>
@@ -483,6 +520,14 @@ async function RogueTagsTab({
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.raw_tag_data_product}>
+                <TableCell>
+                  {PRODUCT_KEY_RE.test(r.raw_tag_data_product) && (
+                    <BulkCheckbox
+                      value={r.raw_tag_data_product}
+                      label={`Select tag ${r.raw_tag_data_product}`}
+                    />
+                  )}
+                </TableCell>
                 <TableCell className="font-mono text-xs">{r.raw_tag_data_product}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(r.cost_30d)}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtInt(r.rows_30d)}</TableCell>
@@ -500,7 +545,7 @@ async function RogueTagsTab({
                         readOnly
                       />
                       <Field label="Data domain" name="data_domain" placeholder="e.g. market-data" />
-                      <DatalistField label="Desk" name="desk" options={deskOptions} />
+                      <SplitEditor deskOptions={deskOptions} />
                       <Field label="Product owner" name="product_owner" required={false} />
                       <Field
                         label="Valid from"
@@ -518,6 +563,31 @@ async function RogueTagsTab({
         <TablePagination {...paged} noun="rogue tag" />
       </CardContent>
     </Card>
+    <BulkActionBar noun="tag">
+      <EditDialog
+        trigger={
+          <Button variant="outline" size="sm">
+            <PackagePlus aria-hidden /> Register selected as products
+          </Button>
+        }
+        title="Register selected tags as products"
+        description="Creates one catalogue product per selected tag, all under the same domain and desk split. Typos should be fixed at source instead — only valid product keys are selectable."
+      >
+        <ActionForm action={bulkCreateProductsAction} submitLabel="Register as products">
+          <BulkSelectedInputs name="data_products" />
+          <Field label="Data domain" name="data_domain" placeholder="e.g. market-data" />
+          <SplitEditor deskOptions={deskOptions} />
+          <Field
+            label="Valid from"
+            name="valid_from"
+            type="date"
+            defaultValue={firstOfNextMonth()}
+          />
+          <BulkAppliesTo noun="tag" />
+        </ActionForm>
+      </EditDialog>
+    </BulkActionBar>
+    </BulkSelect>
   );
 }
 

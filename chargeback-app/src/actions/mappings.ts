@@ -397,6 +397,33 @@ export async function bulkAssignWarehousesAction(
   });
 }
 
+const BulkAddUsers = z.object({ desk: z.string().min(1) });
+
+/**
+ * Work-queue bulk fix: register unknown runners on one desk. Display names
+ * default to the raw identity (refine later under Reference data → Users);
+ * runners already in user_mapping keep their existing name and only move desk.
+ */
+export async function bulkAddUsersAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const ids = [...new Set(formList(formData, "user_ids"))];
+    const input = parseForm(formData, BulkAddUsers);
+    const existing = new Map((await dal.listUsers()).map((u) => [u.user_id, u]));
+    for (const id of ids) {
+      await dal.upsertUser({
+        user_id: id,
+        user_name: existing.get(id)?.user_name ?? id,
+        desk: input.desk,
+      });
+    }
+    invalidateMappings();
+    return `${ids.length} runner${ids.length > 1 ? "s" : ""} mapped to desk ${input.desk}. Display names default to the raw identity — refine them under Reference data → Users.`;
+  });
+}
+
 const BulkSetDesk = z.object({ desk: z.string().min(1) });
 
 export async function bulkSetUserDeskAction(
