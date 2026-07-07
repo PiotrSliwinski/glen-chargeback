@@ -1,4 +1,4 @@
-import { getAvailableMonths, getPublishedMonths } from "@/dal/reports";
+import { getAvailableMonths, getDefaultMonth, getPublishedMonths } from "@/dal/reports";
 import type { ReportMode } from "@/dal/types";
 
 export type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -20,16 +20,13 @@ const str = (v: string | string[] | undefined): string | undefined =>
  */
 export async function resolveReportParams(searchParams: SearchParams): Promise<ReportParams> {
   const sp = await searchParams;
-  const [months, publishedMonths] = await Promise.all([
+  const [months, publishedMonths, defaultMonth] = await Promise.all([
     getAvailableMonths(),
     getPublishedMonths(),
+    getDefaultMonth(),
   ]);
-  const current = new Date().toISOString().slice(0, 7);
   const requested = str(sp.month);
-  const month =
-    requested && months.includes(requested)
-      ? requested
-      : (months.find((m) => m < current) ?? months[0] ?? current);
+  const month = requested && months.includes(requested) ? requested : defaultMonth;
   const mode: ReportMode = str(sp.mode) === "published" ? "published" : "live";
   return { month, mode, months, publishedMonths, sp };
 }

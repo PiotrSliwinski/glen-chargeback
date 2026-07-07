@@ -14,6 +14,11 @@ import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export const metadata = { title: "Desks" };
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null } }],
+};
+
 export default function DesksPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense searchParams={searchParams} fallback={<DeskGridSkeleton />}>

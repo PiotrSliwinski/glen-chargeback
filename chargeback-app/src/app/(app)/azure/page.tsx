@@ -4,6 +4,7 @@ import {
   getAzureMonthResources,
   getAzureMonthlyRows,
   getAzureMonths,
+  getDefaultAzureMonth,
   getAzureTrend,
 } from "@/dal/azure";
 import { fmtDelta, fmtInt, fmtMoney, fmtMonth, fmtPct, momKpi, shiftMonth } from "@/lib/format";
@@ -52,6 +53,11 @@ const METHOD_ORDER: AzureAttributionMethod[] = [
   "NONE",
 ];
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null, q: null, page: null } }],
+};
+
 export default function AzurePage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense
@@ -79,12 +85,11 @@ async function AzureCosts({ searchParams }: { searchParams: SearchParams }) {
 
   // month state lives in ?month= like every report; default = last closed month.
   // Azure never enters the published snapshot, so there is no mode toggle.
-  const current = new Date().toISOString().slice(0, 7);
   const requested = param(sp.month);
   const month =
     requested && months.includes(requested)
       ? requested
-      : (months.find((m) => m < current) ?? months[0]);
+      : ((await getDefaultAzureMonth()) ?? months[0]);
   const prevMonth = shiftMonth(month, -1);
   const q = (param(sp.q) ?? "").toLowerCase();
 

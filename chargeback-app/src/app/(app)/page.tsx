@@ -14,6 +14,11 @@ import { ModeBanner } from "@/components/mode-banner";
 import { DashboardSkeleton } from "@/components/loading-skeletons";
 import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null } }],
+};
+
 export default function DashboardPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense searchParams={searchParams} fallback={<DashboardSkeleton />}>

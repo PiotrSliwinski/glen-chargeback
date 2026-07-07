@@ -66,6 +66,11 @@ const TABS = [
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null, tab: null, page: null } }],
+};
+
 export default function QueuePage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense

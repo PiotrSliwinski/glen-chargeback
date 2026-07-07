@@ -37,6 +37,14 @@ import type { ReportMode } from "@/dal/types";
 
 export const metadata = { title: "Analytics" };
 
+// Prototype: runtime prefetching — the router prefetches this page's dynamic
+// content (default view) when its link is on screen, so navigation shows
+// content with no server round trip.
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null } }],
+};
+
 export default function AnalyticsPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense

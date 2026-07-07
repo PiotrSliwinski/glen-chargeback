@@ -48,6 +48,21 @@ export async function getAvailableMonths(): Promise<string[]> {
   return rows.map((r) => r.billing_month);
 }
 
+/**
+ * Default report month: the last closed month (Methodology §10.2). Cached so
+ * "now" is read at cache-fill time, not per request — required for runtime-
+ * prefetched routes, and consistent with the import model (the default
+ * advances on data refresh, not mid-session).
+ */
+export async function getDefaultMonth(): Promise<string> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("reports-live");
+  const months = await getAvailableMonths();
+  const current = new Date().toISOString().slice(0, 7);
+  return months.find((m) => m < current) ?? months[0] ?? current;
+}
+
 export async function getPublishedMonths(): Promise<string[]> {
   "use cache";
   cacheLife("warehouse");

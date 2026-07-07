@@ -14,7 +14,7 @@ import {
   getAzureMethodMix,
   getAzureMonthResources,
   getAzureMonthlyRows,
-  getAzureMonths,
+  getDefaultAzureMonth,
   getAzureResourceAttributions,
   getAzureTrend,
   getTaggedAzureBridgeResources,
@@ -94,14 +94,12 @@ export async function warmWarehouseCache(): Promise<WarmResult> {
   // Month lists first: they are expired cached reads themselves, and every
   // month-scoped query below keys off them. resolveReportParams with empty
   // search params yields exactly the month/mode each report page defaults to.
-  const [{ month, publishedMonths }, azureMonths] = await Promise.all([
+  const [{ month, publishedMonths }, azureMonth] = await Promise.all([
     resolveReportParams(Promise.resolve({})),
-    getAzureMonths(),
+    getDefaultAzureMonth(),
   ]);
   const prevMonth = shiftMonth(month, -1);
   const publishedMonth: string | undefined = publishedMonths[0];
-  const current = new Date().toISOString().slice(0, 7);
-  const azureMonth = azureMonths.find((m) => m < current) ?? azureMonths[0];
 
   // The dashboard runs ahead of the pool: the drill tab's per-domain queries
   // key off its domain list.

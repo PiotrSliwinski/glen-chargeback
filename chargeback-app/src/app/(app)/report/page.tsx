@@ -29,6 +29,11 @@ import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export const metadata = { title: "Monthly report" };
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null } }],
+};
+
 export default function ReportPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense searchParams={searchParams} fallback={<ReportSkeleton />}>

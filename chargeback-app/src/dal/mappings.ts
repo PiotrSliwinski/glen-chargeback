@@ -55,8 +55,14 @@ export async function listCatalogue(): Promise<DataProductRow[]> {
   );
 }
 
-/** Active catalogue rows (valid today) — feeds product dropdowns. */
+/**
+ * Active catalogue rows (valid today) — feeds product dropdowns. Cached so
+ * "today" is read at cache-fill time (required for runtime-prefetched routes).
+ */
 export async function listActiveProducts(): Promise<DataProductRow[]> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("catalogue");
   const all = await listCatalogue();
   const today = new Date().toISOString().slice(0, 10);
   return all.filter((r) => r.valid_from <= today && (!r.valid_to || r.valid_to > today));

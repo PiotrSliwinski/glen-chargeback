@@ -208,6 +208,19 @@ export async function getAzureMonths(): Promise<string[]> {
   return rows.map((r) => r.billing_month);
 }
 
+/**
+ * Default Azure month: the last closed month on Azure's own axis. Cached so
+ * "now" is read at cache-fill time (required for runtime-prefetched routes).
+ */
+export async function getDefaultAzureMonth(): Promise<string | undefined> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("azure");
+  const months = await getAzureMonths();
+  const current = new Date().toISOString().slice(0, 7);
+  return months.find((m) => m < current) ?? months[0];
+}
+
 /** One month of Azure cost at domain × product × desk × meter-category grain. */
 export async function getAzureMonthlyRows(month: string): Promise<AzureMonthlyRow[]> {
   "use cache";

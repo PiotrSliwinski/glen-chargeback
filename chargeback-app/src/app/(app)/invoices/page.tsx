@@ -12,6 +12,11 @@ import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export const metadata = { title: "Desk invoices" };
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null } }],
+};
+
 export default function InvoicesPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense

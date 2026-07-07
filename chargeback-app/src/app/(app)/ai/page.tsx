@@ -30,6 +30,11 @@ import type { AiEndpointUsageRow } from "@/dal/types";
 
 export const metadata = { title: "AI costs" };
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null, q: null, page: null } }],
+};
+
 export default function AiPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense

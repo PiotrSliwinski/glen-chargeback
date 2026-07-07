@@ -17,6 +17,11 @@ import { SearchParamsSuspense } from "@/components/keyed-suspense";
 
 export const metadata = { title: "Drill-down" };
 
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null, domain: null, product: null, page: null } }],
+};
+
 export default function DrillPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <SearchParamsSuspense

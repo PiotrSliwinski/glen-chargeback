@@ -37,6 +37,20 @@ export async function listDbuDiscounts(): Promise<DbuDiscountRow[]> {
   );
 }
 
+/**
+ * The discount window covering today, if any. Cached so "today" is read at
+ * cache-fill time (required for runtime-prefetched routes); a stale answer
+ * self-heals on the next mappings mutation or data refresh.
+ */
+export async function getActiveDbuDiscount(): Promise<DbuDiscountRow | undefined> {
+  "use cache";
+  cacheLife("warehouse");
+  cacheTag("mappings");
+  const all = await listDbuDiscounts();
+  const today = new Date().toISOString().slice(0, 10);
+  return all.find((d) => d.valid_from <= today && d.valid_to >= today);
+}
+
 export async function insertDbuDiscount(
   row: Pick<DbuDiscountRow, "valid_from" | "valid_to" | "discount_pct" | "note">,
   actor: string,

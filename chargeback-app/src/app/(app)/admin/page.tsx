@@ -17,13 +17,18 @@ import {
   listAzureSubscriptionRules,
   listAzureTagRules,
 } from "@/dal/azure";
-import { listDbuDiscounts } from "@/dal/discounts";
+import { getActiveDbuDiscount, listDbuDiscounts } from "@/dal/discounts";
 import { PAGE_HELP } from "@/lib/kpi-help";
 import { PageTitle } from "@/components/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TablePageSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Reference data" };
+
+export const unstable_instant = {
+  prefetch: "runtime",
+  samples: [{ searchParams: { month: null, mode: null } }],
+};
 
 export default function AdminIndexPage() {
   return (
@@ -67,8 +72,7 @@ async function AdminIndex() {
   const activeProducts = new Set(
     catalogue.filter((r) => r.valid_to == null).map((r) => r.data_product),
   ).size;
-  const today = new Date().toISOString().slice(0, 10);
-  const activeDiscount = dbuDiscounts.find((d) => d.valid_from <= today && d.valid_to >= today);
+  const activeDiscount = await getActiveDbuDiscount();
 
   const items = [
     {
