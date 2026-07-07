@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * Power BI-style manual refresh: expires every warehouse cache tag and
- * re-renders the current route against fresh queries. The pending state
- * covers the whole round trip, including the blocking re-query of the page
- * the user is looking at.
+ * Power BI-style manual refresh: expires every warehouse cache tag (except
+ * 'health', whose minutes-long reconciliation has its own button on the
+ * Health page) and re-warms every tab's default-view queries before the
+ * action returns. The pending state therefore covers the full warehouse
+ * refresh — when the spinner stops, every tab serves from cache.
  */
 export function RefreshDataButton({
   refreshedAt,
@@ -20,13 +21,15 @@ export function RefreshDataButton({
   compact?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  // Shown in place of the as-of stamp: an error, or the action's summary
+  // ("N queries re-cached" / "N warm-up queries failed").
+  const [note, setNote] = useState<string | null>(null);
 
   const onClick = () => {
-    setError(null);
+    setNote(null);
     startTransition(async () => {
       const result = await refreshDataAction();
-      if (!result.ok) setError(result.message);
+      setNote(result.ok ? (result.message ?? null) : result.message);
     });
   };
 
@@ -70,7 +73,7 @@ export function RefreshDataButton({
         {pending ? "Refreshing…" : "Refresh data"}
       </Button>
       <span className="px-0.5 text-xs text-muted-foreground" suppressHydrationWarning>
-        {error ?? `Data as of ${asOf}`}
+        {note ?? `Data as of ${asOf}`}
       </span>
     </div>
   );

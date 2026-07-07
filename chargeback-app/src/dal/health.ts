@@ -11,10 +11,11 @@ import type { HealthReport, IntegrityViolation, ReconRow } from "@/dal/types";
  *
  * NOTE: the reconciliation query scans up to a year of system.billing.usage
  * and can run for minutes on a cold warehouse. It is cached ('health' tag,
- * warehouse lifetime) and refreshed explicitly from the health page or the
- * global "Refresh data" button. A future
- * iteration should move it to a scheduled Databricks Workflow writing into
- * an app_health_runs table (see implementation guide §11.1).
+ * warehouse lifetime) and refreshed explicitly from the health page's
+ * "Re-run checks" button or by mutations — deliberately NOT by the global
+ * "Refresh data" button, which would block its round trip on this scan. A
+ * future iteration should move it to a scheduled Databricks Workflow writing
+ * into an app_health_runs table (see implementation guide §11.1).
  */
 
 export async function getReconciliation(): Promise<ReconRow[]> {
@@ -135,7 +136,7 @@ export async function getAzureReconciliation(): Promise<ReconRow[]> {
 /**
  * §7.4 integrity checks, cached like every other warehouse read. Both tags
  * matter: catalogue mutations expire 'health', bridge-mapping mutations
- * expire 'mappings', and the global "Refresh data" button expires both.
+ * expire 'mappings' (which the global "Refresh data" button also expires).
  */
 export async function getIntegrityViolations(product?: string): Promise<IntegrityViolation[]> {
   "use cache";
@@ -517,12 +518,17 @@ export async function getHealthReport(): Promise<HealthReport> {
     getAzureReconciliation(),
     getIntegrityViolations(),
   ]);
-  return { recon, azureRecon, violations, ranAt: new Date().toISOString() };
+  return { recon, azureRecon, violations };
 }
 
-/** Publication gate (Methodology §10.6). */
+/**
+ * Publication gate (Methodology §10.6). Takes only what it evaluates, so
+ * the publish action can feed it LIVE integrity results (cheap queries)
+ * alongside the cached reconciliation (a minutes-long scan whose cache is
+ * expired by every mutation that could move it).
+ */
 export function isPublishable(
-  report: HealthReport,
+  report: Pick<HealthReport, "recon" | "violations">,
   month: string,
   publishedMonths: string[],
   currentMonth: string,

@@ -17,6 +17,7 @@ import { DomainError } from "@/services/errors";
 
 function invalidateAzure() {
   updateTag("azure");
+  updateTag("health"); // Azure reconciliation reads azure_cost_fact under 'health'
 }
 
 const lower = (s: string) => s.trim().toLowerCase();

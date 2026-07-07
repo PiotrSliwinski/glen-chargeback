@@ -4,7 +4,7 @@ import { updateTag } from "next/cache";
 import { z } from "zod";
 import type { ActionResult } from "@/lib/action-result";
 import { parseForm, runAction } from "@/actions/run";
-import { getHealthReport, isPublishable } from "@/dal/health";
+import { getIntegrityViolationsLive, getReconciliation, isPublishable } from "@/dal/health";
 import { getPublishedMonths } from "@/dal/reports";
 import { publishMonth } from "@/dal/publish";
 import { DomainError } from "@/services/errors";
@@ -33,9 +33,16 @@ export async function publishMonthAction(
       );
     }
     // Re-evaluate the gate server-side — never trust the button state.
-    const [report, published] = await Promise.all([getHealthReport(), getPublishedMonths()]);
+    // Integrity checks run LIVE (cheap queries; must see edits made a moment
+    // ago). Reconciliation stays cached: the scan takes minutes, and every
+    // in-app mutation that could move it expires the 'health' tag anyway.
+    const [recon, violations, published] = await Promise.all([
+      getReconciliation(),
+      getIntegrityViolationsLive(),
+      getPublishedMonths(),
+    ]);
     const currentMonth = new Date().toISOString().slice(0, 7);
-    const gate = isPublishable(report, input.month, published, currentMonth);
+    const gate = isPublishable({ recon, violations }, input.month, published, currentMonth);
     if (!gate.publishable) {
       throw new DomainError("CHECKS_FAILED", `cannot publish: ${gate.reasons.join("; ")}`);
     }

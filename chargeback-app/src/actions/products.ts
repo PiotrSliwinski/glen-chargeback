@@ -12,6 +12,7 @@ function invalidateCatalogue() {
   updateTag("catalogue");
   updateTag("queue"); // rogue-tag queue reflects catalogue membership
   updateTag("reports-live"); // live attribution changes immediately
+  updateTag("azure"); // Azure rules derive desk/domain/splits from the catalogue
   updateTag("health");
 }
 

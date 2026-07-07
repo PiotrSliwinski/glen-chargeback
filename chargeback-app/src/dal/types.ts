@@ -465,5 +465,4 @@ export interface HealthReport {
    */
   azureRecon: ReconRow[];
   violations: IntegrityViolation[];
-  ranAt: string;
 }

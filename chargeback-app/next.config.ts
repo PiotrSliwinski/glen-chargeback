@@ -9,7 +9,12 @@ const nextConfig: NextConfig = {
     // the long lifetimes below are deliberate, so navigation never queries
     // the warehouse.
     warehouse: {
-      stale: 3600, // client may reuse for 1 hour without asking the server
+      // Client-side reuse only: after this the router re-checks the server,
+      // which still answers from the tagged server cache without touching
+      // the warehouse. Kept short so one user's mutation or publication
+      // becomes visible to OTHER users' open tabs within minutes — the
+      // import-model economics live in revalidate/expire, not here.
+      stale: 300,
       revalidate: 30 * 86400, // effectively: no scheduled background refresh
       expire: 30 * 86400,
     },
