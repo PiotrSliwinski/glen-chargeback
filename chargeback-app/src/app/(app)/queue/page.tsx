@@ -4,6 +4,7 @@ import { fmtDbu, fmtInt, fmtMoney, fmtPct } from "@/lib/format";
 import { param, type SearchParams } from "@/lib/report-params";
 import { paginate } from "@/lib/paginate";
 import { toProductOptions } from "@/lib/product-options";
+import { referenceOptions } from "@/lib/reference-data";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { isServicePrincipal } from "@/lib/identity";
 import {
@@ -131,7 +132,10 @@ async function Queue({ searchParams }: { searchParams: SearchParams }) {
     listUsers(),
   ]);
   const productOptions = toProductOptions(products);
-  const deskOptions = [...new Set(products.map((p) => p.desk))].sort();
+  const { desks: deskOptions, dataDomains: domainOptions } = referenceOptions(
+    products,
+    users.map((u) => u.desk),
+  );
   const wsName = new Map(workspaces.map((w) => [w.workspace_id, w.workspace_name]));
   const runnerName = new Map(users.map((u) => [u.user_id, u.user_name]));
 
@@ -230,7 +234,7 @@ async function Queue({ searchParams }: { searchParams: SearchParams }) {
       {tab === "runners" && <UnknownRunnersTab deskOptions={deskOptions} page={page} />}
       {tab === "workspaces" && <UnknownWorkspacesTab page={page} />}
       {tab === "tags" && (
-        <RogueTagsTab productOptions={productOptions} deskOptions={deskOptions} page={page} />
+        <RogueTagsTab productOptions={productOptions} deskOptions={deskOptions} domainOptions={domainOptions} page={page} />
       )}
       {tab === "warehouses" && (
         <UnassignedWarehousesTab productOptions={productOptions} wsName={wsName} page={page} />
@@ -589,10 +593,12 @@ async function UnknownWorkspacesTab({ page }: { page: string | undefined }) {
 async function RogueTagsTab({
   productOptions,
   deskOptions,
+  domainOptions,
   page,
 }: {
   productOptions: { value: string; label: string }[];
   deskOptions: string[];
+  domainOptions: string[];
   page: string | undefined;
 }) {
   const all = await getRogueTags();
@@ -677,7 +683,7 @@ async function RogueTagsTab({
                             defaultValue={r.raw_tag_data_product}
                             readOnly
                           />
-                          <Field label="Data domain" name="data_domain" placeholder="e.g. market-data" />
+                          <DatalistField label="Data domain" name="data_domain" options={domainOptions} />
                           <SplitEditor deskOptions={deskOptions} />
                           <Field label="Product owner" name="product_owner" required={false} />
                           <NextMonthDateField label="Valid from" name="valid_from" />
@@ -705,7 +711,7 @@ async function RogueTagsTab({
       >
         <ActionForm action={bulkCreateProductsAction} submitLabel="Register as products">
           <BulkSelectedInputs name="data_products" />
-          <Field label="Data domain" name="data_domain" placeholder="e.g. market-data" />
+          <DatalistField label="Data domain" name="data_domain" options={domainOptions} />
           <SplitEditor deskOptions={deskOptions} />
           <NextMonthDateField label="Valid from" name="valid_from" />
           <BulkAppliesTo noun="tag" />

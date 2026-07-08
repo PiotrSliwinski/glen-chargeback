@@ -411,9 +411,9 @@ Concurrent-steward races are possible but rare (small team); the scoped post-con
 |---|---|
 | **Create product** | key format `^[a-z0-9]+([_-][a-z0-9]+)*$` (lowercase, hyphen/underscore, no spaces — §4.3); no active row with same key; desk & domain non-empty; `valid_from` defaults to first of next month (editable); post-check §7.4(a) |
 | **Move product** (desk and/or domain change) | cutover date required (default: first of next month); atomic MERGE above; **UI copy explicitly says** "history before {cutover} keeps the old desk"; post-check §7.4(a) |
-| **Edit metadata** (`product_owner` only) | in-place UPDATE allowed — owner is not part of the reporting hierarchy |
-| **Retire product** | set `valid_to`; the UI warns that later usage will fall to the work queue; **block** if bridge tables still reference the product |
-| ~~Delete~~ | not offered, ever (§10.7.3) |
+| **Edit version** (in-place, full field) | Corrects one validity window in place — domain, desk split, owner and the window's own dates — via one atomic MERGE keyed on (window, desk) that updates/inserts/deletes desk rows. For fixing mistakes, not recording a change over time (that is Move). Validates the split (sum 100%), date order, and per-desk overlap against other windows (§7.4(a)); post-check. Rewrites the window, so it restates not-yet-published usage inside it — the product key itself is never editable (a rename is retire + re-register). Available on the active version and every historical window |
+| **Retire product** | set `valid_to`; the UI warns that later usage will fall to the work queue; **block** if bridge tables still reference the product; rows are closed, not removed |
+| **Delete version** (guarded hard-delete) | Removes one validity window's rows outright (unlike Retire). **Blocked** when it would leave the product with no active window while bridge/rule mappings still reference it; deleting a historical window while an active one remains is allowed, with a UI restatement warning. Available on any window |
 
 **Create/Move form UX detail that prevents most data quality issues:** the desk and domain fields are **comboboxes fed by existing distinct values** with explicit "create new domain…" affordance — free-text typos in `data_domain` silently split rollups.
 

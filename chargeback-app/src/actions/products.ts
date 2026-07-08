@@ -3,14 +3,17 @@
 import { updateTag } from "next/cache";
 import { z } from "zod";
 import type { ActionResult } from "@/lib/action-result";
-import { dateString, formList, optionalText, parseForm, runAction } from "@/actions/run";
+import { dateString, formList, optionalDate, optionalText, parseForm, runAction } from "@/actions/run";
 import * as catalogue from "@/services/productCatalogue";
 import { listActiveProducts } from "@/dal/mappings";
 import { DomainError } from "@/services/errors";
 
 function invalidateCatalogue() {
   updateTag("catalogue");
-  updateTag("queue"); // rogue-tag queue reflects catalogue membership
+  // The rogue-tag queue reflects catalogue membership only after the next data
+  // refresh re-attributes cost_fact — a catalogue edit can't move a tag out of
+  // the queue live — so the 30-day queue scans are left to refresh on "Refresh
+  // data" rather than re-running inline in the save response.
   updateTag("reports-live"); // live attribution changes immediately
   updateTag("azure"); // Azure rules derive desk/domain/splits from the catalogue
   updateTag("health");
@@ -155,19 +158,50 @@ export async function retireProductAction(
   });
 }
 
-const UpdateOwner = z.object({
+/**
+ * Full in-place edit of one validity window (domain, desk split, owner, dates).
+ * The window being edited is identified by its current (old_valid_from,
+ * old_valid_to); a blank valid_to means an open/active window.
+ */
+const EditVersion = z.object({
   data_product: z.string().min(1),
+  old_valid_from: dateString,
+  old_valid_to: optionalDate,
+  data_domain: z.string().min(1),
+  splits: splitsField,
   product_owner: optionalText,
+  valid_from: dateString,
+  valid_to: optionalDate,
 });
 
-export async function updateOwnerAction(
+export async function editVersionAction(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
   return runAction("steward", async (actor) => {
-    const input = parseForm(formData, UpdateOwner);
-    await catalogue.updateProductOwner(input.data_product, input.product_owner, actor);
-    updateTag("catalogue");
-    return `Owner updated for '${input.data_product}'.`;
+    const input = parseForm(formData, EditVersion);
+    await catalogue.editProductVersion(input, actor);
+    invalidateCatalogue();
+    const window = input.valid_to ? `${input.valid_from} → ${input.valid_to}` : `from ${input.valid_from}`;
+    return `Version of '${input.data_product}' (${window}) updated to ${describeSplits(input.splits)} in ${input.data_domain}. Edited in place — published snapshots are unchanged; live figures for this window re-attribute.`;
+  });
+}
+
+const DeleteVersion = z.object({
+  data_product: z.string().min(1),
+  valid_from: dateString,
+  valid_to: optionalDate,
+});
+
+export async function deleteVersionAction(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  return runAction("steward", async () => {
+    const input = parseForm(formData, DeleteVersion);
+    await catalogue.deleteProductVersion(input.data_product, input.valid_from, input.valid_to);
+    invalidateCatalogue();
+    const window = input.valid_to ? `${input.valid_from} → ${input.valid_to}` : `from ${input.valid_from}`;
+    return `Version of '${input.data_product}' (${window}) permanently deleted.`;
   });
 }

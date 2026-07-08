@@ -160,6 +160,24 @@ export async function moveProduct(
   await postCheck(input.data_product);
 }
 
+/** Count bridge/rule rows still pointing at a product (§7.4(b) referents). */
+async function countProductReferences(product: string) {
+  const [jobs, warehouses, endpoints, tagRules, runnerRules] = await Promise.all([
+    mappings.listJobMappings(),
+    mappings.listWarehouseMappings(),
+    mappings.listEndpointMappings(),
+    mappings.listTagRules(),
+    mappings.listRunnerRules(),
+  ]);
+  const jobRefs = jobs.filter((j) => j.data_product === product).length;
+  const whRefs = warehouses.filter((w) => w.data_product === product).length;
+  const epRefs = endpoints.filter((e) => e.data_product === product).length;
+  const ruleRefs =
+    tagRules.filter((r) => r.data_product === product).length +
+    runnerRules.filter((r) => r.data_product === product).length;
+  return { jobRefs, whRefs, epRefs, ruleRefs, total: jobRefs + whRefs + epRefs + ruleRefs };
+}
+
 export async function retireProduct(
   data_product: string,
   valid_to: string,
@@ -173,38 +191,115 @@ export async function retireProduct(
   if (valid_to <= windowStart) {
     throw new DomainError("VALIDATION", `retirement date must be after ${windowStart}`);
   }
-  const [jobs, warehouses, endpoints, tagRules, runnerRules] = await Promise.all([
-    mappings.listJobMappings(),
-    mappings.listWarehouseMappings(),
-    mappings.listEndpointMappings(),
-    mappings.listTagRules(),
-    mappings.listRunnerRules(),
-  ]);
-  const jobRefs = jobs.filter((j) => j.data_product === data_product).length;
-  const whRefs = warehouses.filter((w) => w.data_product === data_product).length;
-  const epRefs = endpoints.filter((e) => e.data_product === data_product).length;
-  const ruleRefs =
-    tagRules.filter((r) => r.data_product === data_product).length +
-    runnerRules.filter((r) => r.data_product === data_product).length;
-  if (jobRefs + whRefs + epRefs + ruleRefs > 0) {
+  const refs = await countProductReferences(data_product);
+  if (refs.total > 0) {
     throw new DomainError(
       "REFERENCED",
-      `product is still referenced by ${jobRefs} job mapping(s), ${whRefs} warehouse mapping(s), ${epRefs} endpoint mapping(s) and ${ruleRefs} attribution rule(s) — remove or remap those first`,
+      `product is still referenced by ${refs.jobRefs} job mapping(s), ${refs.whRefs} warehouse mapping(s), ${refs.epRefs} endpoint mapping(s) and ${refs.ruleRefs} attribution rule(s) — remove or remap those first`,
     );
   }
   await mappings.retireProduct(data_product, valid_to, actor);
   await postCheck(data_product);
 }
 
-export async function updateProductOwner(
-  data_product: string,
-  product_owner: string | null,
+/** Does `r` belong to the validity window identified by (from, to)? */
+function isWindow(from: string, to: string | null) {
+  return (r: { valid_from: string; valid_to: string | null }) =>
+    r.valid_from === from && (r.valid_to ?? null) === (to ?? null);
+}
+
+/**
+ * Full in-place edit of one validity window (domain, desk split, owner and
+ * the window's own dates). A correction tool — it rewrites the window rather
+ * than versioning it (that is moveProduct's job). Validates the split, the
+ * date order, and that the (possibly re-dated) window does not overlap
+ * another window of the same product on the same desk (§7.4(a)).
+ */
+export async function editProductVersion(
+  input: {
+    data_product: string;
+    old_valid_from: string;
+    old_valid_to: string | null;
+    data_domain: string;
+    splits: DeskSplitInput[];
+    product_owner: string | null;
+    valid_from: string;
+    valid_to: string | null;
+  },
   actor: string,
 ): Promise<void> {
-  if ((await activeRows(data_product)).length === 0) {
-    throw new DomainError("NOT_FOUND", `product '${data_product}' has no active row`);
+  const rows = (await mappings.listCatalogue()).filter((r) => r.data_product === input.data_product);
+  if (rows.length === 0) {
+    throw new DomainError("NOT_FOUND", `product '${input.data_product}' is not in the catalogue`);
   }
-  await mappings.updateProductOwner(data_product, product_owner, actor);
+  const belongsToWindow = isWindow(input.old_valid_from, input.old_valid_to);
+  if (!rows.some(belongsToWindow)) {
+    throw new DomainError(
+      "NOT_FOUND",
+      `'${input.data_product}' has no version starting ${input.old_valid_from}`,
+    );
+  }
+  const splits = normalizeSplits(input.splits);
+  if (input.valid_to && input.valid_to <= input.valid_from) {
+    throw new DomainError(
+      "VALIDATION",
+      `valid-to (${input.valid_to}) must be after valid-from (${input.valid_from})`,
+    );
+  }
+  // Per-desk overlap against every OTHER window (§7.4(a)): concurrent rows for
+  // different desks are a legal split, same-desk overlap is not.
+  const newTo = input.valid_to ?? "9999-12-31";
+  for (const o of rows.filter((r) => !belongsToWindow(r))) {
+    const oTo = o.valid_to ?? "9999-12-31";
+    const overlaps = input.valid_from < oTo && o.valid_from < newTo;
+    if (overlaps && splits.some((s) => s.desk === o.desk)) {
+      throw new DomainError(
+        "OVERLAP",
+        `desk '${o.desk}' already has a version ${o.valid_from} → ${o.valid_to ?? "open"} that would overlap ${input.valid_from} → ${input.valid_to ?? "open"}`,
+      );
+    }
+  }
+  await mappings.editProductVersion(
+    {
+      data_product: input.data_product,
+      old_valid_from: input.old_valid_from,
+      old_valid_to: input.old_valid_to,
+      new_domain: input.data_domain,
+      new_owner: input.product_owner,
+      new_valid_from: input.valid_from,
+      new_valid_to: input.valid_to,
+      splits,
+    },
+    actor,
+  );
+  await postCheck(input.data_product);
+}
+
+/**
+ * Hard-delete one validity window (guarded). Blocked when removing it would
+ * leave the product with no active window while bridge/rule mappings still
+ * reference it — that would orphan live spend. Deleting a historical window
+ * while an active one remains is allowed (with a UI restatement warning).
+ */
+export async function deleteProductVersion(
+  data_product: string,
+  valid_from: string,
+  valid_to: string | null,
+): Promise<void> {
+  const rows = (await mappings.listCatalogue()).filter((r) => r.data_product === data_product);
+  const belongsToWindow = isWindow(valid_from, valid_to);
+  if (!rows.some(belongsToWindow)) {
+    throw new DomainError("NOT_FOUND", `'${data_product}' has no version starting ${valid_from}`);
+  }
+  const activeRemains = rows.some((r) => r.valid_to == null && !belongsToWindow(r));
+  const refs = await countProductReferences(data_product);
+  if (refs.total > 0 && !activeRemains) {
+    throw new DomainError(
+      "REFERENCED",
+      `deleting this version leaves '${data_product}' with no active window while ${refs.jobRefs} job, ${refs.whRefs} warehouse and ${refs.epRefs} endpoint mapping(s) and ${refs.ruleRefs} rule(s) still reference it — remove or remap those first`,
+    );
+  }
+  await mappings.deleteProductVersion(data_product, valid_from, valid_to);
 }
 
 /** A bridge row may only reference an existing catalogue product (§7.4(b)). */

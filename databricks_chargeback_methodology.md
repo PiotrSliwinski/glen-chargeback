@@ -1559,8 +1559,10 @@ The operational heart — turns §7.2/§7.3 into actionable rows with inline act
 CRUD on `data_product_mapping` with the validity-versioning rules enforced in the write path:
 
 - **Create product:** validate key format (lowercase, no spaces), uniqueness among active rows, desk non-empty. `valid_from` defaults to first of next month.
-- **Move product to another desk/domain:** transactionally close the current row (`valid_to = cutover - 1 day` semantics; with the exclusive join in `cost_fact`, set `valid_to = cutover_date`) and insert the new row (`valid_from = cutover_date`). Never `UPDATE desk` in place.
-- **Retire product:** set `valid_to`; subsequent usage falls to the waterfall's later rules and shows up in the work queue.
+- **Move product to another desk/domain:** transactionally close the current row (`valid_to = cutover - 1 day` semantics; with the exclusive join in `cost_fact`, set `valid_to = cutover_date`) and insert the new row (`valid_from = cutover_date`). Never `UPDATE desk` in place. This is the versioned path — use it to record a real change over time.
+- **Edit version (in-place correction):** rewrite one validity window in place — domain, desk split, owner and the window's own dates — via a single atomic MERGE keyed on (window, desk). For fixing data-entry mistakes without a spurious history split; not for recording a change over time (use Move). Validates the split (sum 100%), date order and per-desk overlap against other windows. Because it rewrites the window it restates any not-yet-published usage inside it; published snapshots are unaffected. The `data_product` key is never editable (a rename is retire + re-register).
+- **Retire product:** set `valid_to`; subsequent usage falls to the waterfall's later rules and shows up in the work queue. Rows are closed, not removed.
+- **Delete version (guarded hard-delete):** remove one window's rows outright. Blocked when it would leave the product with no active window while bridge/rule mappings still reference it. A convenience for cleaning up mis-created rows; deleting a window that overlaps a published month restates that month's live figures.
 - Every write runs §7.4(a)+(b) as a post-condition; reject on violation.
 
 ### 10.6 Page: Health & Reconciliation
@@ -1571,7 +1573,7 @@ One-click execution of §7.1 and §7.4 with green/red status per month; publicat
 
 1. All writes audited: `mapped_by` / `mapped_at` columns (extend `user_mapping` / `workspace_mapping` similarly if desired) or Delta table history (`DESCRIBE HISTORY`) as the audit trail.
 2. Referential validation before commit (§7.4(b)): a bridge row may only reference an existing catalogue product.
-3. No deletes from `data_product_mapping` — close validity instead.
+3. Retirement closes a validity window rather than deleting rows (history keeps attributing). The as-built app additionally offers a **guarded** hard-delete of a window for cleaning up mis-created rows — blocked when it would orphan live references — and a full in-place **edit** of a window for correcting mistakes. Both are operator conveniences that can restate not-yet-published usage; published snapshots are never touched.
 4. Edits never trigger recomputation of published months; they affect live views only.
 
 ---

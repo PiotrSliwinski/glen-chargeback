@@ -68,3 +68,10 @@ export const optionalText = z
   .transform((v) => (v && v.trim() !== "" ? v.trim() : null));
 
 export const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
+
+/** empty string → null (optional date inputs, e.g. an open-ended valid_to) */
+export const optionalDate = z
+  .string()
+  .optional()
+  .transform((v) => (v && v.trim() !== "" ? v.trim() : null))
+  .refine((v) => v === null || /^\d{4}-\d{2}-\d{2}$/.test(v), "expected YYYY-MM-DD or empty");

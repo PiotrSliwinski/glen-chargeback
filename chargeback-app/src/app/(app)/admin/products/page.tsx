@@ -3,14 +3,16 @@ import { requirePageRole } from "@/lib/guards";
 import { listCatalogue, listEndpointMappings, listJobMappings, listWarehouseMappings } from "@/dal/mappings";
 import {
   createProductAction,
+  deleteVersionAction,
+  editVersionAction,
   moveProductAction,
   retireProductAction,
-  updateOwnerAction,
 } from "@/actions/products";
 import { param, type SearchParams } from "@/lib/report-params";
 import { paginate } from "@/lib/paginate";
 import { Plus } from "lucide-react";
-import { ActionForm, Field } from "@/components/action-form";
+import { ActionForm, DatalistField, Field } from "@/components/action-form";
+import { referenceOptions } from "@/lib/reference-data";
 import { SplitEditor } from "@/components/split-editor";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import { PAGE_HELP } from "@/lib/kpi-help";
@@ -25,6 +27,75 @@ import type { DataProductRow } from "@/dal/types";
 import { TablePageSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Product catalogue" };
+
+function windowLabel(rows: DataProductRow[]): string {
+  const r = rows[0];
+  return r.valid_to == null ? "current version" : `${r.valid_from} → ${r.valid_to}`;
+}
+
+/**
+ * Full in-place edit of one validity window: domain, desk split, owner and
+ * the window's own dates. Corrects mistakes without versioning — Move is for
+ * a real change over time. The window is pinned by its current (from, to).
+ */
+function EditVersionDialog({
+  product,
+  windowRows,
+  deskOptions,
+  domainOptions,
+}: {
+  product: string;
+  windowRows: DataProductRow[];
+  deskOptions: string[];
+  domainOptions: string[];
+}) {
+  const first = windowRows[0];
+  const initial = [...windowRows]
+    .sort((a, b) => b.cost_split_pct - a.cost_split_pct || a.desk.localeCompare(b.desk))
+    .map((r) => ({ desk: r.desk, pct: Number((r.cost_split_pct * 100).toFixed(2)) }));
+  return (
+    <EditDialog
+      trigger={<RowAction>Edit</RowAction>}
+      title={`Edit ${product} (${windowLabel(windowRows)})`}
+      description="Edits this version in place — no new version is created. Changing the domain, desk split or dates of a window that overlaps an already-published month makes live figures differ from that issued invoice; the published snapshot itself never changes. For a genuine change of desk/domain over time, use Move instead."
+    >
+      <ActionForm action={editVersionAction} submitLabel="Save changes">
+        <input type="hidden" name="data_product" value={product} />
+        <input type="hidden" name="old_valid_from" value={first.valid_from} />
+        <input type="hidden" name="old_valid_to" value={first.valid_to ?? ""} />
+        <DatalistField label="Data domain" name="data_domain" options={domainOptions} defaultValue={first.data_domain} />
+        <SplitEditor deskOptions={deskOptions} initial={initial} />
+        <Field label="Product owner" name="product_owner" defaultValue={first.product_owner ?? ""} required={false} />
+        <Field label="Valid from" name="valid_from" type="date" defaultValue={first.valid_from} />
+        <Field
+          label="Valid to (leave empty for an open/active window)"
+          name="valid_to"
+          type="date"
+          defaultValue={first.valid_to ?? ""}
+          required={false}
+        />
+      </ActionForm>
+    </EditDialog>
+  );
+}
+
+/** Guarded hard-delete of one validity window (rows removed, not closed). */
+function DeleteVersionDialog({ product, windowRows }: { product: string; windowRows: DataProductRow[] }) {
+  const first = windowRows[0];
+  return (
+    <EditDialog
+      trigger={<RowAction danger>Delete</RowAction>}
+      title={`Delete ${product} (${windowLabel(windowRows)})?`}
+      description="Permanently removes this version's rows — unlike Retire, which keeps them so history still attributes. Blocked when it would leave the product with no active window while bridge/rule mappings still reference it. Deleting a window that overlaps a published month restates that month's live figures."
+    >
+      <ActionForm action={deleteVersionAction} submitLabel="Delete version" danger>
+        <input type="hidden" name="data_product" value={product} />
+        <input type="hidden" name="valid_from" value={first.valid_from} />
+        <input type="hidden" name="valid_to" value={first.valid_to ?? ""} />
+      </ActionForm>
+    </EditDialog>
+  );
+}
 
 export default function ProductsPage({ searchParams }: { searchParams: SearchParams }) {
   return (
@@ -62,8 +133,8 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
   const domains = new Set(activeRows.map((r) => r.data_domain)).size;
   const desks = new Set(activeRows.map((r) => r.desk)).size;
   const activeProductCount = new Set(activeRows.map((r) => r.data_product)).size;
-  // datalist suggestions for split editors — every desk the catalogue knows
-  const deskOptions = [...new Set(catalogue.map((r) => r.desk))].sort();
+  // shared datalist suggestions for the split editors and domain fields
+  const { desks: deskOptions, dataDomains: domainOptions } = referenceOptions(catalogue);
   const fmtShare = (pct: number) => `${Number((pct * 100).toFixed(2))}%`;
 
   const entries = [...byProduct.entries()].filter(
@@ -102,7 +173,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
         >
           <ActionForm action={createProductAction} submitLabel="Create product" resetOnSuccess>
             <Field label="Product key" name="data_product" placeholder="pricing-curves" />
-            <Field label="Data domain" name="data_domain" placeholder="market-data" />
+            <DatalistField label="Data domain" name="data_domain" options={domainOptions} />
             <SplitEditor deskOptions={deskOptions} />
             <Field label="Product owner" name="product_owner" required={false} />
             <Field label="Valid from" name="valid_from" type="date" defaultValue={firstOfNextMonth()} />
@@ -184,15 +255,21 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
                 {historyWindows.size > 0 && (
                   <div className="mt-2 border-l-2 pl-3">
                     {[...historyWindows.entries()].map(([key, rows]) => (
-                      <p key={key} className="text-xs text-muted-foreground">
-                        {rows[0].valid_from} → {rows[0].valid_to}: {rows[0].data_domain} / desk{" "}
-                        {rows.length === 1
-                          ? rows[0].desk
-                          : rows
-                              .sort((a, b) => b.cost_split_pct - a.cost_split_pct)
-                              .map((r) => `${r.desk} ${fmtShare(r.cost_split_pct)}`)
-                              .join(" + ")}
-                      </p>
+                      <div key={key} className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <p className="text-xs text-muted-foreground">
+                          {rows[0].valid_from} → {rows[0].valid_to}: {rows[0].data_domain} / desk{" "}
+                          {rows.length === 1
+                            ? rows[0].desk
+                            : [...rows]
+                                .sort((a, b) => b.cost_split_pct - a.cost_split_pct)
+                                .map((r) => `${r.desk} ${fmtShare(r.cost_split_pct)}`)
+                                .join(" + ")}
+                        </p>
+                        <span className="no-print flex gap-3 text-xs">
+                          <EditVersionDialog product={product} windowRows={rows} deskOptions={deskOptions} domainOptions={domainOptions} />
+                          <DeleteVersionDialog product={product} windowRows={rows} />
+                        </span>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -207,7 +284,7 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
                       <ActionForm action={moveProductAction} submitLabel="Move product">
                         <input type="hidden" name="data_product" value={product} />
                         <Field label="Cutover date" name="cutover" type="date" defaultValue={firstOfNextMonth()} />
-                        <Field label="New domain" name="new_domain" defaultValue={primary.data_domain} />
+                        <DatalistField label="New domain" name="new_domain" options={domainOptions} defaultValue={primary.data_domain} />
                         <SplitEditor
                           deskOptions={deskOptions}
                           initial={active.map((a) => ({
@@ -219,27 +296,20 @@ async function Products({ searchParams }: { searchParams: SearchParams }) {
                       </ActionForm>
                     </EditDialog>
 
-                    <EditDialog
-                      trigger={<RowAction>Edit owner</RowAction>}
-                      title={`Edit owner of ${product}`}
-                      description="Owner is metadata on the current version — no new version is created."
-                    >
-                      <ActionForm action={updateOwnerAction} submitLabel="Update owner">
-                        <input type="hidden" name="data_product" value={product} />
-                        <Field label="Product owner" name="product_owner" defaultValue={primary.product_owner ?? ""} required={false} />
-                      </ActionForm>
-                    </EditDialog>
+                    <EditVersionDialog product={product} windowRows={active} deskOptions={deskOptions} domainOptions={domainOptions} />
 
                     <EditDialog
                       trigger={<RowAction danger>Retire</RowAction>}
                       title={`Retire ${product}?`}
-                      description="Blocked while bridge mappings still reference this product. Usage after retirement falls to the work queue. Rows are never deleted."
+                      description="Blocked while bridge mappings still reference this product. Usage after retirement falls to the work queue. Rows are kept (closed, not deleted) so history still attributes — use Delete to remove them outright."
                     >
                       <ActionForm action={retireProductAction} submitLabel="Retire product" danger>
                         <input type="hidden" name="data_product" value={product} />
                         <Field label="Retire as of" name="valid_to" type="date" defaultValue={firstOfNextMonth()} />
                       </ActionForm>
                     </EditDialog>
+
+                    <DeleteVersionDialog product={product} windowRows={active} />
                   </div>
                 )}
               </CardContent>

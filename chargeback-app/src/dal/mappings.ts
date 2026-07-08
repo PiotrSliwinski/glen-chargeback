@@ -342,28 +342,135 @@ export async function retireProduct(
   );
 }
 
-/** product_owner is metadata, not hierarchy — in-place update is allowed. */
-export async function updateProductOwner(
-  data_product: string,
-  product_owner: string | null,
+/**
+ * Full in-place edit of ONE validity window (domain, desk split, owner and
+ * the window's own from/to dates) — a correction, not a versioned change.
+ * The window is identified by its current (valid_from, valid_to); an open
+ * window carries valid_to = NULL, matched via the '9999-12-31' sentinel.
+ *
+ * One atomic MERGE keyed on (window, desk): matched desks are updated,
+ * new desks inserted, removed desks deleted — Databricks has single-
+ * statement atomicity only, so a delete+insert pair could lose the window.
+ * The NOT MATCHED BY SOURCE delete repeats the window predicate so it can
+ * never touch another product's rows. Unlike moveProduct this rewrites the
+ * window in place: it restates any not-yet-published usage inside it.
+ */
+export async function editProductVersion(
+  args: {
+    data_product: string;
+    old_valid_from: string;
+    old_valid_to: string | null;
+    new_domain: string;
+    new_owner: string | null;
+    new_valid_from: string;
+    new_valid_to: string | null;
+    splits: DeskShare[];
+  },
   actor: string,
 ): Promise<void> {
+  const oldToKey = args.old_valid_to ?? "9999-12-31";
+  const newToKey = args.new_valid_to ?? "9999-12-31";
   if (env.DAL_MOCK) {
-    // all active rows — split rows share the same owner
-    for (const r of mockStore.catalogue) {
-      if (r.data_product === data_product && r.valid_to == null) {
-        r.product_owner = product_owner;
-        r.mapped_by = actor;
-        r.mapped_at = now();
-      }
+    const inWindow = (r: DataProductRow) =>
+      r.data_product === args.data_product &&
+      r.valid_from === args.old_valid_from &&
+      (r.valid_to ?? null) === (args.old_valid_to ?? null);
+    mockStore.catalogue = mockStore.catalogue.filter((r) => !inWindow(r));
+    for (const s of args.splits) {
+      mockStore.catalogue.push({
+        data_product: args.data_product,
+        data_domain: args.new_domain,
+        desk: s.desk,
+        product_owner: args.new_owner,
+        cost_split_pct: s.cost_split_pct,
+        valid_from: args.new_valid_from,
+        valid_to: args.new_valid_to,
+        mapped_by: actor,
+        mapped_at: now(),
+      });
     }
     return;
   }
+  const sourceRows = args.splits
+    .map((_, i) => `SELECT :desk_${i} AS desk, CAST(:pct_${i} AS DOUBLE) AS pct`)
+    .join("\n       UNION ALL ");
+  const splitParams = Object.fromEntries(
+    args.splits.flatMap((s, i) => [
+      [`desk_${i}`, s.desk],
+      [`pct_${i}`, s.cost_split_pct],
+    ]),
+  );
   await exec(
-    `UPDATE ${T("data_product_mapping")}
-     SET product_owner = :product_owner, mapped_by = :actor, mapped_at = current_timestamp()
-     WHERE data_product = :data_product AND valid_to IS NULL`,
-    { data_product, product_owner, actor },
+    `MERGE INTO ${T("data_product_mapping")} t
+     USING (
+       ${sourceRows}
+     ) s
+     ON  t.data_product = :data_product
+     AND t.valid_from   = CAST(:old_from AS DATE)
+     AND COALESCE(CAST(t.valid_to AS STRING), '9999-12-31') = :old_to_key
+     AND t.desk = s.desk
+     WHEN MATCHED THEN UPDATE SET
+       data_domain    = :new_domain,
+       product_owner  = :new_owner,
+       cost_split_pct = s.pct,
+       valid_from     = CAST(:new_from AS DATE),
+       valid_to       = CASE WHEN :new_to_key = '9999-12-31' THEN NULL ELSE CAST(:new_to_key AS DATE) END,
+       mapped_by      = :actor,
+       mapped_at      = current_timestamp()
+     WHEN NOT MATCHED BY TARGET THEN
+       INSERT (data_product, data_domain, desk, product_owner, cost_split_pct,
+               valid_from, valid_to, mapped_by, mapped_at)
+       VALUES (:data_product, :new_domain, s.desk, :new_owner, s.pct,
+               CAST(:new_from AS DATE),
+               CASE WHEN :new_to_key = '9999-12-31' THEN NULL ELSE CAST(:new_to_key AS DATE) END,
+               :actor, current_timestamp())
+     WHEN NOT MATCHED BY SOURCE
+       AND t.data_product = :data_product
+       AND t.valid_from   = CAST(:old_from AS DATE)
+       AND COALESCE(CAST(t.valid_to AS STRING), '9999-12-31') = :old_to_key
+       THEN DELETE`,
+    {
+      data_product: args.data_product,
+      old_from: args.old_valid_from,
+      old_to_key: oldToKey,
+      new_domain: args.new_domain,
+      new_owner: args.new_owner,
+      new_from: args.new_valid_from,
+      new_to_key: newToKey,
+      actor,
+      ...splitParams,
+    },
+  );
+}
+
+/**
+ * Hard-delete ONE validity window (all its desk rows). Unlike retireProduct
+ * this removes the rows entirely; the service layer guards against orphaning
+ * live references. Callers pass the window's current (valid_from, valid_to).
+ */
+export async function deleteProductVersion(
+  data_product: string,
+  valid_from: string,
+  valid_to: string | null,
+): Promise<void> {
+  const toKey = valid_to ?? "9999-12-31";
+  if (env.DAL_MOCK) {
+    mockStore.catalogue = mockStore.catalogue.filter(
+      (r) =>
+        !(
+          r.data_product === data_product &&
+          r.valid_from === valid_from &&
+          (r.valid_to ?? null) === (valid_to ?? null)
+        ),
+    );
+    return;
+  }
+  await exec(
+    `DELETE FROM ${T("data_product_mapping")}
+     WHERE data_product = :data_product
+       AND valid_from = CAST(:valid_from AS DATE)
+       AND COALESCE(CAST(valid_to AS STRING), '9999-12-31') = :to_key`,
+    { data_product, valid_from, to_key: toKey },
   );
 }
 

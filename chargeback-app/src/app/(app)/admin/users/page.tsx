@@ -10,6 +10,7 @@ import {
 } from "@/actions/mappings";
 import { param, type SearchParams } from "@/lib/report-params";
 import { paginate } from "@/lib/paginate";
+import { referenceOptions } from "@/lib/reference-data";
 import { KPI_HELP, PAGE_HELP } from "@/lib/kpi-help";
 import { ArrowRightLeft, Plus, Trash2 } from "lucide-react";
 import { ActionForm, DatalistField, Field } from "@/components/action-form";
@@ -59,9 +60,7 @@ async function Users({ searchParams }: { searchParams: SearchParams }) {
     listActiveProducts(),
     getUnknownRunners(),
   ]);
-  const deskOptions = [
-    ...new Set([...products.map((p) => p.desk), ...rows.map((r) => r.desk)]),
-  ].sort();
+  const deskOptions = referenceOptions(products, rows.map((r) => r.desk)).desks;
   const desksCovered = new Set(rows.map((r) => r.desk)).size;
   const spCount = rows.filter((r) => isServicePrincipal(r.user_id)).length;
 

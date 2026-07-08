@@ -7,6 +7,7 @@ import { mapEndpointAction, upsertUserAction } from "@/actions/mappings";
 import { getSession } from "@/lib/auth";
 import { atLeast } from "@/lib/rbac";
 import { toProductOptions } from "@/lib/product-options";
+import { referenceOptions } from "@/lib/reference-data";
 import { ActionForm, DatalistField, Field, SelectField } from "@/components/action-form";
 import { EditDialog, RowAction } from "@/components/edit-dialog";
 import { SpNameField } from "@/components/sp-name-field";
@@ -78,7 +79,7 @@ async function AiCosts({ searchParams }: { searchParams: SearchParams }) {
   // stewards get inline fix actions on unallocated rows; viewers see the report only
   const canFix = atLeast(session?.user.role, "steward");
   const productOptions = toProductOptions(products);
-  const deskOptions = [...new Set(products.map((p) => p.desk))].sort();
+  const deskOptions = referenceOptions(products).desks;
 
   const aiRows = curRows.filter((r) => isAiCategory(r.usage_category));
   const prevAiRows = prevRows.filter((r) => isAiCategory(r.usage_category));
