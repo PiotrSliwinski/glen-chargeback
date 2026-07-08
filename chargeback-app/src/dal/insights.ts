@@ -61,12 +61,14 @@ export async function getRunnerActivity30d(): Promise<UnmappedRunnerRow[]> {
  * Serverless spend is broken out as a column instead, because that slice is
  * the one the USER rule (waterfall rule 6) can never catch while unmapped.
  */
+/**
+ * Plain wrapper (NOT "use cache", see dal/workQueue getUnknownWorkspaces): a
+ * user save recomputes this from the cached activity scan + one user_mapping
+ * read, no rescan. Must stay plain — a "use cache" wrapper calling another
+ * "use cache" (getRunnerActivity30d) deadlocks the prod build when re-rendered
+ * inside a mapping action's updateTag.
+ */
 export async function getUnmappedRunners(): Promise<UnmappedRunnerRow[]> {
-  "use cache";
-  cacheLife("warehouse");
-  // Also "mappings"-tagged: a user save (or panel re-scan right after one)
-  // recomputes this from the cached activity scan + one user_mapping read.
-  cacheTag("queue", "mappings");
   if (env.DAL_MOCK) return [...mockStore.unmappedRunners];
   const [activity, users] = await Promise.all([getRunnerActivity30d(), listUsers()]);
   const mapped = new Set(users.map((u) => u.user_id));

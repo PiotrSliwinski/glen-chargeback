@@ -4,7 +4,7 @@ import { env } from "@/lib/env";
 import { query, T } from "@/dal/client";
 import { getUnmappedEndpoints } from "@/dal/ai";
 import { getRunnerActivity30d } from "@/dal/insights";
-import { listUsers } from "@/dal/mappings";
+import { listUsers, listWarehouseMappings, listWorkspaces } from "@/dal/mappings";
 import { mockStore } from "@/dal/mock";
 import { zId, zIdOrNull, zNum, zStr, zStrOrNull } from "@/dal/parse";
 import type {
@@ -52,14 +52,14 @@ export async function getUntaggedJobs(): Promise<UntaggedJobRow[]> {
   );
 }
 
+/**
+ * Plain wrapper (NOT "use cache", see getUnknownWorkspaces): filters the cached
+ * activity scan against the cached user_mapping list, so a user save recomputes
+ * it read-your-writes with no cost_fact rescan. Must stay plain — a "use cache"
+ * wrapper calling another "use cache" (getRunnerActivity30d) deadlocks the prod
+ * build when re-rendered inside a mapping action's updateTag.
+ */
 export async function getUnknownRunners(): Promise<UnknownRunnerRow[]> {
-  "use cache";
-  cacheLife("warehouse");
-  // Also "mappings"-tagged: a user save recomputes this instantly from the
-  // cached shared activity scan + one user_mapping read instead of a
-  // cost_fact scan (the scan itself must not re-run inline — it froze the
-  // save dialog).
-  cacheTag("queue", "mappings");
   if (env.DAL_MOCK) return [...mockStore.queueUnknownRunners];
   const [activity, users] = await Promise.all([getRunnerActivity30d(), listUsers()]);
   const mapped = new Set(users.map((u) => u.user_id));
@@ -68,7 +68,14 @@ export async function getUnknownRunners(): Promise<UnknownRunnerRow[]> {
     .map((r) => ({ runner: r.runner, cost_30d: r.cost_30d, rows_30d: r.rows_30d }));
 }
 
-export async function getUnknownWorkspaces(): Promise<UnknownWorkspaceRow[]> {
+/**
+ * Inner scan: 30-day DBUs per workspace, regardless of workspace_mapping
+ * membership. Split out (like getRunnerActivity30d) so a workspace save never
+ * re-runs this billing.usage scan inline — the membership filter lives in the
+ * cheap "mappings"-tagged wrapper below, which froze the save dialog when it
+ * had to rescan.
+ */
+export async function getWorkspaceDbus30d(): Promise<UnknownWorkspaceRow[]> {
   "use cache";
   cacheLife("warehouse");
   cacheTag("queue");
@@ -77,11 +84,25 @@ export async function getUnknownWorkspaces(): Promise<UnknownWorkspaceRow[]> {
     `SELECT u.workspace_id, SUM(u.usage_quantity) AS dbus_30d
      FROM system.billing.usage u
      WHERE u.usage_date >= current_date() - INTERVAL 30 DAYS
-       AND u.workspace_id NOT IN (SELECT workspace_id FROM ${T("workspace_mapping")})
      GROUP BY 1 ORDER BY 2 DESC`,
     {},
     z.object({ workspace_id: zId, dbus_30d: zNum }) as z.ZodType<UnknownWorkspaceRow>,
   );
+}
+
+/**
+ * Plain wrapper (NOT "use cache"): filters the cached DBU scan against the
+ * cached workspace_mapping list in memory. Both inputs are cached — the
+ * expensive billing.usage scan under "queue", the mapping list under
+ * "mappings" — so registering/removing a workspace refreshes this read-your-
+ * writes with no rescan. It must stay plain: a "use cache" wrapper that calls
+ * another "use cache" deadlocks the prod build when re-rendered inside a
+ * mapping action's updateTag (dev's JIT tolerates it; `next start` hangs).
+ */
+export async function getUnknownWorkspaces(): Promise<UnknownWorkspaceRow[]> {
+  const [activity, workspaces] = await Promise.all([getWorkspaceDbus30d(), listWorkspaces()]);
+  const mapped = new Set(workspaces.map((w) => w.workspace_id));
+  return activity.filter((r) => !mapped.has(r.workspace_id));
 }
 
 export async function getRogueTags(): Promise<RogueTagRow[]> {
@@ -105,23 +126,24 @@ export async function getRogueTags(): Promise<RogueTagRow[]> {
   );
 }
 
-export async function getUnassignedWarehouses(): Promise<UnassignedWarehouseRow[]> {
+/**
+ * Inner scan: 30-day cost + idle share per warehouse billing via USER/NONE,
+ * regardless of warehouse_product_mapping membership. Split out so a warehouse
+ * save never re-runs this cost_fact scan inline — the cheap "mappings"-tagged
+ * wrapper below drops the ones already marked shared.
+ */
+export async function getWarehouseActivity30d(): Promise<UnassignedWarehouseRow[]> {
   "use cache";
   cacheLife("warehouse");
   cacheTag("queue");
   if (env.DAL_MOCK) return [...mockStore.queueUnassignedWarehouses];
   return query(
-    // Warehouses attributed only via USER/NONE with a meaningful idle share —
-    // candidates for a dedicated warehouse_product_mapping row.
     `SELECT warehouse_id, workspace_id, SUM(cost) AS cost_30d,
             SUM(CASE WHEN runner = 'UNALLOCATED_IDLE' THEN cost ELSE 0 END) / SUM(cost) AS idle_share
      FROM ${T("cost_fact")}
      WHERE usage_date >= current_date() - INTERVAL 30 DAYS
        AND warehouse_id IS NOT NULL
        AND attribution_method IN ('USER', 'NONE')
-       AND warehouse_id NOT IN (
-         SELECT warehouse_id FROM ${T("warehouse_product_mapping")} WHERE is_shared = true
-       )
      GROUP BY 1, 2 ORDER BY cost_30d DESC`,
     {},
     z.object({
@@ -131,6 +153,22 @@ export async function getUnassignedWarehouses(): Promise<UnassignedWarehouseRow[
       idle_share: zNum,
     }) as z.ZodType<UnassignedWarehouseRow>,
   );
+}
+
+/**
+ * Candidates for a dedicated warehouse_product_mapping row: warehouses billing
+ * via USER/NONE that aren't already marked shared. Plain wrapper (NOT "use
+ * cache", see getUnknownWorkspaces): filters the cached cost_fact scan against
+ * the cached warehouse_product_mapping list in memory, so marking one shared
+ * removes it read-your-writes via the "mappings" tag with no rescan.
+ */
+export async function getUnassignedWarehouses(): Promise<UnassignedWarehouseRow[]> {
+  const [activity, mappings] = await Promise.all([
+    getWarehouseActivity30d(),
+    listWarehouseMappings(),
+  ]);
+  const shared = new Set(mappings.filter((m) => m.is_shared).map((m) => m.warehouse_id));
+  return activity.filter((w) => !shared.has(w.warehouse_id));
 }
 
 /**
