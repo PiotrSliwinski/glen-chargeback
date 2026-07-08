@@ -1,0 +1,26 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SINGLE INSTANCE ONLY — do not scale this service.
+#
+# The whole cache-coherence design (see AGENTS.md) relies on ONE shared
+# in-memory cache in ONE Node process: one user's `updateTag` / "Refresh data"
+# is visible to everyone because everyone hits the same process. Running more
+# than one replica (compose `--scale`, k8s replicas, serverless) silently
+# breaks cross-user invalidation and makes each instance re-query Databricks
+# independently. Move to a shared cache handler first if you ever need >1.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  chargeback:
+    build:
+      context: .
+    image: chargeback-app
+    ports:
+      - "3000:3000"
+    # Real Databricks + Entra config. Copy .env.example -> .env and fill it in.
+    # Optional: with no .env (or no DATABRICKS_HOST) the app runs on in-memory
+    # mock data, so it comes up out of the box for a smoke test.
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+    # If you use `docker compose up`, keep this at a single container.
+    # `docker compose up --scale chargeback=N` (N>1) is unsupported — see above.

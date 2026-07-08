@@ -21,12 +21,17 @@ const EnvSchema = z.object({
   DATABRICKS_HOST: z.string().optional(),
   DATABRICKS_HTTP_PATH: z.string().optional(),
   // How the app authenticates to the SQL warehouse:
-  //  - service-principal: OAuth M2M with DATABRICKS_CLIENT_ID/SECRET (production)
+  //  - service-principal: Databricks OAuth M2M with DATABRICKS_CLIENT_ID/SECRET,
+  //    where the secret is a Databricks-generated OAuth secret.
+  //  - azure-spn: an Entra ID service principal (Azure app registration) —
+  //    DATABRICKS_CLIENT_ID/SECRET is its client id + client secret, exchanged
+  //    for an Entra token. Also needs ENTRA_TENANT_ID. Use this when the secret
+  //    comes from the Azure portal (the common "SPN client id + password").
   //  - azure-cli: the developer's own Entra ID identity from `az login`
   //    (development/testing — no secrets needed)
   // Defaults to service-principal when a client secret is configured,
   // otherwise azure-cli.
-  DATABRICKS_AUTH: z.enum(["service-principal", "azure-cli"]).optional(),
+  DATABRICKS_AUTH: z.enum(["service-principal", "azure-cli", "azure-spn"]).optional(),
   DATABRICKS_CLIENT_ID: z.string().optional(),
   DATABRICKS_CLIENT_SECRET: z.string().optional(),
   // catalog.schema — validated so it can be safely interpolated into SQL
@@ -51,6 +56,18 @@ const EnvSchema = z.object({
 });
 
 const parsed = EnvSchema.parse(process.env);
+
+// Fail fast on incomplete azure-spn config: a container mis-configured at
+// deploy time should error at boot, not limp along and fail on the first
+// warehouse query.
+if (parsed.DATABRICKS_AUTH === "azure-spn") {
+  const missing = (
+    ["ENTRA_TENANT_ID", "DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET"] as const
+  ).filter((k) => !parsed[k]);
+  if (missing.length > 0) {
+    throw new Error(`DATABRICKS_AUTH=azure-spn requires ${missing.join(", ")}`);
+  }
+}
 
 export const env = {
   ...parsed,

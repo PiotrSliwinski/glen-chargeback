@@ -1,6 +1,17 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Emit a self-contained server bundle (.next/standalone) for the Docker
+  // image — see Dockerfile. Harmless for `next dev` / `next start`.
+  output: "standalone",
+  // The Databricks SQL driver is loaded via a runtime dynamic import and pulls
+  // in platform-specific native kernels (@databricks/databricks-sql-kernel-*)
+  // and optional lz4 that the standalone dependency trace does not follow.
+  // Force them into the standalone output so a real (non-mock) container can
+  // reach the warehouse.
+  outputFileTracingIncludes: {
+    "/**": ["./node_modules/@databricks/**", "./node_modules/lz4/**"],
+  },
   cacheComponents: true,
   cacheLife: {
     // Warehouse-backed reads follow a Power BI import model: they re-run only

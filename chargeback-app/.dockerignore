@@ -1,0 +1,27 @@
+# Build the image from source only — never ship host artifacts or secrets.
+node_modules
+.next
+.git
+.gitignore
+
+# docker meta
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# env files (secrets) — the container gets config at run time via env_file /
+# -e. The template is not needed inside the image.
+.env
+.env.*
+
+# local/dev noise
+coverage
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+.DS_Store
+*.pem
+
+# docs
+DOCKER.md
