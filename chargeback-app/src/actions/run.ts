@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AuthError, requireRole } from "@/lib/auth";
 import { fail, ok, type ActionResult } from "@/lib/action-result";
+import { logDuration, logError } from "@/lib/log";
 import type { Role } from "@/lib/rbac";
 import { DomainError } from "@/services/errors";
 
@@ -8,14 +9,25 @@ import { DomainError } from "@/services/errors";
  * Shared mutation skeleton: role check → work → structured result.
  * No raw error ever crosses to the client; unexpected errors are logged
  * server-side with a generic message returned.
+ *
+ * `label` names the action in the timing log — the DML statements it issues
+ * are already timed individually in the DAL, so this line brackets the whole
+ * mutation (auth + work). Note it does NOT cover the post-action `updateTag`
+ * re-render: that cost shows up as the `[dal]` re-execution lines that follow.
  */
 export async function runAction(
   required: Role,
   fn: (actor: string) => Promise<string | void>,
+  label = "action",
 ): Promise<ActionResult> {
+  const t0 = performance.now();
   try {
     const session = await requireRole(required);
     const message = await fn(session.user.email);
+    logDuration("action", label, performance.now() - t0, {
+      actor: session.user.email,
+      role: required,
+    });
     return ok(message ?? undefined);
   } catch (e) {
     if (e instanceof AuthError) {
@@ -33,6 +45,7 @@ export async function runAction(
         e.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "),
       );
     }
+    logError("action", `${label} errored after ${Math.round(performance.now() - t0)}ms`, e);
     console.error("[action error]", e);
     return fail("INTERNAL", "Unexpected error — check the server logs.");
   }

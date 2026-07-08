@@ -9,6 +9,15 @@
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+
+  // Announce the trace layer so it's clear at boot whether/at what level it's
+  // logging (silent in prod unless APP_LOG is set — see src/lib/log.ts).
+  const { logEvent, logLevel, slowThresholdMs } = await import("@/lib/log");
+  logEvent("boot", "trace logging active", {
+    level: logLevel(),
+    slowMs: slowThresholdMs(),
+  });
+
   const { warmup } = await import("@/dal/client");
   warmup();
 

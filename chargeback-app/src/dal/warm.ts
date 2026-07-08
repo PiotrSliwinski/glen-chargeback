@@ -1,4 +1,5 @@
 import { shiftMonth } from "@/lib/format";
+import { logDuration, logEvent, time } from "@/lib/log";
 import { resolveReportParams } from "@/lib/report-params";
 import {
   getDashboard,
@@ -74,16 +75,24 @@ type WarmTask = readonly [label: string, run: () => Promise<unknown>];
  */
 const WARM_CONCURRENCY = 4;
 
-async function runPool(tasks: WarmTask[]): Promise<string[]> {
+type PoolResult = { failed: string[]; timings: { label: string; ms: number }[] };
+
+async function runPool(tasks: WarmTask[]): Promise<PoolResult> {
   const failed: string[] = [];
+  const timings: { label: string; ms: number }[] = [];
   let next = 0;
   const worker = async () => {
     while (next < tasks.length) {
       const [label, run] = tasks[next++];
+      const t0 = performance.now();
       try {
         await run();
+        const ms = performance.now() - t0;
+        timings.push({ label, ms });
+        logDuration("warm", label, ms);
       } catch (e) {
         failed.push(label);
+        // Warm failures matter regardless of APP_LOG level — keep them loud.
         console.warn(`[warm] ${label} failed:`, e instanceof Error ? e.message : e);
       }
     }
@@ -91,17 +100,17 @@ async function runPool(tasks: WarmTask[]): Promise<string[]> {
   await Promise.all(
     Array.from({ length: Math.min(WARM_CONCURRENCY, tasks.length) }, worker),
   );
-  return failed;
+  return { failed, timings };
 }
 
 export async function warmWarehouseCache(): Promise<WarmResult> {
+  const startedAt = performance.now();
   // Month lists first: they are expired cached reads themselves, and every
   // month-scoped query below keys off them. resolveReportParams with empty
   // search params yields exactly the month/mode each report page defaults to.
-  const [{ month, publishedMonths }, azureMonth] = await Promise.all([
-    resolveReportParams(Promise.resolve({})),
-    getDefaultAzureMonth(),
-  ]);
+  const [{ month, publishedMonths }, azureMonth] = await time("warm", "month lists", () =>
+    Promise.all([resolveReportParams(Promise.resolve({})), getDefaultAzureMonth()]),
+  );
   const prevMonth = shiftMonth(month, -1);
   const publishedMonth: string | undefined = publishedMonths[0];
 
@@ -110,7 +119,9 @@ export async function warmWarehouseCache(): Promise<WarmResult> {
   const failed: string[] = [];
   let domains: string[] = [];
   try {
-    domains = (await getDashboard(month, "live")).byDomain.map((d) => d.data_domain);
+    domains = (
+      await time("warm", "dashboard live", () => getDashboard(month, "live"))
+    ).byDomain.map((d) => d.data_domain);
   } catch (e) {
     failed.push("dashboard live");
     console.warn("[warm] dashboard live failed:", e instanceof Error ? e.message : e);
@@ -187,8 +198,22 @@ export async function warmWarehouseCache(): Promise<WarmResult> {
       : []),
   ];
 
-  failed.push(...(await runPool(tasks)));
+  const { failed: poolFailed, timings } = await runPool(tasks);
+  failed.push(...poolFailed);
   // +3 for the month lists, +1 for the dashboard that ran ahead of the pool
   const total = tasks.length + 4;
+
+  const slowest = timings
+    .sort((a, b) => b.ms - a.ms)
+    .slice(0, 5)
+    .map((t) => `${t.label} ${Math.round(t.ms)}ms`)
+    .join(", ");
+  logEvent("warm", "pass complete", {
+    warmed: total - failed.length,
+    failed: failed.length,
+    wallMs: Math.round(performance.now() - startedAt),
+    slowest: slowest || undefined,
+  });
+
   return { warmed: total - failed.length, failed };
 }

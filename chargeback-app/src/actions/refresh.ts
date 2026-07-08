@@ -23,16 +23,20 @@ import { runAction } from "@/actions/run";
 const REFRESH_TAGS = DATA_TAGS.filter((tag) => tag !== "health");
 
 export async function refreshDataAction(): Promise<ActionResult> {
-  return runAction("viewer", async () => {
-    for (const tag of REFRESH_TAGS) updateTag(tag);
-    // updateTag gives read-your-writes within this action, so every cached
-    // read the warm pass makes misses and stores a fresh result.
-    const { warmed, failed } = await warmWarehouseCache();
-    refresh();
-    return failed.length === 0
-      ? `Data refreshed — ${warmed} queries re-cached, all tabs are warm.`
-      : `Data refreshed — ${failed.length} warm-up ${
-          failed.length === 1 ? "query" : "queries"
-        } failed; those views will re-query on first visit.`;
-  });
+  return runAction(
+    "viewer",
+    async () => {
+      for (const tag of REFRESH_TAGS) updateTag(tag);
+      // updateTag gives read-your-writes within this action, so every cached
+      // read the warm pass makes misses and stores a fresh result.
+      const { warmed, failed } = await warmWarehouseCache();
+      refresh();
+      return failed.length === 0
+        ? `Data refreshed — ${warmed} queries re-cached, all tabs are warm.`
+        : `Data refreshed — ${failed.length} warm-up ${
+            failed.length === 1 ? "query" : "queries"
+          } failed; those views will re-query on first visit.`;
+    },
+    "refresh-data",
+  );
 }

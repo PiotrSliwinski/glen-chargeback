@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { logTrace } from "@/lib/log";
 
 /**
  * Optimistic auth gate (Next 16 "proxy", formerly middleware): redirect to
@@ -7,6 +8,10 @@ import { NextResponse, type NextRequest } from "next/server";
  * requireRole() inside pages and server actions (defense in depth).
  */
 export function proxy(request: NextRequest) {
+  // Boundary marker (APP_LOG=all): every request that reaches a page/action
+  // passes here, so the timed [dal]/[action] lines that follow belong to it.
+  logTrace("req", `${request.method} ${request.nextUrl.pathname}`);
+
   if (process.env.AUTH_DEV_BYPASS === "true") return NextResponse.next();
 
   const hasSession =

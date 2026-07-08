@@ -10,6 +10,12 @@ import { z } from "zod";
  *    SQL warehouse.
  *  - AUTH_DEV_BYPASS: skip Entra ID sign-in and act as a fixed dev user
  *    (role from AUTH_DEV_ROLE). Never enable outside local development.
+ *
+ * Trace logging (read directly from process.env in src/lib/log.ts, not here,
+ * so the Edge proxy can use it without importing this server-only module):
+ *  - APP_LOG: off | slow | all. Unset → verbose in dev, silent in prod. Set
+ *    APP_LOG=all (or slow) on a prod box to trace where a request spends time.
+ *  - APP_LOG_SLOW_MS: threshold (default 200) for flagging/gating slow ops.
  */
 const boolString = z
   .enum(["true", "false"])

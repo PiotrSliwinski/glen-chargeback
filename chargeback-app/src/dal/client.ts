@@ -1,8 +1,30 @@
 import { env } from "@/lib/env";
+import { logDuration, logTrace, time } from "@/lib/log";
 import type { z } from "zod";
 import type IDBSQLClient from "@databricks/sql/dist/contracts/IDBSQLClient";
 
 export type SqlParam = string | number | boolean | null;
+
+/**
+ * A compact, stable name for a statement — leading verb + primary table (with
+ * the catalog.schema prefix dropped). Used purely for log lines; never logs
+ * the full SQL or any bound parameter *value* (only the keys), so nothing
+ * sensitive reaches the log stream.
+ */
+function deriveLabel(sql: string): string {
+  const s = sql.trim().replace(/\s+/g, " ");
+  const verb = (s.match(/^(WITH|SELECT|INSERT|UPDATE|MERGE|DELETE)/i)?.[1] ?? "SQL").toUpperCase();
+  const table = s
+    .match(/\b(?:FROM|INTO|UPDATE)\s+([A-Za-z0-9_.]+)/i)?.[1]
+    ?.split(".")
+    .pop();
+  return table ? `${verb} ${table}` : verb;
+}
+
+const paramKeys = (p: Record<string, SqlParam>): string | undefined => {
+  const keys = Object.keys(p);
+  return keys.length ? keys.join(",") : undefined;
+};
 
 /**
  * One shared driver client per server process; a session per query.
@@ -139,23 +161,38 @@ export async function query<T>(
 ): Promise<T[]> {
   assertNotMock();
   const client = await getClient();
+  const label = deriveLabel(sql);
+  const params = paramKeys(namedParameters);
 
   // A pooled session may have been expired server-side; SELECTs are safe to
   // retry once on a fresh session, so a dead pooled session costs one attempt.
+  // Timed by hand (not time()) so a benign dead-session retry doesn't warn.
   const pooled = takePooledSession();
   if (pooled) {
+    const t0 = performance.now();
     try {
       const rows = await runStatement(pooled, sql, namedParameters, schema);
       releaseSession(pooled);
+      logDuration("dal", label, performance.now() - t0, {
+        via: "pool",
+        rows: rows.length,
+        params,
+      });
       return rows;
     } catch {
       await pooled.close().catch(() => {});
+      logTrace("dal", `${label} pooled session dead — retrying on a fresh one`, { params });
     }
   }
 
   const session = await client.openSession();
   try {
-    const rows = await runStatement(session, sql, namedParameters, schema);
+    const rows = await time(
+      "dal",
+      label,
+      () => runStatement(session, sql, namedParameters, schema),
+      (r) => ({ via: pooled ? "retry" : "fresh", rows: r.length, params }),
+    );
     releaseSession(session);
     return rows;
   } catch (e) {
@@ -175,8 +212,12 @@ export async function exec(
   assertNotMock();
   const client = await getClient();
   const session = await client.openSession();
+  const label = deriveLabel(sql);
   try {
-    await runStatement(session, sql, namedParameters);
+    await time("dal", label, () => runStatement(session, sql, namedParameters), {
+      via: "exec",
+      params: paramKeys(namedParameters),
+    });
   } finally {
     await session.close().catch(() => {});
   }
