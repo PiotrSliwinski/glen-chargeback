@@ -38,8 +38,8 @@ rule, and known gap.
 | **Azure attribution** | Route Azure spend (`azure_cleaned.amortized_costs`) to the same product catalogue via an allowlist waterfall (TAG → resource bridge → tag rule → RG rule → subscription rule), with a 30-day coverage audit, per-desk rollup and a dedicated monthly Azure cost-monitoring screen (`/azure`) — only matched cost reaches a desk |
 | **Work queue** | Seven actionable queues of unattributed/unmapped cost — Databricks, Azure and AI — with inline, pre-filled fix forms and bulk actions |
 | **Attribution policy** | Category-aware waterfall in `cost_fact`: **interactive spend is user-first** — serverless SQL-warehouse queries and AI serving run by a mapped user bill that user's desk (AD_HOC) BEFORE any tag; **automated spend is tag-first** — jobs (and job-launched `ai_query` batch) and Azure resources attribute by tags/rules, and job cost never defaults to the runner. AI spend with no attributable user (NULL/unmapped `run_as`) falls to tags and the endpoint bridge |
-| **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, an AI-costs page (model serving incl. `ai_query` batch inference, per-endpoint spend), printable desk invoices, per-desk self-service pages, tagging scorecard |
-| **Exports** | 13 CSV reports + a 6-sheet XLSX report workbook |
+| **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, an advanced-analytics page (unit economics, auto-generated key findings, cross-source tagging scorecard), an AI-costs page (model serving incl. `ai_query` batch inference, per-endpoint spend), printable desk invoices, per-desk self-service pages, tagging scorecard |
+| **Exports** | 16 CSV reports + a 6-sheet XLSX report workbook |
 | **Governance** | One-click health checks (reconciliation + integrity), publication diff, gated monthly publication with typed confirmation |
 | **Access control** | Entra ID SSO, three hierarchical roles (viewer / steward / publisher) enforced at proxy, page, and action level |
 | **Dev experience** | Runs fully on in-memory mock data with auth bypass — `npm run dev` works with zero external services |
@@ -106,12 +106,13 @@ rule, and known gap.
 | `/` | viewer | Chargeback dashboard (landing) |
 | `/report` | viewer | Monthly report pack |
 | `/drill` | viewer | Domain → product → desk → detail drill-down |
+| `/analytics` | viewer | Advanced analytics — cost drivers, unit economics, movers, cross-source tagging scorecard |
 | `/ai` | viewer | AI cost tracking (model serving, batch inference, vector search) |
 | `/azure` | viewer | Azure cost monitoring (the whole Azure bill, attribution mix, per-resource detail) |
 | `/desks`, `/desks/[desk]` | viewer | Desk self-service views |
 | `/invoices`, `/invoices/[desk]` | viewer | Published desk invoices |
 | `/queue` | steward | Work queue (7 tabs, grouped Databricks / Azure / AI) |
-| `/admin` (+ 7 sub-pages) | steward | Reference-data management (incl. `/admin/azure`, `/admin/endpoints`) |
+| `/admin` (+ 8 sub-pages) | steward | Reference-data management (incl. `/admin/azure`, `/admin/endpoints`, `/admin/discounts`) |
 | `/health` | steward (publish: publisher) | Checks, diff, publication |
 | `/login` | public | Sign-in |
 
@@ -420,6 +421,23 @@ Databricks chargeback (the two never mix), fed by `azure_monthly_chargeback` /
 - Printable statement: desk header, domain/product breakdown, exact totals, immutability note,
   limitations footer; Print/PDF button and CSV download.
 
+### 7.6 Advanced analytics — `/analytics`
+
+The "why is the bill what it is" page, all live reads (`src/dal/analytics.ts`, `src/dal/insights.ts`):
+
+- **KPI tiles**: blended $/DBU rate, annualized run rate, 3-month growth, top-3 product
+  concentration, products to 80% of cost, top desk share.
+- **Key findings**: auto-generated narrative insights (`buildInsights`) — growth spikes,
+  concentration, coverage gaps — the same engine style as the report-pack commentary.
+- **Cost drivers**: product and desk tables with 12-month sparklines and MoM deltas.
+- **Unit economics by usage category**: per-category $/DBU with rate deltas, plus a blended
+  $/DBU trend chart.
+- **Attribution mix**: trailing-12-month 100%-stacked method trend.
+- **Tagging scorecard — all sources**: the `tagging_scorecard` view (Methodology §6.5) rendered
+  per source — DATABRICKS, AI (the AI slice of the same fact, never added to it) and AZURE —
+  cost per attribution method, TAG share vs NONE.
+- **Biggest movers**: products ranked by |MoM Δ| with new/gone markers.
+
 ---
 
 ## 8. Exports (CSV & XLSX)
@@ -437,7 +455,7 @@ Databricks chargeback (the two never mix), fed by `azure_monthly_chargeback` /
 | `azure-resources` | viewer | The month's Azure cost per resource × method × product × desk (live `azure_cost_fact`) |
 | `desk-invoice` (`&desk=`) | viewer | One desk's published statement |
 | `catalogue` | steward | Full product catalogue incl. history |
-| `queue-jobs` / `queue-runners` / `queue-workspaces` / `queue-tags` / `queue-warehouses` | steward | The five work queues |
+| `queue-jobs` / `queue-runners` / `queue-workspaces` / `queue-tags` / `queue-warehouses` / `queue-azure` / `queue-endpoints` | steward | The seven work queues |
 
 RFC-4180 escaping, attachment filenames like `movement-2026-06-live.csv`, 404 for unknown
 reports, 401/403 on auth failures.
@@ -456,7 +474,10 @@ is published). Currency/percent number formats, bold frozen headers, auto-width 
 
 - **Reconciliation table** (Methodology §7.1): billing truth vs `cost_fact` vs report, per month,
   with pass/fail chips against the configurable tolerance (`RECON_TOLERANCE_USD`, default $1).
-- **Integrity checks** (§7.4 a–e): validity overlaps (per product **and desk** — concurrent rows
+- **Azure reconciliation** (informational): the raw Azure bill vs `azure_cost_fact` vs
+  `azure_monthly_chargeback` — a gap means the Azure waterfall or a multi-desk split is minting
+  or losing money. Never blocks publication, since Azure is not published.
+- **Integrity checks** (§7.4 a–f): validity overlaps (per product **and desk** — concurrent rows
   for different desks are a split, not an overlap), desk splits whose shares don't sum to 100%,
   orphan bridge/rule products, duplicate bridge keys, duplicate/conflicting tag and runner rules,
   inconsistent warehouse flags, and overlapping or out-of-range DBU reservation-discount windows
@@ -562,8 +583,7 @@ Honest statement of what has and hasn't been exercised:
 |---|---|
 | Pipeline bridge admin screen | `pipeline_product_mapping` (waterfall rule 4c, `PIPELINE_MAPPING`) exists in the data model, feeds `cost_fact`, and is covered by the health checks (orphans + duplicate keys), but has no CRUD screen yet — rows are managed via SQL. An `/admin/pipelines` screen would mirror `/admin/endpoints` |
 | Azure in invoiced totals & report pack | Desk statements now show a live, informational Azure section and the health page reconciles the Azure bill against `azure_cost_fact`, but the dashboard/report pack and the invoiced total remain Databricks-only. Billing Azure for real still needs a publish snapshot for Azure |
-| Azure work-queue tab | Unmatched Azure resources surface on the coverage tab (`method=NONE` filter); a queue tab with inline fixes would mirror the Databricks flow |
-| Azure health checks | Duplicate/conflicting Azure rules and orphan products are prevented at write time but not yet re-checked on the health page |
+| Azure bridge-table health checks | Orphan products in the Azure resource/RG/subscription bridge tables are prevented at write time but not yet re-checked on the health page (unified tag rules and all Databricks bridges already are) |
 | Budgets & burn rate | Needs a new `desk_budget` reference table + admin screen; then MTD vs budget with month-end projection |
 | Anomaly flags | Daily product cost vs trailing baseline (z-score) on the dashboard |
 | What-if move preview | Show desk-total impact of a catalogue move before the cutover |

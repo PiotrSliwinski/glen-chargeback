@@ -3,9 +3,11 @@
 Next.js app implementing the management interface specified in
 [`../databricks_chargeback_methodology.md`](../databricks_chargeback_methodology.md) (§10) per the
 implementation guide in [`../nextjs_chargeback_app_implementation.md`](../nextjs_chargeback_app_implementation.md):
-**reference-data management** for the four mapping tables in `main_dev.cost_reporting`, and
-**reporting** (dashboard, drill-down, desk invoices, attribution coverage, health checks, monthly
-publication) on top of the read-only views.
+**reference-data management** for the mapping and rule tables in `main_dev.cost_reporting`
+(catalogue, users, workspaces, jobs, tags, warehouses, runners, AI endpoints, DLT pipelines,
+DBU discounts, Azure rules), and **reporting** (dashboard, drill-down, desk invoices, attribution
+coverage, analytics, AI + Azure cost views, health checks, monthly publication) on top of the
+read-only views.
 
 ## Quick start (no Databricks needed)
 
@@ -14,7 +16,8 @@ npm install
 npm run dev
 ```
 
-`.env.local` ships with `DAL_MOCK=true` and `AUTH_DEV_BYPASS=true`: the app runs entirely on
+`.env.local` ships with `AUTH_DEV_BYPASS=true` and the `DATABRICKS_*` host commented out, so
+mock mode enables itself (no `DATABRICKS_HOST` ⇒ `DAL_MOCK`): the app runs entirely on
 in-memory fixture data as a `publisher`-role dev user. Change `AUTH_DEV_ROLE` to `viewer` or
 `steward` to test role gating. Mock mutations (mapping a job, publishing a month) mutate the
 fixture store so the full workflow is demoable.
@@ -55,11 +58,11 @@ Prerequisites on the Databricks side (see the implementation guide §8.0, §12, 
 | DAL | `src/dal/*` | The only SQL in the app. Every read: `'use cache'` + `cacheTag`; every module branches to `mock.ts` fixtures when `DAL_MOCK` |
 | Business rules | `src/services/*` | Catalogue versioning (atomic MERGE move, no in-place desk edits, no deletes), §7.4 post-conditions |
 | Mutations | `src/actions/*` | Server actions: role → zod parse → service → `updateTag` invalidation; structured `ActionResult`, no raw errors to the client |
-| Pages | `src/app/(app)/*` | Dashboard `/`, `/report` (monthly pack), `/drill`, `/invoices(/[desk])`, `/queue`, `/admin/*`, `/health` |
+| Pages | `src/app/(app)/*` | Dashboard `/`, `/report` (monthly pack), `/drill`, `/analytics`, `/ai`, `/azure`, `/desks(/[desk])`, `/invoices(/[desk])`, `/queue`, `/admin/*`, `/health` |
 | Reporting extras | `src/dal/movement.ts`, `src/app/api/export/[report]` | §7.5 MoM movement + driver commentary; CSV exports for reports (viewer+) and queues/catalogue (steward+) |
 
-Cache tags: `reports-live`, `reports-published`, `catalogue`, `mappings`, `queue`, `health` —
-mutations expire exactly what they affect via `updateTag` (read-your-writes).
+Cache tags: `reports-live`, `reports-published`, `azure`, `catalogue`, `mappings`, `queue`,
+`health` — mutations expire exactly what they affect via `updateTag` (read-your-writes).
 
 Key invariants enforced in code:
 
@@ -73,11 +76,13 @@ Key invariants enforced in code:
 ## Commands
 
 ```bash
-npm run dev      # dev server (Turbopack)
-npm run build    # production build (all routes partially prerendered)
-npm run start    # serve the production build
-npm run lint     # eslint
-npx tsc --noEmit # type check
+npm run dev                # dev server (Turbopack)
+npm run build              # production build (all routes partially prerendered)
+npm run start              # serve the production build
+npm run lint               # eslint
+npx tsc --noEmit           # type check
+npm run setup:dbx          # create all methodology objects from ../databricks/setup.sql
+npm run migrate:tag-scope  # one-off: add scope column, fold in azure_tag_product_mapping
 ```
 
 ## Reporting features
@@ -87,7 +92,8 @@ npx tsc --noEmit # type check
   domain → product → desk breakdown with shares, attribution coverage, limitations footer.
   Print-optimized; CSV downloads inline.
 - **CSV exports** (`/api/export/[report]?month=&mode=[&desk=]`): `monthly-chargeback`, `coverage`,
-  `movement`, `movement-products`, `desk-invoice` (viewer+); `catalogue`, `queue-*` (steward+).
+  `movement`, `movement-products`, `scorecard`, `ai-endpoints`, `azure-resources`, `desk-invoice`
+  (viewer+); `catalogue`, `queue-*` (steward+).
 - **Publication diff** on `/health`: the candidate month's live desk totals (what the snapshot
   will freeze) side-by-side with the last published month, so the publisher signs off on numbers.
 - **XLSX report pack** (`/api/export/xlsx?month=&mode=`): the whole monthly report as one
@@ -99,7 +105,17 @@ npx tsc --noEmit # type check
 - **Tagging scorecard by desk** (report §5 + `scorecard` CSV): TAG% leaderboard from live
   cost_fact — the adoption lever of Methodology §8.
 - **Job-bridge janitor** (`/admin/jobs`): bridge rows whose jobs now emit TAG-attributed cost,
-  with one-click removal (Methodology §8.3 / Phase 4 pruning, made continuous).
+  with one-click removal (Methodology §8.3 / Phase 4 pruning, made continuous). An Azure
+  equivalent lives on `/admin/azure`.
+- **Advanced analytics** (`/analytics`): unit economics (blended $/DBU, run rate, concentration),
+  auto-generated key findings, product/desk cost drivers with sparklines, attribution mix trend,
+  cross-source tagging scorecard (DATABRICKS / AI / AZURE), biggest movers.
+- **AI costs** (`/ai` + `/admin/endpoints`): model-serving/vector-search spend by endpoint and
+  product, with the endpoint→product bridge (waterfall rule 4b).
+- **Azure costs** (`/azure` + `/admin/azure`): Azure attribution on the same product catalogue
+  via resource/tag/RG/subscription rules; unmatched cost stays visible, never billed.
+- **DBU discounts** (`/admin/discounts`): reservation-plan windows applied at pricing time
+  (`dbu_discount_plan`), with overlap checks on the health page.
 
 ## Not yet implemented (backlog, per the guide)
 
@@ -109,4 +125,3 @@ npx tsc --noEmit # type check
 - Async health-runner via `app_health_runs` table (recon currently runs in-request, cached under
   the `health` tag — fine in mock, slow on a cold warehouse)
 - Vitest unit tests for `src/services`, Playwright golden paths
-- Job-bridge "now tagged at source" janitor query
