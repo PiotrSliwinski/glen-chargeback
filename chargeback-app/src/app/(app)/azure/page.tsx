@@ -54,6 +54,9 @@ const METHOD_ORDER: AzureAttributionMethod[] = [
 ];
 
 export const unstable_instant = {
+  // dev-only: skip the instant-nav validation prerender (re-runs on every
+  // load/HMR; still validated at build). See app/(app)/page.tsx for why.
+  unstable_disableDevValidation: true,
   prefetch: "runtime",
   samples: [{ searchParams: { month: null, mode: null, q: null, page: null } }],
 };

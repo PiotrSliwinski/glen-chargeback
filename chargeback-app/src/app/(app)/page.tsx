@@ -17,6 +17,11 @@ import { SearchParamsSuspense } from "@/components/keyed-suspense";
 export const unstable_instant = {
   prefetch: "runtime",
   samples: [{ searchParams: { month: null, mode: null } }],
+  // Instant-nav validation re-prerenders the route at every entry point on
+  // each page load AND every HMR update, which dominates dev response time
+  // (~560ms/load on heavier pages). This flag skips it in dev only; build-time
+  // validation (next build) still runs as the regression guard.
+  unstable_disableDevValidation: true,
 };
 
 export default function DashboardPage({ searchParams }: { searchParams: SearchParams }) {

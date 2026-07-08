@@ -98,6 +98,9 @@ const TAB_GROUPS: { label: string; tabs: { key: TabKey; label: string }[] }[] = 
 const TABS = TAB_GROUPS.flatMap((g) => g.tabs);
 
 export const unstable_instant = {
+  // dev-only: skip the instant-nav validation prerender (re-runs on every
+  // load/HMR; still validated at build). See app/(app)/page.tsx for why.
+  unstable_disableDevValidation: true,
   prefetch: "runtime",
   samples: [{ searchParams: { month: null, mode: null, tab: null, page: null } }],
 };

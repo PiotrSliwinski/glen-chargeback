@@ -44,6 +44,7 @@ export const metadata = { title: "Analytics" };
 export const unstable_instant = {
   prefetch: "runtime",
   samples: [{ searchParams: { month: null, mode: null } }],
+  unstable_disableDevValidation: true,
 };
 
 export default function AnalyticsPage({ searchParams }: { searchParams: SearchParams }) {
