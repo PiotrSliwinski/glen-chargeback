@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.warehouse_product_mapping (
   data_product   STRING,              -- NULL = shared warehouse, allocate per user
   is_shared      BOOLEAN
 )
-COMMENT 'is_shared = false + data_product assigns the ENTIRE warehouse (incl. idle hours) to that product. Shared warehouses: is_shared = true or no row at all.';
+COMMENT 'is_shared = false + data_product assigns the ENTIRE warehouse (incl. idle hours) to that product - except spend an earlier waterfall rule claims first (a data_product tag / tag rule on the record, or, on serverless warehouses, interactive queries by mapped users, which bill the runner as AD_HOC). Shared warehouses: is_shared = true or no row at all. One row per warehouse_id - duplicates resolve deterministically (MIN) and are flagged on the health page.';
 
 -- §4.7 Runner rules (waterfall rule 5)
 CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.runner_product_mapping (
@@ -744,6 +744,16 @@ pipeline_rules AS (
   GROUP BY workspace_id, pipeline_id
 ),
 
+-- One product per dedicated warehouse even if the table holds duplicate
+-- rows (deterministic MIN — duplicate keys can never fan out cost; the
+-- health page flags them).
+warehouse_rules AS (
+  SELECT warehouse_id, MIN(data_product) AS data_product
+  FROM main_dev.cost_reporting.warehouse_product_mapping
+  WHERE is_shared = false AND data_product IS NOT NULL
+  GROUP BY warehouse_id
+),
+
 -- Interactive-first rows (waterfall rule 0): serverless warehouse queries
 -- and AI serving, never job-run. Computed once so the attribution COALESCE
 -- and the method label can't drift apart.
@@ -797,10 +807,8 @@ attributed AS (
     AND u.job_id       = jm.job_id
   LEFT JOIN tag_rule_matches tr
     ON u.tags_json = tr.tags_json
-  LEFT JOIN main_dev.cost_reporting.warehouse_product_mapping whm
-    ON  u.compute_key = whm.warehouse_id
-    AND whm.is_shared = false
-    AND whm.data_product IS NOT NULL
+  LEFT JOIN warehouse_rules whm
+    ON u.compute_key = whm.warehouse_id
   LEFT JOIN endpoint_rules em
     ON  u.workspace_id  = em.workspace_id
     AND u.endpoint_name = em.endpoint_name

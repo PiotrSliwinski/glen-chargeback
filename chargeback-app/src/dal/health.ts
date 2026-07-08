@@ -273,6 +273,23 @@ export async function getIntegrityViolationsLive(
       });
     }
 
+    // duplicate dedicated-warehouse rows would fan out every query slice of
+    // the warehouse in cost_fact if the view did not dedupe them (it does,
+    // deterministic MIN) — the app's MERGE write path can't create them,
+    // but manual SQL inserts can
+    const warehouseDupes = await query(
+      `SELECT warehouse_id, COUNT(*) AS c FROM ${T("warehouse_product_mapping")}
+       GROUP BY 1 HAVING COUNT(*) > 1`,
+      {},
+      z.object({ warehouse_id: zStr, c: zNum }),
+    );
+    for (const d of warehouseDupes) {
+      violations.push({
+        check: "duplicate_bridge_key",
+        detail: `warehouse_product_mapping has ${d.c} rows for warehouse ${d.warehouse_id}`,
+      });
+    }
+
     // conflicting rules: same tag key=value with OVERLAPPING scopes (same
     // scope twice, or a scoped rule next to a 'both' rule — they can match
     // the same record), or the same runner twice — the facts resolve them
@@ -455,6 +472,7 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
         });
       seenRunnerRules.add(r.user_id);
     }
+    const seenWarehouses = new Set<string>();
     for (const w of mockStore.warehouseMappings) {
       if (w.data_product && !known.has(w.data_product))
         violations.push({
@@ -466,6 +484,12 @@ function mockIntegrity(product?: string): IntegrityViolation[] {
           check: "warehouse_flags",
           detail: `warehouse ${w.warehouse_id}: is_shared=${w.is_shared} with data_product=${w.data_product ?? "NULL"}`,
         });
+      if (seenWarehouses.has(w.warehouse_id))
+        violations.push({
+          check: "duplicate_bridge_key",
+          detail: `warehouse_product_mapping has duplicate rows for warehouse ${w.warehouse_id}`,
+        });
+      seenWarehouses.add(w.warehouse_id);
     }
     const seen = new Set<string>();
     for (const j of mockStore.jobMappings) {

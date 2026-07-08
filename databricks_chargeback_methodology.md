@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS main_dev.cost_reporting.warehouse_product_mapping (
 );
 ```
 
-Semantics: a row with `is_shared = false` and a `data_product` assigns the **entire warehouse** — including its idle/unallocated hours — to that product (waterfall rule 4). Shared warehouses either have a row with `is_shared = true` or no row at all; their cost is attributed per-query through rules 1/6.
+Semantics: a row with `is_shared = false` and a `data_product` assigns the **entire warehouse** — including its idle/unallocated hours — to that product (waterfall rule 4), except spend an earlier rule claims first (a `data_product` tag or tag rule on the record, or — on serverless warehouses — interactive queries by mapped users, which bill the runner as `AD_HOC` under rule 0). Shared warehouses either have a row with `is_shared = true` or no row at all; their cost is attributed per-query through rules 1/6. One row per `warehouse_id`; duplicates are integrity violations (§7.4).
 
 ### 4.7 `runner_product_mapping` — runner rules
 
@@ -752,6 +752,16 @@ runner_rules AS (
   GROUP BY user_id
 ),
 
+-- One product per dedicated warehouse even if the table holds duplicate
+-- rows (deterministic MIN — duplicate keys can never fan out cost; the
+-- health page flags them).
+warehouse_rules AS (
+  SELECT warehouse_id, MIN(data_product) AS data_product
+  FROM main_dev.cost_reporting.warehouse_product_mapping
+  WHERE is_shared = false AND data_product IS NOT NULL
+  GROUP BY warehouse_id
+),
+
 attributed AS (
   SELECT
     u.*,
@@ -783,10 +793,8 @@ attributed AS (
     AND u.job_id       = jm.job_id
   LEFT JOIN tag_rule_matches tr
     ON u.tags_json = tr.tags_json
-  LEFT JOIN main_dev.cost_reporting.warehouse_product_mapping whm
-    ON  u.compute_key = whm.warehouse_id
-    AND whm.is_shared = false
-    AND whm.data_product IS NOT NULL
+  LEFT JOIN warehouse_rules whm
+    ON u.compute_key = whm.warehouse_id
   LEFT JOIN runner_rules rr
     ON u.runner = rr.user_id
   LEFT JOIN main_dev.cost_reporting.user_mapping um
@@ -1031,6 +1039,10 @@ WHERE data_product IS NOT NULL
 SELECT workspace_id, job_id, COUNT(*) c
 FROM main_dev.cost_reporting.job_product_mapping
 GROUP BY 1, 2 HAVING COUNT(*) > 1;
+
+SELECT warehouse_id, COUNT(*) c
+FROM main_dev.cost_reporting.warehouse_product_mapping
+GROUP BY 1 HAVING COUNT(*) > 1;
 ```
 
 ```sql
