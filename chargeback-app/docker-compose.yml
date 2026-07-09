@@ -15,12 +15,23 @@ services:
     image: chargeback-app
     ports:
       - "3000:3000"
-    # Real Databricks + Entra config. Copy .env.example -> .env and fill it in.
-    # Optional: with no .env (or no DATABRICKS_HOST) the app runs on in-memory
-    # mock data, so it comes up out of the box for a smoke test.
+    # Config comes from a local .env (copy .env.example -> .env and fill it in;
+    # .env is gitignored — never commit secrets). env_file loads the whole file
+    # into the container. With no .env (or no DATABRICKS_HOST) the app runs on
+    # in-memory mock data, so it comes up out of the box for a smoke test.
     env_file:
       - path: .env
         required: false
+    # Entra service principal for the Databricks warehouse token
+    # (DefaultAzureCredential): client id + secret (+ tenant). These come from
+    # .env via env_file above; listing them here (name only, no value) lets the
+    # shell / CI secret store override them so real secrets never have to live in
+    # a file. Any not provided are left unset — never injected empty — so the
+    # credential chain falls through to `az login` / managed identity cleanly.
+    environment:
+      - AZURE_TENANT_ID
+      - AZURE_CLIENT_ID
+      - AZURE_CLIENT_SECRET
     restart: unless-stopped
     # If you use `docker compose up`, keep this at a single container.
     # `docker compose up --scale chargeback=N` (N>1) is unsupported — see above.
