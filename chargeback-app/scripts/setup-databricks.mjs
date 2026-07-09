@@ -5,11 +5,9 @@
 //
 // Uses the same env vars as the app (.env.local / .env in chargeback-app):
 //   DATABRICKS_HOST, DATABRICKS_HTTP_PATH
-//   DATABRICKS_AUTH=azure (default)      -> Entra ID via DefaultAzureCredential
-//                                           (az login / AZURE_* SPN / managed id)
-//   DATABRICKS_CLIENT_ID/_SECRET         -> Databricks-native OAuth
-//                                           (DATABRICKS_AUTH=databricks-oauth,
-//                                           the default when a secret is set)
+//   Warehouse auth: Entra ID via DefaultAzureCredential — `az login` locally,
+//   an AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET SPN in a container,
+//   or workload/managed identity in Azure.
 //   DBX_SCHEMA (default main_dev.cost_reporting) — the script rewrites the
 //   schema in setup.sql, so the same file deploys to any catalog.schema.
 //
@@ -126,28 +124,17 @@ if (dryRun) {
 async function connect() {
   const { DBSQLClient } = await import("@databricks/sql");
   const client = new DBSQLClient();
-  const useAzure =
-    (process.env.DATABRICKS_AUTH ?? (process.env.DATABRICKS_CLIENT_SECRET ? "databricks-oauth" : "azure")) ===
-    "azure";
-  let auth;
-  if (useAzure) {
-    const { DefaultAzureCredential } = await import("@azure/identity");
-    const credential = new DefaultAzureCredential(
-      process.env.AZURE_TENANT_ID ? { tenantId: process.env.AZURE_TENANT_ID } : {},
-    );
-    auth = {
-      authType: "external-token",
-      getToken: async () =>
-        (await credential.getToken("2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default")).token,
-    };
-  } else {
-    auth = {
-      authType: "databricks-oauth",
-      oauthClientId: process.env.DATABRICKS_CLIENT_ID,
-      oauthClientSecret: process.env.DATABRICKS_CLIENT_SECRET,
-    };
-  }
-  await client.connect({ host, path: httpPath, ...auth });
+  const { DefaultAzureCredential } = await import("@azure/identity");
+  const credential = new DefaultAzureCredential(
+    process.env.AZURE_TENANT_ID ? { tenantId: process.env.AZURE_TENANT_ID } : {},
+  );
+  await client.connect({
+    host,
+    path: httpPath,
+    authType: "external-token",
+    getToken: async () =>
+      (await credential.getToken("2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default")).token,
+  });
   return client;
 }
 

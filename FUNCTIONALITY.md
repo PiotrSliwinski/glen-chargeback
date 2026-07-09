@@ -51,8 +51,8 @@ rule, and known gap.
 - **Next.js 16** (App Router, TypeScript, Turbopack) with **Cache Components** enabled: DAL reads
   are `'use cache'` functions tagged for invalidation; mutations call `updateTag` for
   read-your-writes freshness. All routes build as partially prerendered.
-- **`@databricks/sql`** driver over a SQL Warehouse, Entra ID token via `DefaultAzureCredential`
-  (or Databricks-native OAuth). One shared
+- **`@databricks/sql`** driver over a SQL Warehouse, Entra ID token via `DefaultAzureCredential`.
+  One shared
   client per server process, a session per query, **all statements parameterized** — the only
   interpolated value is the schema prefix, regex-validated at boot.
 - **No user authentication** — the app runs as one fixed identity (`APP_ROLE` / `APP_USER`);
@@ -550,8 +550,7 @@ See [`chargeback-app/.env.example`](chargeback-app/.env.example). Summary:
 | Variable | Purpose |
 |---|---|
 | `DATABRICKS_HOST` / `DATABRICKS_HTTP_PATH` | SQL Warehouse (unset host ⇒ mock mode) |
-| `DATABRICKS_AUTH` | `azure` (default; Entra token via `DefaultAzureCredential` — `az login` / `AZURE_*` SPN / managed identity) or `databricks-oauth` (`DATABRICKS_CLIENT_ID`/`_SECRET`, a Databricks-generated OAuth secret) |
-| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | Entra SPN for `azure` mode in a container (unset ⇒ `az login` / managed identity) |
+| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | Entra SPN for the warehouse token via `DefaultAzureCredential` in a container (unset ⇒ `az login` / managed identity) |
 | `DBX_SCHEMA` | Schema prefix (default `main_dev.cost_reporting`), regex-validated |
 | `DAL_MOCK` | Force fixture mode |
 | `APP_ROLE` | Role the app runs at (default `publisher`; `viewer` = read-only) |

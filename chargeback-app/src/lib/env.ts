@@ -26,25 +26,14 @@ const EnvSchema = z.object({
   // --- Databricks
   DATABRICKS_HOST: z.string().optional(),
   DATABRICKS_HTTP_PATH: z.string().optional(),
-  // How the app authenticates to the SQL warehouse:
-  //  - azure: acquire an Entra ID token via DefaultAzureCredential. One mode
-  //    for every non-interactive Entra scenario — `az login` locally, an SPN
-  //    from AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET in a container,
-  //    or workload/managed identity in Azure (no secret at all). The identity
-  //    must be added to the workspace with SQL-warehouse access.
-  //  - databricks-oauth: Databricks-native OAuth M2M, where
-  //    DATABRICKS_CLIENT_ID/SECRET is a Databricks-*generated* OAuth secret
-  //    (not an Entra credential).
-  // Defaults to databricks-oauth when DATABRICKS_CLIENT_SECRET is set (that
-  // secret is a Databricks OAuth secret), otherwise azure — which resolves the
-  // right identity unchanged from a laptop to Azure.
-  DATABRICKS_AUTH: z.enum(["azure", "databricks-oauth"]).optional(),
-  DATABRICKS_CLIENT_ID: z.string().optional(),
-  DATABRICKS_CLIENT_SECRET: z.string().optional(),
 
-  // --- Entra ID service principal for the warehouse (azure mode) + Graph.
-  // Read natively by @azure/identity's EnvironmentCredential; leave unset in
-  // Azure, where workload/managed identity is used instead (no secret shipped).
+  // --- Entra ID credential for the warehouse + Graph (DefaultAzureCredential).
+  // The only warehouse auth path: an Entra ID token via DefaultAzureCredential,
+  // resolved at runtime with no config change from laptop to cluster —
+  // `az login` locally, an SPN from AZURE_TENANT_ID/AZURE_CLIENT_ID/
+  // AZURE_CLIENT_SECRET in a container (read natively by EnvironmentCredential),
+  // or workload/managed identity in Azure (no secret shipped). The identity
+  // must be added to the workspace with SQL-warehouse access.
   AZURE_TENANT_ID: z.string().optional(),
   AZURE_CLIENT_ID: z.string().optional(),
   AZURE_CLIENT_SECRET: z.string().optional(),
@@ -68,30 +57,14 @@ const EnvSchema = z.object({
 
 const parsed = EnvSchema.parse(process.env);
 
-/** Resolved warehouse auth mode (see DATABRICKS_AUTH above). */
-const databricksAuth =
-  parsed.DATABRICKS_AUTH ??
-  (parsed.DATABRICKS_CLIENT_SECRET ? "databricks-oauth" : "azure");
-
-// Fail fast on incomplete databricks-oauth config: a container mis-configured
-// at deploy time should error at boot, not limp along and fail on the first
-// warehouse query. azure mode can't be pre-validated — DefaultAzureCredential
-// resolves its source (env SPN / managed identity / az login) at call time, so
-// a bad credential surfaces at the boot warm-up instead.
-if (databricksAuth === "databricks-oauth") {
-  const missing = (
-    ["DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET"] as const
-  ).filter((k) => !parsed[k]);
-  if (missing.length > 0) {
-    throw new Error(`DATABRICKS_AUTH=databricks-oauth requires ${missing.join(", ")}`);
-  }
-}
+// The warehouse credential (DefaultAzureCredential) resolves its source — env
+// SPN / managed identity / az login — at call time, so there is nothing to
+// pre-validate at boot; a bad credential surfaces at the boot warm-up instead.
 
 export const env = {
   ...parsed,
   /** Mock mode is on explicitly or whenever Databricks is not configured. */
   DAL_MOCK: parsed.DAL_MOCK || !parsed.DATABRICKS_HOST,
-  DATABRICKS_AUTH: databricksAuth,
   /** Fully-qualified schema prefix for every table/view reference. */
   SCHEMA: parsed.DBX_SCHEMA,
 };

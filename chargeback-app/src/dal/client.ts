@@ -37,9 +37,9 @@ let clientPromise: Promise<IDBSQLClient> | null = null;
 const AZURE_DATABRICKS_SCOPE = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default";
 
 /**
- * DATABRICKS_AUTH=azure (default): acquire an Entra ID token for the Databricks
- * SQL scope via DefaultAzureCredential — one credential for every
- * non-interactive Entra scenario, with no code branching:
+ * Acquire an Entra ID token for the Databricks SQL scope via
+ * DefaultAzureCredential — the app's only warehouse auth path, one credential
+ * for every non-interactive Entra scenario with no code branching:
  *   - local dev: the developer's own `az login` identity (no secrets in .env)
  *   - container with an SPN: AZURE_TENANT_ID / AZURE_CLIENT_ID /
  *     AZURE_CLIENT_SECRET, read by @azure/identity's EnvironmentCredential
@@ -70,13 +70,7 @@ async function getClient(): Promise<IDBSQLClient> {
       await client.connect({
         host: env.DATABRICKS_HOST!,
         path: env.DATABRICKS_HTTP_PATH!,
-        ...(env.DATABRICKS_AUTH === "azure"
-          ? await azureAuth()
-          : {
-              authType: "databricks-oauth" as const,
-              oauthClientId: env.DATABRICKS_CLIENT_ID!,
-              oauthClientSecret: env.DATABRICKS_CLIENT_SECRET!,
-            }),
+        ...(await azureAuth()),
       });
       return client as unknown as IDBSQLClient;
     })().catch((e) => {

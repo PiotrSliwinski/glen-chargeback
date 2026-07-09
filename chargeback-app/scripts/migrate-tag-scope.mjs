@@ -12,7 +12,7 @@
 // `npm run setup:dbx` to recreate the views against the new shape.
 //
 // Same env vars as setup-databricks.mjs / the app:
-//   DATABRICKS_HOST, DATABRICKS_HTTP_PATH, DATABRICKS_AUTH / _CLIENT_*,
+//   DATABRICKS_HOST, DATABRICKS_HTTP_PATH, AZURE_* (DefaultAzureCredential),
 //   DBX_SCHEMA (default main_dev.cost_reporting)
 //
 // Usage (from chargeback-app/):
@@ -53,28 +53,17 @@ function fail(msg) {
 async function connect() {
   const { DBSQLClient } = await import("@databricks/sql");
   const client = new DBSQLClient();
-  const useAzure =
-    (process.env.DATABRICKS_AUTH ?? (process.env.DATABRICKS_CLIENT_SECRET ? "databricks-oauth" : "azure")) ===
-    "azure";
-  let auth;
-  if (useAzure) {
-    const { DefaultAzureCredential } = await import("@azure/identity");
-    const credential = new DefaultAzureCredential(
-      process.env.AZURE_TENANT_ID ? { tenantId: process.env.AZURE_TENANT_ID } : {},
-    );
-    auth = {
-      authType: "external-token",
-      getToken: async () =>
-        (await credential.getToken("2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default")).token,
-    };
-  } else {
-    auth = {
-      authType: "databricks-oauth",
-      oauthClientId: process.env.DATABRICKS_CLIENT_ID,
-      oauthClientSecret: process.env.DATABRICKS_CLIENT_SECRET,
-    };
-  }
-  await client.connect({ host, path: httpPath, ...auth });
+  const { DefaultAzureCredential } = await import("@azure/identity");
+  const credential = new DefaultAzureCredential(
+    process.env.AZURE_TENANT_ID ? { tenantId: process.env.AZURE_TENANT_ID } : {},
+  );
+  await client.connect({
+    host,
+    path: httpPath,
+    authType: "external-token",
+    getToken: async () =>
+      (await credential.getToken("2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default")).token,
+  });
   return client;
 }
 

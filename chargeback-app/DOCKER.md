@@ -43,10 +43,9 @@ network/platform layer.
 
 ### Warehouse auth
 
-`DATABRICKS_AUTH=azure` (the default) acquires an Entra ID token via
-`DefaultAzureCredential`. The same setting resolves the right identity wherever
-the container runs — you choose the identity by what you inject, not by changing
-the mode:
+Warehouse auth is always an Entra ID token via `DefaultAzureCredential`, which
+resolves the right identity wherever the container runs — you choose the
+identity by what you inject:
 
 - **Entra ID SPN — client id + secret.** `DefaultAzureCredential`'s
   EnvironmentCredential reads these env vars directly; the SP must be added to
@@ -67,15 +66,9 @@ the mode:
   **no secret at all** — the platform supplies the credential and
   `DefaultAzureCredential` picks it up. Preferred for production.
 
-- **Databricks-generated OAuth secret** (`DATABRICKS_AUTH=databricks-oauth`, the
-  default when `DATABRICKS_CLIENT_SECRET` is set) — a Databricks-native secret,
-  not an Entra credential: set `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`.
-
 In practice put these in `.env` and use `--env-file .env` / `docker compose`.
-With `databricks-oauth`, the container fails fast at boot if
-`DATABRICKS_CLIENT_ID` or `DATABRICKS_CLIENT_SECRET` is missing. If the
-managed-identity probe adds startup latency where it can't apply, pin the chain
-with `AZURE_TOKEN_CREDENTIALS=prod` (or `dev`).
+If the managed-identity probe adds startup latency where it can't apply, pin the
+chain with `AZURE_TOKEN_CREDENTIALS=prod` (or `dev`).
 
 ## ⚠️ Run exactly one instance
 

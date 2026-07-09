@@ -27,14 +27,11 @@ full workflow is demoable.
 Copy `.env.example` over `.env.local` and fill in:
 
 - `DATABRICKS_HOST` / `DATABRICKS_HTTP_PATH` — the SQL warehouse. Unset host = mock mode.
-- `DATABRICKS_AUTH=azure` (the default) — acquire an Entra ID token via `DefaultAzureCredential`:
-  your own `az login` identity for dev (just run `az login`, no secrets), an
-  `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` SPN in a container, or
-  workload/managed identity on an Azure host (no secret shipped at all). The resolved identity
-  needs *CAN USE* on the warehouse plus the UC grants below.
-- `DATABRICKS_AUTH=databricks-oauth` — Databricks-native OAuth with `DATABRICKS_CLIENT_ID` /
-  `DATABRICKS_CLIENT_SECRET` (a Databricks-*generated* OAuth secret, not an Entra credential).
-  The default whenever `DATABRICKS_CLIENT_SECRET` is set.
+- Warehouse auth is an Entra ID token via `DefaultAzureCredential`: your own `az login` identity
+  for dev (just run `az login`, no secrets), an `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/
+  `AZURE_CLIENT_SECRET` SPN in a container, or workload/managed identity on an Azure host (no
+  secret shipped at all). The resolved identity needs *CAN USE* on the warehouse plus the UC
+  grants below.
 - `APP_ROLE` / `APP_USER` / `APP_USER_EMAIL` — the fixed identity the app runs as (no sign-in).
   `APP_ROLE` (default `publisher`) caps what the app can do; `APP_USER_EMAIL` is written as
   `mapped_by`. Gate who can reach the app at the network/platform layer.
