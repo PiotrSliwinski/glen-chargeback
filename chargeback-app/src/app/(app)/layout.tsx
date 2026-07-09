@@ -14,7 +14,6 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { atLeast } from "@/lib/rbac";
@@ -87,7 +86,6 @@ function BrandLink() {
 
 async function RoleNav({ orientation = "horizontal" }: { orientation?: "horizontal" | "vertical" }) {
   const session = await getSession();
-  if (!session) redirect("/login");
   const items: NavItem[] = [
     { href: "/", label: "Dashboard", icon: <LayoutDashboard aria-hidden /> },
     { href: "/report", label: "Monthly Report", icon: <FileText aria-hidden /> },
@@ -128,12 +126,11 @@ async function DataFreshness({ compact = false }: { compact?: boolean }) {
 
 async function UserChip() {
   const session = await getSession();
-  if (!session) return null;
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span>{session.user.name}</span>
       <Badge variant="secondary" className="uppercase tracking-wide">
-        {session.user.role ?? "no role"}
+        {session.user.role}
       </Badge>
     </div>
   );

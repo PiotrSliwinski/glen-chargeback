@@ -22,8 +22,7 @@ async function graphToken(): Promise<string> {
   if (!getToken) {
     const { DefaultAzureCredential } = await import("@azure/identity");
     // Same credential resolution as the warehouse client: az login locally, an
-    // AZURE_* SPN, or workload/managed identity in Azure. Distinct from the
-    // ENTRA_* NextAuth sign-in app, which is an interactive web-app flow.
+    // AZURE_* SPN, or workload/managed identity in Azure.
     const credential = new DefaultAzureCredential(
       env.AZURE_TENANT_ID ? { tenantId: env.AZURE_TENANT_ID } : {},
     );

@@ -15,7 +15,7 @@ rule, and known gap.
 
 1. [At a Glance](#1-at-a-glance)
 2. [Technology & Architecture](#2-technology--architecture)
-3. [Authentication & Roles](#3-authentication--roles)
+3. [Identity & Roles](#3-identity--roles)
 4. [Pages & Navigation](#4-pages--navigation)
 5. [Reference Data Management](#5-reference-data-management)
 6. [Work Queue](#6-work-queue)
@@ -41,8 +41,8 @@ rule, and known gap.
 | **Reporting** | Dashboard with KPIs and charts, monthly report pack with auto-commentary, domain→product→desk drill-down, an advanced-analytics page (unit economics, auto-generated key findings, cross-source tagging scorecard), an AI-costs page (model serving incl. `ai_query` batch inference, per-endpoint spend), printable desk invoices, per-desk self-service pages, tagging scorecard |
 | **Exports** | 16 CSV reports + a 6-sheet XLSX report workbook |
 | **Governance** | One-click health checks (reconciliation + integrity), publication diff, gated monthly publication with typed confirmation |
-| **Access control** | Entra ID SSO, three hierarchical roles (viewer / steward / publisher) enforced at proxy, page, and action level |
-| **Dev experience** | Runs fully on in-memory mock data with auth bypass — `npm run dev` works with zero external services |
+| **Access control** | No user sign-in — the app runs as one fixed identity; `APP_ROLE` (viewer / steward / publisher) caps capability. Gate reachability at the network/platform layer |
+| **Dev experience** | Runs fully on in-memory mock data with no sign-in — `npm run dev` works with zero external services |
 
 ---
 
@@ -55,7 +55,8 @@ rule, and known gap.
   (or Databricks-native OAuth). One shared
   client per server process, a session per query, **all statements parameterized** — the only
   interpolated value is the schema prefix, regex-validated at boot.
-- **NextAuth v5** with Microsoft Entra ID; roles resolved from Entra group claims.
+- **No user authentication** — the app runs as one fixed identity (`APP_ROLE` / `APP_USER`);
+  access is gated at the network/platform layer, not in-app.
 - **zod** at both trust boundaries: every mutation input and every SQL result row.
 - Server-rendered UI (Tailwind); the only client components are forms (`useActionState`), the
   month picker, nav highlighting, and the print button. No client charting library — charts are
@@ -65,8 +66,8 @@ rule, and known gap.
 
 | Layer | Path | Responsibility |
 |---|---|---|
-| Request gate | `proxy.ts` | Optimistic session-cookie check, redirect to `/login` |
-| Auth / RBAC | `lib/auth.ts`, `lib/rbac.ts`, `lib/guards.ts` | Session, role hierarchy, page/action guards |
+| Request boundary | `proxy.ts` | Request-trace marker only (no auth gate — single fixed identity) |
+| Identity / RBAC | `lib/auth.ts`, `lib/rbac.ts`, `lib/guards.ts` | Fixed identity, role hierarchy, page/action guards |
 | DAL | `dal/*` | The only SQL in the app; every module has a real branch and a mock branch |
 | Business rules | `services/*` | Catalogue versioning, integrity post-conditions, typed domain errors |
 | Mutations | `actions/*` | Server actions: role → zod → service → cache invalidation → structured result |
@@ -78,11 +79,14 @@ rule, and known gap.
 
 ---
 
-## 3. Authentication & Roles
+## 3. Identity & Roles
 
-- **Sign-in:** Microsoft Entra ID via NextAuth (`/login`, `/api/auth/*`). The app registration
-  must emit the **groups claim**; three group object IDs map to roles.
-- **Roles are hierarchical** — `viewer < steward < publisher`:
+- **No user sign-in:** the app runs as one fixed identity (`APP_USER` / `APP_USER_EMAIL` /
+  `APP_ROLE`) and connects to Databricks as a service principal or via `az login`. Restrict who
+  can reach the app at the network/platform layer (VPN, Entra Application Proxy, App Service
+  authentication).
+- **Roles are hierarchical** — `viewer < steward < publisher`. `APP_ROLE` (default `publisher`)
+  is the single role the app runs at; set it to `viewer` for a read-only deployment:
 
 | Capability | viewer | steward | publisher |
 |---|---|---|---|
@@ -92,11 +96,9 @@ rule, and known gap.
 | Health page, re-run checks, queue/catalogue exports | — | ✅ | ✅ |
 | Publish a month | — | — | ✅ |
 
-- **Enforcement depth:** proxy (cookie presence) → page (`requirePageRole`, redirects) → every
-  server action and export route (`requireRole` / `atLeast`, returns structured error). UI
-  hiding is a courtesy on top, never the control.
-- **Dev bypass:** `AUTH_DEV_BYPASS=true` skips SSO and acts as a fixed user with
-  `AUTH_DEV_ROLE` (default `publisher`) — local development only.
+- **Enforcement depth:** page (`requirePageRole`, redirects) → every server action and export
+  route (`requireRole` / `atLeast`, returns structured error). With a single fixed identity these
+  enforce the `APP_ROLE` ceiling; UI hiding is a courtesy on top, never the control.
 
 ---
 
@@ -115,7 +117,6 @@ rule, and known gap.
 | `/queue` | steward | Work queue (7 tabs, grouped Databricks / Azure / AI) |
 | `/admin` (+ 8 sub-pages) | steward | Reference-data management (incl. `/admin/azure`, `/admin/endpoints`, `/admin/discounts`) |
 | `/health` | steward (publish: publisher) | Checks, diff, publication |
-| `/login` | public | Sign-in |
 
 Shared UI state: **month and live/published mode live in the URL** (`?month=2026-06&mode=published`)
 so every view is linkable. Default month is the last closed month. A colored **mode banner** makes
@@ -553,9 +554,8 @@ See [`chargeback-app/.env.example`](chargeback-app/.env.example). Summary:
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | Entra SPN for `azure` mode in a container (unset ⇒ `az login` / managed identity) |
 | `DBX_SCHEMA` | Schema prefix (default `main_dev.cost_reporting`), regex-validated |
 | `DAL_MOCK` | Force fixture mode |
-| `AUTH_SECRET`, `AUTH_URL`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | SSO |
-| `ENTRA_GROUP_VIEWER` / `_STEWARD` / `_PUBLISHER` | Group-object-id → role mapping |
-| `AUTH_DEV_BYPASS`, `AUTH_DEV_ROLE` | Local dev bypass |
+| `APP_ROLE` | Role the app runs at (default `publisher`; `viewer` = read-only) |
+| `APP_USER` / `APP_USER_EMAIL` | Fixed identity name/email; email is written as `mapped_by` |
 | `RECON_TOLERANCE_USD` | Publication gate tolerance (default 1) |
 
 All config is zod-validated at boot (fail fast). Databricks-side prerequisites (UC grants, audit

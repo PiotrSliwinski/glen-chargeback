@@ -19,10 +19,8 @@ warehouse. Real config is supplied at run time.
 **Mock mode (zero config, for a smoke test):**
 
 ```bash
-docker run --rm -p 3000:3000 \
-  -e AUTH_DEV_BYPASS=true -e AUTH_DEV_ROLE=publisher \
-  chargeback-app
-# → http://localhost:3000  (in-memory fixtures, sign-in bypassed)
+docker run --rm -p 3000:3000 chargeback-app
+# → http://localhost:3000  (in-memory fixtures; no sign-in, runs as APP_ROLE)
 ```
 
 **Production (real Databricks + Entra ID):**
@@ -39,8 +37,9 @@ docker compose up --build
 ```
 
 Configuration keys are documented in [`.env.example`](./.env.example). At minimum
-production needs `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH`, `DBX_SCHEMA`, warehouse
-credentials (below), `AUTH_SECRET`, `AUTH_URL`, and the Entra group IDs.
+production needs `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH`, `DBX_SCHEMA`, and
+warehouse credentials (below). The app does no user sign-in — gate access at the
+network/platform layer.
 
 ### Warehouse auth
 
@@ -61,7 +60,6 @@ the mode:
     -e AZURE_TENANT_ID=<tenant-guid> \
     -e AZURE_CLIENT_ID=<spn-client-id> \
     -e AZURE_CLIENT_SECRET=<spn-password> \
-    # ...plus AUTH_SECRET / AUTH_URL / ENTRA_* for user sign-in
     chargeback-app
   ```
 
@@ -110,5 +108,5 @@ docker build --platform linux/amd64 -t chargeback-app .
   `outputFileTracingIncludes`.
 - On boot, `instrumentation.ts` self-fetches `/api/warm` to pre-fill the cache;
   look for `[boot-warm] N queries cached` in the logs.
-- Health check hits the static `/login` page (no auth, no warehouse).
+- Health check hits the static `/api/healthz` route (no auth, no warehouse).
 - The container listens on `PORT` (default `3000`) and binds `0.0.0.0`.

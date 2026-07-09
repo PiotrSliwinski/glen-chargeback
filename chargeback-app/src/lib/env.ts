@@ -4,12 +4,12 @@ import { z } from "zod";
  * All configuration is validated once at module load — the app fails fast on
  * malformed config instead of failing on first use.
  *
- * Two development affordances:
- *  - DAL_MOCK: serve all reads/writes from in-memory fixtures (auto-enabled
- *    when no DATABRICKS_HOST is configured) so the app runs without a
- *    SQL warehouse.
- *  - AUTH_DEV_BYPASS: skip Entra ID sign-in and act as a fixed dev user
- *    (role from AUTH_DEV_ROLE). Never enable outside local development.
+ * DAL_MOCK serves all reads/writes from in-memory fixtures (auto-enabled when
+ * no DATABRICKS_HOST is configured) so the app runs without a SQL warehouse.
+ *
+ * The app does no user sign-in: it runs as one fixed identity (APP_USER /
+ * APP_USER_EMAIL / APP_ROLE) and authenticates to Databricks as a service
+ * principal or via `az login`. Gate who can reach it at the network layer.
  *
  * Trace logging (read directly from process.env in src/lib/log.ts, not here,
  * so the Edge proxy can use it without importing this server-only module):
@@ -55,15 +55,12 @@ const EnvSchema = z.object({
     .default("main_dev.cost_reporting"),
   DAL_MOCK: boolString,
 
-  // --- Auth (Entra ID via NextAuth)
-  ENTRA_TENANT_ID: z.string().optional(),
-  ENTRA_CLIENT_ID: z.string().optional(),
-  ENTRA_CLIENT_SECRET: z.string().optional(),
-  ENTRA_GROUP_VIEWER: z.string().optional(),
-  ENTRA_GROUP_STEWARD: z.string().optional(),
-  ENTRA_GROUP_PUBLISHER: z.string().optional(),
-  AUTH_DEV_BYPASS: boolString,
-  AUTH_DEV_ROLE: z.enum(["viewer", "steward", "publisher"]).default("publisher"),
+  // --- Identity (no user sign-in; the app runs as one fixed identity).
+  // APP_ROLE caps what the app can do — set `viewer` for a read-only deploy.
+  // APP_USER_EMAIL is recorded as mapped_by on reference-data writes.
+  APP_ROLE: z.enum(["viewer", "steward", "publisher"]).default("publisher"),
+  APP_USER: z.string().default("Chargeback App"),
+  APP_USER_EMAIL: z.string().default("chargeback-app@localhost"),
 
   // --- App behavior
   RECON_TOLERANCE_USD: z.coerce.number().positive().default(1),

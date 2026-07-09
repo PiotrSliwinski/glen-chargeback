@@ -16,13 +16,13 @@ npm install
 npm run dev
 ```
 
-`.env.local` ships with `AUTH_DEV_BYPASS=true` and the `DATABRICKS_*` host commented out, so
-mock mode enables itself (no `DATABRICKS_HOST` ⇒ `DAL_MOCK`): the app runs entirely on
-in-memory fixture data as a `publisher`-role dev user. Change `AUTH_DEV_ROLE` to `viewer` or
-`steward` to test role gating. Mock mutations (mapping a job, publishing a month) mutate the
-fixture store so the full workflow is demoable.
+With the `DATABRICKS_*` host unset, mock mode enables itself (no `DATABRICKS_HOST` ⇒ `DAL_MOCK`):
+the app runs entirely on in-memory fixture data. There is no sign-in — the app runs as one fixed
+identity at role `APP_ROLE` (default `publisher`); set `APP_ROLE=viewer` or `steward` to test
+role gating. Mock mutations (mapping a job, publishing a month) mutate the fixture store so the
+full workflow is demoable.
 
-## Running against Databricks + Entra ID
+## Running against Databricks
 
 Copy `.env.example` over `.env.local` and fill in:
 
@@ -35,10 +35,9 @@ Copy `.env.example` over `.env.local` and fill in:
 - `DATABRICKS_AUTH=databricks-oauth` — Databricks-native OAuth with `DATABRICKS_CLIENT_ID` /
   `DATABRICKS_CLIENT_SECRET` (a Databricks-*generated* OAuth secret, not an Entra credential).
   The default whenever `DATABRICKS_CLIENT_SECRET` is set.
-- `ENTRA_*` — the **sign-in** app registration (a separate web-app registration from the
-  warehouse SPN) with the **groups claim** enabled; three group object IDs map to the roles
-  viewer < steward < publisher.
-- `AUTH_SECRET`, `AUTH_URL`.
+- `APP_ROLE` / `APP_USER` / `APP_USER_EMAIL` — the fixed identity the app runs as (no sign-in).
+  `APP_ROLE` (default `publisher`) caps what the app can do; `APP_USER_EMAIL` is written as
+  `mapped_by`. Gate who can reach the app at the network/platform layer.
 
 Prerequisites on the Databricks side (see the implementation guide §8.0, §12, §15):
 
@@ -57,7 +56,7 @@ Prerequisites on the Databricks side (see the implementation guide §8.0, §12, 
 | Layer | Path | Notes |
 | --- | --- | --- |
 | Request gate | `src/proxy.ts` | Next 16 proxy (ex-middleware): optimistic session-cookie check |
-| Auth/RBAC | `src/lib/auth.ts`, `rbac.ts`, `guards.ts` | NextAuth v5 + Entra ID; hierarchical roles; `requireRole` for actions, `requirePageRole` for pages |
+| Identity/RBAC | `src/lib/auth.ts`, `rbac.ts`, `guards.ts` | No sign-in — one fixed identity (`APP_*`); hierarchical roles; `requireRole` for actions, `requirePageRole` for pages |
 | DAL | `src/dal/*` | The only SQL in the app. Every read: `'use cache'` + `cacheTag`; every module branches to `mock.ts` fixtures when `DAL_MOCK` |
 | Business rules | `src/services/*` | Catalogue versioning (atomic MERGE move, no in-place desk edits, no deletes), §7.4 post-conditions |
 | Mutations | `src/actions/*` | Server actions: role → zod parse → service → `updateTag` invalidation; structured `ActionResult`, no raw errors to the client |
