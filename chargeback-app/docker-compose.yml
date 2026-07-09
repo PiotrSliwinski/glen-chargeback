@@ -32,6 +32,15 @@ services:
       - AZURE_TENANT_ID
       - AZURE_CLIENT_ID
       - AZURE_CLIENT_SECRET
+      # Optional corporate CA for TLS-inspected networks (Databricks + Entra ID
+      # over HTTPS). Set CA_CERT_FILE in .env to the host cert path: it is
+      # bind-mounted read-only below and Node is told to trust it. Unset leaves
+      # NODE_EXTRA_CA_CERTS empty, which Node ignores — default CAs, no warning.
+      - NODE_EXTRA_CA_CERTS=${CA_CERT_FILE:+/certs/extra-ca.crt}
+    volumes:
+      # Mounts the host CA at a fixed path when CA_CERT_FILE is set, otherwise a
+      # harmless empty placeholder so the mount is always valid.
+      - ${CA_CERT_FILE:-./certs/.gitkeep}:/certs/extra-ca.crt:ro
     restart: unless-stopped
     # If you use `docker compose up`, keep this at a single container.
     # `docker compose up --scale chargeback=N` (N>1) is unsupported — see above.

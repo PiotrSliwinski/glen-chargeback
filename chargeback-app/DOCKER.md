@@ -70,6 +70,34 @@ In practice put these in `.env` and use `--env-file .env` / `docker compose`.
 If the managed-identity probe adds startup latency where it can't apply, pin the
 chain with `AZURE_TOKEN_CREDENTIALS=prod` (or `dev`).
 
+## Corporate CA (TLS-inspected networks)
+
+If outbound HTTPS is TLS-inspected (e.g. Netskope re-signs certs), the runtime
+Databricks + Entra ID calls — and the build-time `npm install` / `next/font`
+fetches — need the corporate root CA. The cert is **never committed**; provide
+it per environment:
+
+- **Run time** — set `CA_CERT_FILE` in `.env` to the host cert path. Compose
+  bind-mounts it read-only and sets `NODE_EXTRA_CA_CERTS` for you:
+  ```bash
+  # .env
+  CA_CERT_FILE=/etc/ssl/certs/corp-ca-bundle.crt
+  ```
+  With plain `docker run`, do it by hand:
+  ```bash
+  docker run ... \
+    -v /etc/ssl/certs/corp-ca-bundle.crt:/certs/extra-ca.crt:ro \
+    -e NODE_EXTRA_CA_CERTS=/certs/extra-ca.crt \
+    chargeback-app
+  ```
+  Unset ⇒ default CAs, no cert mounted. Both the Databricks driver and
+  `@azure/identity` use Node's TLS, which honours `NODE_EXTRA_CA_CERTS`.
+
+- **Build time** (only if you build *inside* the inspected network) — drop the
+  `*.crt` into `./certs/` before `docker build`. It's gitignored and installed
+  only into the throwaway build stages, so it never lands in the runtime image.
+  An empty `./certs/` (the default) builds fine anywhere.
+
 ## ⚠️ Run exactly one instance
 
 This app's cache coherence relies on a single shared **in-memory** cache in a

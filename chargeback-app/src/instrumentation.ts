@@ -1,11 +1,14 @@
 /**
- * Server boot hook (Next.js instrumentation file convention): warm the
- * Databricks connection so the first request after a deploy doesn't pay
- * driver import + OAuth + connect + warehouse wake-up on the request path,
- * then re-fill the whole warehouse cache. The "use cache" store is in-memory,
- * so a restart otherwise starts cold and the first visitors (or the runtime
- * prefetch sweep) pay every query. Fire-and-forget — server startup is never
- * blocked on the warehouse.
+ * Server boot hook (Next.js instrumentation file convention): wait for the
+ * Databricks warehouse to come online, then fill the whole "use cache" store in
+ * one pass, so the first visitors — and the runtime instant-nav prefetch that
+ * prerenders each tab — read from a warm cache instead of racing a cold
+ * warehouse into Next's 50-second prerender cache-fill timeout.
+ *
+ * The "use cache" store is in-memory, so a restart otherwise starts cold. All
+ * of this runs fire-and-forget in the background: server startup is never
+ * blocked on the warehouse, and readiness (/api/ready) flips once the warm pass
+ * completes.
  */
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
@@ -18,16 +21,36 @@ export async function register() {
     slowMs: slowThresholdMs(),
   });
 
-  const { warmup } = await import("@/dal/client");
-  warmup();
+  void bootWarm();
+}
 
-  // "use cache" reads need a request scope, so the warm itself runs in the
-  // /api/warm route handler; this just kicks it via localhost once the
-  // server is listening (hence the delay), authenticated by the
-  // process-local boot token.
+/**
+ * Wait for the warehouse, then warm the cache. "use cache" reads need a request
+ * scope, so the warm itself runs in the /api/warm route handler (a normal
+ * request, exempt from the 50s prerender limit); this kicks it over localhost,
+ * authenticated by the process-local boot token, and retries until the pass
+ * comes back clean or the attempts are exhausted.
+ */
+async function bootWarm() {
+  const { env } = await import("@/lib/env");
+  const { markReady } = await import("@/lib/readiness");
+  const { logEvent } = await import("@/lib/log");
+
+  if (env.DAL_MOCK) {
+    markReady();
+    logEvent("warm", "mock mode — ready immediately");
+    return;
+  }
+
+  // The warehouse cold-start wait + warm pass both run inside /api/warm (a Node
+  // route handler). instrumentation.ts must NOT import the DAL/driver itself —
+  // that pulls a native, Node-only package into the Edge instrumentation build.
   const { bootToken } = await import("@/lib/boot-token");
   const port = process.env.PORT ?? "3000";
-  setTimeout(async () => {
+  const MAX_ATTEMPTS = 8;
+  const RETRY_MS = 3_000;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const res = await fetch(`http://localhost:${port}/api/warm`, {
         method: "POST",
@@ -38,8 +61,20 @@ export async function register() {
       console.log(
         `[boot-warm] ${warmed} queries cached${failed.length > 0 ? `, ${failed.length} failed: ${failed.join(", ")}` : ""}`,
       );
+      // A clean pass means the cache is fully warm — ready to serve fast.
+      if (failed.length === 0) {
+        markReady();
+        return;
+      }
     } catch (e) {
-      console.warn("[boot-warm] skipped:", e instanceof Error ? e.message : e);
+      // Server not listening yet, or the pass errored — retry.
+      console.warn(`[boot-warm] attempt ${attempt}/${MAX_ATTEMPTS} skipped:`, e instanceof Error ? e.message : e);
     }
-  }, 3000);
+    if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, RETRY_MS));
+  }
+
+  // Couldn't get a fully clean pass; serve anyway (routes fill lazily). Marking
+  // ready avoids holding traffic forever on one persistently-failing query.
+  markReady();
+  console.warn("[boot-warm] proceeding after retries without a fully clean pass — routes will fill lazily");
 }

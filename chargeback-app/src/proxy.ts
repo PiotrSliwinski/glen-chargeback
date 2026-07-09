@@ -16,7 +16,7 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Everything except the boot-warm endpoint (guarded by its own
-    // process-local token), the liveness probe, and static assets.
-    "/((?!api/warm|api/healthz|_next/static|_next/image|favicon.ico).*)",
+    // process-local token), the liveness/readiness probes, and static assets.
+    "/((?!api/warm|api/healthz|api/ready|_next/static|_next/image|favicon.ico).*)",
   ],
 };

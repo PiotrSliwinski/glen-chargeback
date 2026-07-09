@@ -1,5 +1,5 @@
 import { env } from "@/lib/env";
-import { logDuration, logTrace, time } from "@/lib/log";
+import { logDuration, logEvent, logTrace, time } from "@/lib/log";
 import type { z } from "zod";
 import type IDBSQLClient from "@databricks/sql/dist/contracts/IDBSQLClient";
 
@@ -199,19 +199,40 @@ export async function exec(
   }
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 /**
- * Fire-and-forget connection warm-up (instrumentation.ts): pays the driver
- * import + auth + connect + warehouse wake-up at boot instead of on the
- * first visitor's request. Never throws — a failure just means the first
- * request connects lazily as before.
+ * Wait for the SQL warehouse to be reachable, retrying a trivial probe while it
+ * spins up from auto-stop (Databricks warehouses take seconds — occasionally
+ * longer — to resume). Resolves true on the first probe that succeeds, false if
+ * it hasn't come online within maxWaitMs. No-op (true) in mock mode.
+ *
+ * Called at boot (instrumentation.ts) so the warehouse wake is paid ONCE, up
+ * front, absorbing the cold start — rather than each runtime instant-prefetch
+ * prerender paying it live and hitting Next's 50s cache-fill timeout. Pays the
+ * driver import + auth + connect too, same as the old warmup().
  */
-export function warmup(): void {
-  if (env.DAL_MOCK) return;
-  void query("SELECT 1")
-    .then(() => console.log("[dal] warehouse connection warmed"))
-    .catch((e) =>
-      console.warn("[dal] warm-up failed (will connect lazily):", e?.message ?? e),
-    );
+export async function waitForWarehouse({
+  maxWaitMs = 5 * 60_000,
+  stepMs = 3_000,
+}: { maxWaitMs?: number; stepMs?: number } = {}): Promise<boolean> {
+  if (env.DAL_MOCK) return true;
+  const deadline = Date.now() + maxWaitMs;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await query("SELECT 1");
+      logEvent("warm", "warehouse online", { attempt });
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (Date.now() >= deadline) {
+        console.warn(`[warm] warehouse unreachable after ${attempt} attempts: ${msg}`);
+        return false;
+      }
+      logTrace("warm", `warehouse not ready (attempt ${attempt}) — retrying`, { err: msg });
+      await sleep(stepMs);
+    }
+  }
 }
 
 /** Fully-qualified table/view reference. */
