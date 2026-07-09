@@ -53,14 +53,14 @@ function fail(msg) {
 async function connect() {
   const { DBSQLClient } = await import("@databricks/sql");
   const client = new DBSQLClient();
-  const useAzureCli =
-    (process.env.DATABRICKS_AUTH ?? (process.env.DATABRICKS_CLIENT_SECRET ? "service-principal" : "azure-cli")) ===
-    "azure-cli";
+  const useAzure =
+    (process.env.DATABRICKS_AUTH ?? (process.env.DATABRICKS_CLIENT_SECRET ? "databricks-oauth" : "azure")) ===
+    "azure";
   let auth;
-  if (useAzureCli) {
-    const { AzureCliCredential } = await import("@azure/identity");
-    const credential = new AzureCliCredential(
-      process.env.ENTRA_TENANT_ID ? { tenantId: process.env.ENTRA_TENANT_ID } : {},
+  if (useAzure) {
+    const { DefaultAzureCredential } = await import("@azure/identity");
+    const credential = new DefaultAzureCredential(
+      process.env.AZURE_TENANT_ID ? { tenantId: process.env.AZURE_TENANT_ID } : {},
     );
     auth = {
       authType: "external-token",

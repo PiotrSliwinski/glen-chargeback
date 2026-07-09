@@ -42,35 +42,42 @@ Configuration keys are documented in [`.env.example`](./.env.example). At minimu
 production needs `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH`, `DBX_SCHEMA`, warehouse
 credentials (below), `AUTH_SECRET`, `AUTH_URL`, and the Entra group IDs.
 
-### Warehouse auth with a service principal
+### Warehouse auth
 
-Pick the mode that matches where your secret came from:
+`DATABRICKS_AUTH=azure` (the default) acquires an Entra ID token via
+`DefaultAzureCredential`. The same setting resolves the right identity wherever
+the container runs — you choose the identity by what you inject, not by changing
+the mode:
 
-- **Entra ID SPN — client id + secret from the Azure portal** (`DATABRICKS_AUTH=azure-spn`).
-  The app exchanges the secret for an Entra token, so it also needs the tenant.
-  The SP must be added to the Databricks workspace and granted access to the
-  SQL warehouse.
+- **Entra ID SPN — client id + secret.** `DefaultAzureCredential`'s
+  EnvironmentCredential reads these env vars directly; the SP must be added to
+  the Databricks workspace with SQL-warehouse access.
 
   ```bash
   docker run --rm -p 3000:3000 \
     -e DATABRICKS_HOST=adb-xxxx.x.azuredatabricks.net \
     -e DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/xxxxxxxx \
     -e DBX_SCHEMA=main.cost_reporting \
-    -e DATABRICKS_AUTH=azure-spn \
-    -e ENTRA_TENANT_ID=<tenant-guid> \
-    -e DATABRICKS_CLIENT_ID=<spn-client-id> \
-    -e DATABRICKS_CLIENT_SECRET=<spn-password> \
+    -e AZURE_TENANT_ID=<tenant-guid> \
+    -e AZURE_CLIENT_ID=<spn-client-id> \
+    -e AZURE_CLIENT_SECRET=<spn-password> \
     # ...plus AUTH_SECRET / AUTH_URL / ENTRA_* for user sign-in
     chargeback-app
   ```
 
-- **Databricks-generated OAuth secret** (`DATABRICKS_AUTH=service-principal`, the
-  default when `DATABRICKS_CLIENT_SECRET` is set) — same three `DATABRICKS_*`
-  vars, no tenant needed.
+- **Workload / managed identity** (AKS, App Service, Container Apps). Inject
+  **no secret at all** — the platform supplies the credential and
+  `DefaultAzureCredential` picks it up. Preferred for production.
+
+- **Databricks-generated OAuth secret** (`DATABRICKS_AUTH=databricks-oauth`, the
+  default when `DATABRICKS_CLIENT_SECRET` is set) — a Databricks-native secret,
+  not an Entra credential: set `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`.
 
 In practice put these in `.env` and use `--env-file .env` / `docker compose`.
-With `azure-spn`, the container fails fast at boot if `ENTRA_TENANT_ID`,
-`DATABRICKS_CLIENT_ID`, or `DATABRICKS_CLIENT_SECRET` is missing.
+With `databricks-oauth`, the container fails fast at boot if
+`DATABRICKS_CLIENT_ID` or `DATABRICKS_CLIENT_SECRET` is missing. If the
+managed-identity probe adds startup latency where it can't apply, pin the chain
+with `AZURE_TOKEN_CREDENTIALS=prod` (or `dev`).
 
 ## ⚠️ Run exactly one instance
 

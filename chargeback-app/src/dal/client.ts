@@ -37,39 +37,23 @@ let clientPromise: Promise<IDBSQLClient> | null = null;
 const AZURE_DATABRICKS_SCOPE = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default";
 
 /**
- * DATABRICKS_AUTH=azure-cli: authenticate as the developer's own Entra ID
- * user via `az login` — no secrets in .env. The driver caches the token and
- * re-invokes getToken when it expires (~1h).
+ * DATABRICKS_AUTH=azure (default): acquire an Entra ID token for the Databricks
+ * SQL scope via DefaultAzureCredential — one credential for every
+ * non-interactive Entra scenario, with no code branching:
+ *   - local dev: the developer's own `az login` identity (no secrets in .env)
+ *   - container with an SPN: AZURE_TENANT_ID / AZURE_CLIENT_ID /
+ *     AZURE_CLIENT_SECRET, read by @azure/identity's EnvironmentCredential
+ *   - Azure (AKS / App Service / Container Apps): workload or managed identity
+ *     — no secret shipped in the image at all
+ * The resolved identity must be added to the Databricks workspace and granted
+ * access to the SQL warehouse. The driver caches the token and re-invokes
+ * getToken on expiry (~1h). If the managed-identity probe adds latency where
+ * it can't apply, pin the chain with AZURE_TOKEN_CREDENTIALS=prod|dev.
  */
-async function azureCliAuth() {
-  const { AzureCliCredential } = await import("@azure/identity");
-  const credential = new AzureCliCredential(
-    env.ENTRA_TENANT_ID ? { tenantId: env.ENTRA_TENANT_ID } : {},
-  );
-  return {
-    authType: "external-token" as const,
-    getToken: async () =>
-      (await credential.getToken(AZURE_DATABRICKS_SCOPE)).token,
-  };
-}
-
-/**
- * DATABRICKS_AUTH=azure-spn: authenticate as an Entra ID service principal
- * (an Azure AD app registration) using its client id + secret — the
- * non-interactive production equivalent of azure-cli, intended for a
- * container. The SP must be added to the Databricks workspace and granted
- * access to the SQL warehouse. Requires ENTRA_TENANT_ID plus
- * DATABRICKS_CLIENT_ID (the SP application/client id) and
- * DATABRICKS_CLIENT_SECRET (its client secret). Use this when the secret
- * comes from the Azure portal; use service-principal (databricks-oauth) when
- * it is a Databricks-generated OAuth secret.
- */
-async function azureSpnAuth() {
-  const { ClientSecretCredential } = await import("@azure/identity");
-  const credential = new ClientSecretCredential(
-    env.ENTRA_TENANT_ID!,
-    env.DATABRICKS_CLIENT_ID!,
-    env.DATABRICKS_CLIENT_SECRET!,
+async function azureAuth() {
+  const { DefaultAzureCredential } = await import("@azure/identity");
+  const credential = new DefaultAzureCredential(
+    env.AZURE_TENANT_ID ? { tenantId: env.AZURE_TENANT_ID } : {},
   );
   return {
     authType: "external-token" as const,
@@ -86,15 +70,13 @@ async function getClient(): Promise<IDBSQLClient> {
       await client.connect({
         host: env.DATABRICKS_HOST!,
         path: env.DATABRICKS_HTTP_PATH!,
-        ...(env.DATABRICKS_AUTH === "azure-cli"
-          ? await azureCliAuth()
-          : env.DATABRICKS_AUTH === "azure-spn"
-            ? await azureSpnAuth()
-            : {
-                authType: "databricks-oauth" as const,
-                oauthClientId: env.DATABRICKS_CLIENT_ID!,
-                oauthClientSecret: env.DATABRICKS_CLIENT_SECRET!,
-              }),
+        ...(env.DATABRICKS_AUTH === "azure"
+          ? await azureAuth()
+          : {
+              authType: "databricks-oauth" as const,
+              oauthClientId: env.DATABRICKS_CLIENT_ID!,
+              oauthClientSecret: env.DATABRICKS_CLIENT_SECRET!,
+            }),
       });
       return client as unknown as IDBSQLClient;
     })().catch((e) => {

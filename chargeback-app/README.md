@@ -26,22 +26,25 @@ fixture store so the full workflow is demoable.
 
 Copy `.env.example` over `.env.local` and fill in:
 
-- `DATABRICKS_HOST` / `DATABRICKS_HTTP_PATH` / `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` —
-  service principal M2M OAuth against a SQL warehouse. Unset host = mock mode.
-- `DATABRICKS_AUTH=azure-cli` — connect as **your own Entra ID user** instead of the SP:
-  run `az login` and set only host + http path (no client id/secret needed). This is the
-  default whenever `DATABRICKS_CLIENT_SECRET` is unset, so for dev/testing you typically just
-  omit the SP credentials. Your user needs *CAN USE* on the warehouse and the same UC grants
-  as the SP.
-- `ENTRA_*` — app registration with the **groups claim** enabled; three group object IDs map to
-  the roles viewer < steward < publisher.
+- `DATABRICKS_HOST` / `DATABRICKS_HTTP_PATH` — the SQL warehouse. Unset host = mock mode.
+- `DATABRICKS_AUTH=azure` (the default) — acquire an Entra ID token via `DefaultAzureCredential`:
+  your own `az login` identity for dev (just run `az login`, no secrets), an
+  `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` SPN in a container, or
+  workload/managed identity on an Azure host (no secret shipped at all). The resolved identity
+  needs *CAN USE* on the warehouse plus the UC grants below.
+- `DATABRICKS_AUTH=databricks-oauth` — Databricks-native OAuth with `DATABRICKS_CLIENT_ID` /
+  `DATABRICKS_CLIENT_SECRET` (a Databricks-*generated* OAuth secret, not an Entra credential).
+  The default whenever `DATABRICKS_CLIENT_SECRET` is set.
+- `ENTRA_*` — the **sign-in** app registration (a separate web-app registration from the
+  warehouse SPN) with the **groups claim** enabled; three group object IDs map to the roles
+  viewer < steward < publisher.
 - `AUTH_SECRET`, `AUTH_URL`.
 
 Prerequisites on the Databricks side (see the implementation guide §8.0, §12, §15):
 
 1. All views/tables from the methodology deployed; the §7.1 reconciliation holds.
    `npm run setup:dbx` creates all of them from [`../databricks/setup.sql`](../databricks/setup.sql)
-   using the same `DATABRICKS_*`/`DBX_SCHEMA` env vars as the app (idempotent —
+   using the same warehouse env vars as the app (`DATABRICKS_*` / `AZURE_*` / `DBX_SCHEMA`; idempotent —
    tables `IF NOT EXISTS`, views `OR REPLACE`; `-- --dry-run` prints the plan).
 2. Audit columns (`mapped_by`, `mapped_at`) added to all mapping tables.
 3. UC grants: `SELECT` on the schema + `MODIFY` on the mapping tables and

@@ -27,19 +27,27 @@ const EnvSchema = z.object({
   DATABRICKS_HOST: z.string().optional(),
   DATABRICKS_HTTP_PATH: z.string().optional(),
   // How the app authenticates to the SQL warehouse:
-  //  - service-principal: Databricks OAuth M2M with DATABRICKS_CLIENT_ID/SECRET,
-  //    where the secret is a Databricks-generated OAuth secret.
-  //  - azure-spn: an Entra ID service principal (Azure app registration) —
-  //    DATABRICKS_CLIENT_ID/SECRET is its client id + client secret, exchanged
-  //    for an Entra token. Also needs ENTRA_TENANT_ID. Use this when the secret
-  //    comes from the Azure portal (the common "SPN client id + password").
-  //  - azure-cli: the developer's own Entra ID identity from `az login`
-  //    (development/testing — no secrets needed)
-  // Defaults to service-principal when a client secret is configured,
-  // otherwise azure-cli.
-  DATABRICKS_AUTH: z.enum(["service-principal", "azure-cli", "azure-spn"]).optional(),
+  //  - azure: acquire an Entra ID token via DefaultAzureCredential. One mode
+  //    for every non-interactive Entra scenario — `az login` locally, an SPN
+  //    from AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET in a container,
+  //    or workload/managed identity in Azure (no secret at all). The identity
+  //    must be added to the workspace with SQL-warehouse access.
+  //  - databricks-oauth: Databricks-native OAuth M2M, where
+  //    DATABRICKS_CLIENT_ID/SECRET is a Databricks-*generated* OAuth secret
+  //    (not an Entra credential).
+  // Defaults to databricks-oauth when DATABRICKS_CLIENT_SECRET is set (that
+  // secret is a Databricks OAuth secret), otherwise azure — which resolves the
+  // right identity unchanged from a laptop to Azure.
+  DATABRICKS_AUTH: z.enum(["azure", "databricks-oauth"]).optional(),
   DATABRICKS_CLIENT_ID: z.string().optional(),
   DATABRICKS_CLIENT_SECRET: z.string().optional(),
+
+  // --- Entra ID service principal for the warehouse (azure mode) + Graph.
+  // Read natively by @azure/identity's EnvironmentCredential; leave unset in
+  // Azure, where workload/managed identity is used instead (no secret shipped).
+  AZURE_TENANT_ID: z.string().optional(),
+  AZURE_CLIENT_ID: z.string().optional(),
+  AZURE_CLIENT_SECRET: z.string().optional(),
   // catalog.schema — validated so it can be safely interpolated into SQL
   DBX_SCHEMA: z
     .string()
@@ -63,15 +71,22 @@ const EnvSchema = z.object({
 
 const parsed = EnvSchema.parse(process.env);
 
-// Fail fast on incomplete azure-spn config: a container mis-configured at
-// deploy time should error at boot, not limp along and fail on the first
-// warehouse query.
-if (parsed.DATABRICKS_AUTH === "azure-spn") {
+/** Resolved warehouse auth mode (see DATABRICKS_AUTH above). */
+const databricksAuth =
+  parsed.DATABRICKS_AUTH ??
+  (parsed.DATABRICKS_CLIENT_SECRET ? "databricks-oauth" : "azure");
+
+// Fail fast on incomplete databricks-oauth config: a container mis-configured
+// at deploy time should error at boot, not limp along and fail on the first
+// warehouse query. azure mode can't be pre-validated — DefaultAzureCredential
+// resolves its source (env SPN / managed identity / az login) at call time, so
+// a bad credential surfaces at the boot warm-up instead.
+if (databricksAuth === "databricks-oauth") {
   const missing = (
-    ["ENTRA_TENANT_ID", "DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET"] as const
+    ["DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET"] as const
   ).filter((k) => !parsed[k]);
   if (missing.length > 0) {
-    throw new Error(`DATABRICKS_AUTH=azure-spn requires ${missing.join(", ")}`);
+    throw new Error(`DATABRICKS_AUTH=databricks-oauth requires ${missing.join(", ")}`);
   }
 }
 
@@ -79,10 +94,7 @@ export const env = {
   ...parsed,
   /** Mock mode is on explicitly or whenever Databricks is not configured. */
   DAL_MOCK: parsed.DAL_MOCK || !parsed.DATABRICKS_HOST,
-  /** Resolved warehouse auth mode (see DATABRICKS_AUTH above). */
-  DATABRICKS_AUTH:
-    parsed.DATABRICKS_AUTH ??
-    (parsed.DATABRICKS_CLIENT_SECRET ? "service-principal" : "azure-cli"),
+  DATABRICKS_AUTH: databricksAuth,
   /** Fully-qualified schema prefix for every table/view reference. */
   SCHEMA: parsed.DBX_SCHEMA,
 };

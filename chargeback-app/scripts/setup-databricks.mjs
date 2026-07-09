@@ -5,9 +5,11 @@
 //
 // Uses the same env vars as the app (.env.local / .env in chargeback-app):
 //   DATABRICKS_HOST, DATABRICKS_HTTP_PATH
-//   DATABRICKS_AUTH=azure-cli            -> your own `az login` identity
-//   DATABRICKS_CLIENT_ID/_SECRET         -> service-principal OAuth (default
-//                                           when a secret is set)
+//   DATABRICKS_AUTH=azure (default)      -> Entra ID via DefaultAzureCredential
+//                                           (az login / AZURE_* SPN / managed id)
+//   DATABRICKS_CLIENT_ID/_SECRET         -> Databricks-native OAuth
+//                                           (DATABRICKS_AUTH=databricks-oauth,
+//                                           the default when a secret is set)
 //   DBX_SCHEMA (default main_dev.cost_reporting) — the script rewrites the
 //   schema in setup.sql, so the same file deploys to any catalog.schema.
 //
@@ -124,14 +126,14 @@ if (dryRun) {
 async function connect() {
   const { DBSQLClient } = await import("@databricks/sql");
   const client = new DBSQLClient();
-  const useAzureCli =
-    (process.env.DATABRICKS_AUTH ?? (process.env.DATABRICKS_CLIENT_SECRET ? "service-principal" : "azure-cli")) ===
-    "azure-cli";
+  const useAzure =
+    (process.env.DATABRICKS_AUTH ?? (process.env.DATABRICKS_CLIENT_SECRET ? "databricks-oauth" : "azure")) ===
+    "azure";
   let auth;
-  if (useAzureCli) {
-    const { AzureCliCredential } = await import("@azure/identity");
-    const credential = new AzureCliCredential(
-      process.env.ENTRA_TENANT_ID ? { tenantId: process.env.ENTRA_TENANT_ID } : {},
+  if (useAzure) {
+    const { DefaultAzureCredential } = await import("@azure/identity");
+    const credential = new DefaultAzureCredential(
+      process.env.AZURE_TENANT_ID ? { tenantId: process.env.AZURE_TENANT_ID } : {},
     );
     auth = {
       authType: "external-token",
